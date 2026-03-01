@@ -1,0 +1,103 @@
+\usepackage{amsmath}
+\usepackage{enumerate}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{amsfonts}
+\usepackage{amsthm}
+\usepackage{cleveref}
+\usepackage{diagbox}
+\usepackage{colortbl}
+\usepackage{amssymb}
+\usepackage{xspace}
+\usepackage{wrapfig}
+\usepackage{adjustbox}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{mathtools}
+\usepackage{tikz}
+\usepackage{enumitem}
+\usepackage{silence}
+\usepackage{dsfont}
+\usepackage[table]{xcolor}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage{xfakebold}
+
+\input{math_commands}
+
+
+\definecolor{textgray}{HTML}{6E6E73}
+\usetikzlibrary{positioning, calc}
+\usetikzlibrary{decorations.pathmorphing}
+
+\makeatletter
+\patchcmd{\wrong@fontshape}{\@gobbletwo}{}{}{}
+\makeatother
+\WarningFilter{latexfont}{Font shape}
+\WarningFilter{latexfont}{Some font}
+
+
+\numberwithin{equation}{section}
+\setcounter{tocdepth}{2} %
+
+
+
+\makeatletter
+\AtBeginDocument{
+  \urlstyle{sf}
+  \def\UrlFont{\sffamily}
+}
+\makeatother
+
+
+
+
+\definecolor{light}{RGB}{125, 125, 125}
+\crefname{tcb@cnt@pbox}{code}{code}
+\Crefname{tcb@cnt@pbox}{Code}{Code}
+\crefname{assumption}{assumption}{assumption}
+\Crefname{assumption}{Assumption}{Assumptions}
+
+\newtcolorbox[auto counter]{pbox}[2][]{
+  colback=white,
+  title=Code~\thetcbcounter: #2,
+  #1,fonttitle=\sffamily,
+  fontupper=\sffamily,
+  arc=2pt,
+  colframe=bgcolor,
+  coltitle=fgcolor,
+  colbacktitle=bgcolor,
+  toptitle=0.25cm,
+  bottomtitle=0.125cm
+}
+
+\newcommand\blfootnote[1]{%
+  \begin{NoHyper}%
+  \renewcommand\thefootnote{*}\footnote{#1}%
+  \addtocounter{footnote}{-1}%
+  \end{NoHyper}%
+}
+
+\makeatletter
+\newcommand\applefootnote[1]{%
+  \begingroup
+  \renewcommand\thefootnote{}%
+  \renewcommand\@makefntext[1]{\noindent##1}%
+  \footnote{#1}%
+  \addtocounter{footnote}{-1}%
+  \endgroup
+}
+\makeatother
+
+
+\definecolor{cverbbg}{gray}{0.90}
+\newenvironment{lcverbatim}
+ {\SaveVerbatim{cverb}}
+ {\endSaveVerbatim
+  \flushleft\fboxrule=0pt\fboxsep=.5em
+  \colorbox{cverbbg}{%
+    \makebox[\dimexpr\linewidth-2\fboxsep][l]{\BUseVerbatim{cverb}}%
+  }
+  \endflushleft
+}

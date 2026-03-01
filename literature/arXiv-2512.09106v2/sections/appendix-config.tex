@@ -1,0 +1,36 @@
+\section{Training and Policy Network Configuration}
+\label{sec:appendix_config}
+
+\begin{table}[h]
+\centering
+\caption{Training and policy configuration for our main experiments.}
+\label{tab:training-config}
+\begin{tabular}{lll}
+\toprule
+\textbf{Category} & \textbf{Parameter} & \textbf{Value} \\
+\midrule
+\multirow{6}{*}{Training}
+& Learning rate & 3e-5 \\
+& LR scheduler & Cosine \\
+& Warmup steps & 100 \\
+& Effective batch size & 16 \\
+& Weight decay & 0.1 \\
+& Max gradient norm & 0.2 \\
+& Clipping factor ($\epsilon$) & 0.5 (0.2 for expert steering) \\
+\midrule
+\multirow{5}{*}{GRPO}
+& Training data & GSM8k and MATH training set mixture \\
+& Num train epochs & 1 \\
+& Group size & 8 \\
+& $\beta$ (KL penalty) & 0.0 \\
+\midrule
+\multirow{6}{*}{Policy Network}
+& Number of transformer blocks & 1 \\
+& Hidden dimension & 128 \\
+& Feedforward dimension & 512 \\
+& Number of heads & 2 \\
+& Time embedding dim & 128 \\
+& Total parameter count & 300K \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,112 @@
+\documentclass{article}
+\usepackage{iclr2026_conference,times}
+\input{math_commands.tex}
+\usepackage{mathtools}
+\mathtoolsset{showonlyrefs}
+\input{jay_color_utils}
+
+% our new packages--alphabetial order
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage[table]{xcolor}
+\algtext*{EndFor}
+\algrenewcommand\algorithmicdo{}
+\algtext*{EndIf}
+\algrenewcommand\algorithmicthen{}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{bbm}
+\usepackage{booktabs}
+\usepackage{bm}
+\usepackage{caption}
+\captionsetup[figure]{name=Figure, labelfont=bf, labelsep=colon} 
+\usepackage{duckuments}
+\usepackage{enumitem}
+\usepackage{etoolbox}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{lipsum}
+\usepackage{listings}
+\usepackage{mdframed}
+\usepackage{multirow}
+\usepackage{soul}
+\usepackage{stmaryrd}
+\usepackage{subcaption}
+\usepackage{trimclip}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{xspace}
+\usepackage[normalem]{ulem}
+\usepackage{hyperref}
+\usepackage[most]{tcolorbox}
+
+% author list utilities: made by Jaeyeon
+\makeatletter
+\def\xthanks#1{\protected@xdef\@thanks{\@thanks\protect\footnotetext{#1}}}
+\makeatother
+\newcommand{\xsup}[1]{\rlap{\textsuperscript{\normalfont#1}}}
+\newtheorem{definition}{Definition}
+\newtheorem{prop}{Proposition}
+\newtheorem{proposition}{Proposition}
+\newtheorem*{corollary*}{Corollary} % disable the numbering
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newtheorem{remark}{Remark}
+\newcommand{\mask}{\mathbf{m}}
+\newcommand{\rebuttal}[1]{\textcolor{black}{#1}}
+\def\rvx{{\mathbf{x}}}
+\def\rvy{{\mathbf{y}}}
+\def\rvz{{\mathbf{z}}}
+\def\rmd{{\mathrm{d}}}
+
+
+\title{Fine-Tuning Masked Diffusion for Provable\\ Self-Correction}
+
+
+\author{%
+\textbf{
+\hspace{-17.1em}
+Jaeyeon Kim}$^{1\star}$\xthanks{\hspace{-1.0em}$^\star$ Jaeyeon Kim and Seunggeun Kim contributed equally; 
+Taekyun Lee is also a co–first author.} \quad\hspace{0.1em}
+\textbf{Seunggeun Kim}$^{2\star}$ \quad\hspace{0.1em}
+\textbf{Taekyun Lee}$^{2\star}$ \\
+\hspace{-16.9em}
+\textbf{David Z. Pan}$^{2}$ \quad\hspace{0.1em}
+\textbf{Hyeji Kim}$^{2}$ \quad\hspace{0.1em}
+\textbf{Sham Kakade}$^{1,3}$ \quad\hspace{0.1em}
+\textbf{Sitan Chen}$^{1}$
+\\[0.5ex]
+\hspace{-17.2em}
+~$^1$Harvard University \quad
+$^2$UT Austin \quad
+$^3$Kempner Institute
+\vspace{-0.15in}
+} 
+
+\newcommand{\PRISM}{{PRISM }}
+\iclrfinalcopy
+\begin{document}
+\maketitle
+\begin{abstract}
+\vspace{-0.1in}
+A natural desideratum for generative models is \emph{self-correction}--detecting and revising low-quality tokens at inference. While Masked Diffusion Models (MDMs) have emerged as a promising approach for generative modeling in discrete spaces, their capacity for self-correction remains poorly understood. Prior attempts to incorporate self-correction into MDMs either require overhauling MDM architectures/training or rely on imprecise proxies for token quality, limiting their applicability. Motivated by this, we introduce PRISM--{\bf P}lug-in {\bf R}emasking for {\bf I}nference-time {\bf S}elf-correction of {\bf M}asked Diffusions--a lightweight, model-agnostic approach that applies to any pretrained MDM. Theoretically, PRISM defines a self-correction loss that provably learns per-token quality scores, without RL or a verifier. These quality scores are computed in the same forward pass with MDM and used to detect low-quality tokens. Empirically, PRISM advances MDM inference across domains and scales: Sudoku; unconditional text (170M); and code with LLaDA (8B).
+\vspace{-0.15in}
+\end{abstract}
+\input{1_Introduction}
+\input{2_Prelim}
+\input{3_Method}
+\input{4_Experiments}
+\input{5_Conclusion}
+\newpage
+\bibliography{main}
+\bibliographystyle{iclr2026_conference}
+\newpage
+\appendix
+\tableofcontents
+\input{Appendix_related_works}
+\input{Appendix_theory}
+\input{Appendix_pseudocodes}
+\input{Appendix_exp_details}
+\end{document}

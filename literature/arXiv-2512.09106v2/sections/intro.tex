@@ -1,0 +1,27 @@
+\section{Introduction}
+
+Discrete diffusion \citep{austin2021structured, hoogeboom2021argmax,DBLP:journals/corr/abs-2211-15089,DBLP:conf/icml/LouME24,DBLP:conf/nips/ShiHWDT24} has recently emerged as a compelling alternative to the predominant autoregressive (AR) modeling paradigm in large language models (LLMs). Unlike AR models, which generate the next token in a left-to-right fashion \citep{radford2018improving}, diffusion LLMs (dLLMs) generate text by learning to reverse a noising process that progressively corrupts a \textit{block} of token sequences. In particular, masked diffusion models (MDMs; \citealt{sahoo2024simple, ou2024your}), a subclass of discrete diffusion models that use time-dependent BERT-style \citep{devlin2019bert} masking as the forward noising process, have recently demonstrated impressive performance, with models like LLaDA \citep{llada2025} and Dream \citep{ye2025dream} matching the performance of similarly sized autoregressive LLMs. %
+
+
+At generation time, MDMs begin with a fully masked sequence and iteratively unmask a fixed number of tokens at randomly sampled positions in each sampling step. As a result, they offer the potential for faster inference, as they can, in principle, generate multiple tokens in parallel using a single model call. %
+Despite this promise, open-source dLLMs have, until recently, lagged behind their AR counterparts in terms of inference efficiency.
+This changed with Fast-dLLM \citep{fastdllm2025}, which demonstrated that a dLLM like LLaDA \citep{llada2025} can achieve higher token throughput than similarly sized LLaMA models \citep{dubey2024llama} while maintaining competitive performance. A key component of Fast-dLLM lies in its sampling heuristic: instead of unmasking a fixed number of randomly sampled token positions, it proposes to unmask all tokens whose confidences exceed a pre-specified threshold, resulting in adaptive sampling with a variable number of unmasked tokens per step.
+This success has since inspired further development of increasingly sophisticated sampling heuristics (see \Cref{sec:related} for a comprehensive overview), which has further advanced the state of the art.
+These heuristics can, however, be difficult to tune, and seem to work best when imposing semi-autoregressive (semi-AR) generation, in which small blocks of tokens are unmasked sequentially \citep{arriola2025block,llada2025}.
+We posit that such limitations are difficult to avoid with heuristics alone, since they are essentially handcrafted solutions to a sequential decision making problem: 
+\emph{What is the optimal order in which to unmask the sequence of tokens, in order to strike a good balance between efficiency and correctness?}
+
+
+We propose to investigate this question by moving beyond heuristics to stress instead a \textit{learning} based approach, which relies on a transformer-based unmasking policy trained using reinforcement learning (RL).
+This approach is motivated by the above observation that unmasking in dLLMs can be viewed as a (Markovian) sequential decision making problem, and follows recent successes in reinforcement learning for post-training of language models.
+However, in contrast to recent works that use RL to improve the reasoning abilities of dLLMs (e.g., \citealt{zhao2025d1}), our goal is not to improve the capacity of the underlying model, but rather to use RL to automate the discovery of adaptive sampling strategies.
+We therefore treat the underlying dLLM as the \emph{environment} in which to act, not the policy, leaving it unchanged and instead focusing a policy that is parameterized as a lightweight stand-alone network.
+Empirically, we demonstrate that our learned sampling policies match the performance of state-of-the-art heuristic samplers \citep{fastdllm2025} in standard generation settings, while also surpassing heuristics in certain scenarios, notably when moving away from semi-AR generation. %
+In summary, we make the following contributions:
+\begin{itemize}
+\item We formalize sampling in dLLMs as a Markov decision process (MDP) (\Cref{sec:methods_mdp}), propose a lightweight design for the unmasking policy %
+(\Cref{sec:methods_policy}), and outline our RL training pipeline based on group relative policy optimization (GRPO; \citealt{shao2024deepseekmath}) (\Cref{sec:methods_grpo}).
+\item We conduct extensive experiments showing that, under our proposed RL framework, learned policies can match the performance of heuristic samplers such as Fast-dLLM (\Cref{sec:exp-bl32}), while also addressing some of the challenges heuristic samplers face outside the semi-AR regime (\Cref{sec:exp-bl256}).
+\item We study the transferability of our learned samplers across different models and data domains (\Cref{sec:exp-transfer}), and provide detailed insights into stabilizing RL training and policy design (\Cref{sec:exp-ablate}).
+\end{itemize}
+

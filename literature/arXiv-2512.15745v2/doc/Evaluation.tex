@@ -1,0 +1,68 @@
+\renewcommand{\thesubfigure}{\alph{subfigure}}
+\section{Evaluation}
+\subsection{Setup}
+To comprehensively evaluate the quality of instruction-tuned models, we employ a diverse suite of benchmarks categorized into five dimensions:
+
+\begin{itemize}
+    \item \textbf{Knowledge}: MMLU \citep{hendrycks2020mmlu}, MMLU-Pro \citep{wang2024mmlupro}, GPQA-Diamond \citep{rein2024gpqa}, ARC \citep{clark2018think}, CMMLU \citep{li2023cmmlu} C-Eval \citep{huang2023ceval}, GAOKAO-Bench \citep{zhang2023evaluating}, SciBench \citep{wang2023scibench}, PHYBench \citep{qiu2025phybench}, TriviaQA \citep{joshi2017triviaqa}
+    \item \textbf{Reasoning}: SQuAD 2.0 \citep{rajpurkar2018know}, DROP \citep{dua2019drop}, KOR-Bench \citep{ma2024kor}, HellaSwag \citep{zellers2019hellaswag}, BIG-Bench Hard \citep{suzgun2023challenging}, BIG-Bench Extra Hard \citep{kazemi2025big}, MuSR \citep{sprague2023musr}, ZebraLogic \citep{lin2025zebralogic}, PrOntoQA \citep{saparov2022language}, PIQA \citep{bisk2020piqa}, OCNLI \citep{hu2020ocnli}, BIG-Bench Hard-CN \citep{opencompass}
+    \item \textbf{Coding}: CRUXEval \citep{gu2024cruxeval}, MBPP \citep{austin2021program}, MultiPL-E \citep{cassano2023multiple}, HumanEval \citep{chen2021evaluating}, BigCodeBench \citep{zhuo2024bigcodebench}, LiveCodeBench \citep{jain2024livecodebench}, Spider \citep{yu2018spider}, BIRD \citep{li2023can}, HumanEval+ \citep{liu2023your}, MBPP+ \citep{liu2023your}, HumanEvalFix \citep{muennighoff2023octopack}, Aider \citep{aider}, HumanEval-CN \citep{opencompass}
+    \item \textbf{Math}: GSM8K \citep{cobbe2021gsm8k}, MATH \citep{hendrycks2021math}, OlympiadBench \citep{he2024olympiadbench}, AIME 2025 \citep{aime2025aime}, Omni-MATH \citep{gao2024omni}, HARDMath2 \citep{roggeveen2025hardmath2}, GSM-Plus \citep{li2024gsm}, CMATH \citep{wei2023cmath}
+    \item \textbf{Agent \& Alignment}: BFCL \citep{patil2025bfcl}, IFEval \citep{zhou2023ifeval}, CodeIF-Bench \citep{wang2025codeif}, Nexus Function Calling Benchmark \citep{nexusraven}
+\end{itemize}
+
+This extensive evaluation suite, comprising a total of 47 benchmarks, provides a holistic foundation for assessing model capabilities. In our experiments, we compare the LLaDA2.0 series against strong open-source auto-regressive (AR) models.
+
+For all LLaDA2.0 models, we utilize a temperature of 0.0, a block size of 32, and a decoding threshold of 0.95.
+
+\subsection{Results}
+The overall results, presented in the following tables, indicate that the LLaDA2.0 architecture is not only highly competitive, but also shows a promising trend of closing the performance gap with, and even surpassing, AR models in specific key areas. Our models consistently demonstrate strong, and often superior, performance in complex, structured tasks. For instance, LLaDA2.0-mini already outperforms a comparable AR model (Qwen3-8B) in the domains of Reasoning, Coding, and Math. This signal is amplified in our larger model, as LLaDA2.0-flash achieves parity with the powerful Qwen3-30B-A3B-Instruct-2507 and establishes a lead in the critical Coding and Agent domains. This suggests that as diffusion models scale, their inherent strengths in structured generation and tool use become increasingly apparent.
+
+\input{tables/main_llada2_mini_results}
+\input{tables/main_llada2_flash_results}
+
+As shown in \Cref{tab:mini_benchmark}, \textbf{LLaDA2.0-mini} achieves a competitive average score of 64.34, closely approaching its AR peer, Ling-mini-2.0 (65.77). This demonstrates the fundamental viability of the diffusion approach. More importantly, it shows promising signals in complex tasks, outperforming its direct competitor on reasoning benchmarks like SQuAD 2.0 (86.50) and demonstrating more robust instruction following on IFEval (80.78). Its strong performance in coding tasks such as HumanEval (86.59) further suggests an early aptitude for structured generation.
+
+This potential becomes even more evident with our larger model, \textbf{LLaDA2.0-flash}. As shown in \Cref{tab:flash_benchmark}, with an average score of 73.18, it stands firmly on par with strong AR models such as Qwen3-30B-A3B-Instruct-2507 (73.60). Crucially, LLaDA2.0-flash begins to exhibit clear advantages in complex generative tasks, a sign that the diffusion architecture may hold inherent strengths. In the critical domain of coding, it consistently outperforms its AR peers, scoring higher on HumanEval (94.51), MBPP (88.29) and MultiPL-E (74.87). This trend of surpassing AR models also extends to agent capabilities (BFCL v3: 75.43) and advanced mathematics (AIME 2025: 60.00).
+
+In conclusion, the LLaDA2.0 series successfully demonstrates that diffusion-based language models are a powerful and scalable alternative to the dominant auto-regressive paradigm. While rapidly narrowing the gap on general benchmarks, they are already showcasing the potential to surpass traditional architectures in complex, structured domains like code generation and tool use. This positions diffusion models as a highly promising direction for the future of language generation.
+
+\subsection{Analysis}
+\paragraph{Analysis of Inference Hyper-parameters}
+
+In addition to our main evaluation, we conducted a brief analysis to tune key inference hyperparameters. To ensure efficiency, this analysis was performed on our LLaDA2.0-mini model, using a representative subset of our benchmarks to understand the trade-off between generation quality (score) and inference speed (measured as TPF - Tokens Per Forward; higher is faster).
+
+\begin{figure}[t]
+    \centering
+    \small
+    \begin{minipage}{0.47\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/llada2_line_tps_score}
+        \caption{Score/TPF vs threshold/block size}
+        \label{fig:params}
+    \end{minipage}%
+    \hfill
+    \begin{minipage}{0.5\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{images/ctxlen.pdf}
+        \caption{Performance on the RULER benchmark.}
+        \label{fig:ctxlen}
+    \end{minipage}
+    \vspace{-2ex}
+\end{figure}
+
+\textbf{Denoising Threshold}. We first investigate the impact of the Denoising Threshold. While keeping the Block Size fixed at 32, we varied the threshold and observed its effect on quality and speed. As shown in \Cref{fig:params}, the results reveal a clear trade-off. A threshold of 0.95 achieved the highest quality score (70.15) at the cost of the lowest inference speed (2.55 TPF). Lowering the threshold to 0.85 boosted the speed to its peak (3.31 TPF), but led to an unacceptable degradation in quality, with the score dropping to 67.90.
+
+\textbf{Block Size}. Subsequently, we analyze the effect of Block Size. We set the Denoising Threshold to 0.95, the optimal value identified in the prior experiment. The results in \Cref{fig:params} demonstrate a similar trade-off. A block size of 16 yielded the highest score (70.26) but with the slowest inference (2.44 TPF). In contrast, increasing the block size to 32 substantially improved the speed to 2.55 TPF with only a marginal quality drop to 70.15. Further increasing the block size to 64 proved suboptimal, as it degraded both score and speed relative to the size-32 setting. Therefore, a block size of 32 emerges as the most compelling choice, offering a significant speed-up for a negligible performance cost.
+
+\textit{In summary}, based on this analysis, the configuration for our main evaluation is well-supported. The Denoising Threshold of 0.95 is the clear choice for maximizing quality. For block-size, the setting of 32 represents an optimal balance, providing the highest throughput with virtually no sacrifice in performance compared to the slightly higher-scoring but slower setting of 16.
+
+\paragraph{Analysis of Context Length}
+
+To rigorously validate our model's performance across various context lengths, we conducted a series of evaluations using the RULER benchmark.
+
+As shown in \Cref{fig:ctxlen}, both models demonstrate strong performance and stability within context length of 32k. The LLaDA2.0-flash model is particularly robust, maintaining a score above 93 across all lengths from 4k to 32k. The LLaDA2.0-mini model also achieves high scores, starting at 93.29 for 4k but showing a degradation to 83.94 at 32k.
+
+To test the models' extrapolation capabilities, we extended the context length to 64k. This was achieved by employing dynamic RoPE scaling during inference, specifically using the YaRN method with a scaling factor of 2.0. However, this extension resulted in a performance degradation for both models, demonstrating a clear trade-off between context length extension and task accuracy.
+
+\textit{In summary}, this evaluation highlights two key findings: (1) The LLaDA2.0 models are exceptionally robust for long-context tasks within their native 32k window. (2) They can be successfully extended to handle 64k sequences via YaRN scaling, providing flexibility for extreme-length applications, albeit with a predictable performance cost.

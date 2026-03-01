@@ -1,0 +1,16 @@
+\section{Infrastructure}
+\subsection{Training Infrastructure}
+
+\paragraph{Continued Pre-Training and Supervised Fine-Tuning}
+For both continued pre-training (CPT) and supervised fine-tuning (SFT), we adopt the same training infrastructure as LLaDA2.0~\citep{bie_llada20_2025}, leveraging dFactory~\citep{dfactory}, which provides efficient training recipes specifically designed for dLLMs, except that we introduce a dedicated optimized implementation for the multi-turn forward (MTF) stage. 
+
+\paragraph{RL Training}
+To enable effective policy optimization for dLLMs, we extend the AReaL framework~\citep{fu2025areal, mei2025real} by developing specialized likelihood estimation and advantage estimation protocols that leverage diffusion sampling, explicitly supporting both T2T and M2T modes. This workflow is powered by ASystem~\citep{lingteam2025stepevolvesscalingreinforcement} for distributed orchestration and utilizes a customized version of SGLang~\citep{antgroupdeepxputeamPowerDiffusionLLMs} as the dedicated rollout engine.
+
+\subsection{Inference Infrastructure}
+We use a customized version of SGLang~\citep{antgroupdeepxputeamPowerDiffusionLLMs} for inference. To further accelerate the inference speed, we integrate Alpha-MoE~\citep{alphamoe}, a MoE megakernel that combines the two FusedMoE computations into one kernel, and adopt per-block FP8 quantization to balance the inference speed and model accuracy. To accelerate inference on long-context sequences, we adopt block-wise causal masked attention, allowing the KV cache for the entire long context to be computed in a single forward pass. We further enable radix caching and batching support for block diffusion LLMs in SGLang.
+
+\subsection{Decoding Algorithm at Inference}
+In the inference stage, we adopt a decoding algorithm that combines Threshold Decoding~\citep{ma2025dinfer} with an explicit editing mechanism. In the basic setting, decoding and editing are performed within a single block: tokens are generated under a threshold-based constraint, and local edits are applied to revise intermediate outputs before the block is finalized.
+
+Beyond single-block editing, we further introduce a \textbf{Multiple Block Editing (MBE)} mechanism. MBE allows the model to revisit and revise previously generated blocks based on the content of newly decoded blocks.

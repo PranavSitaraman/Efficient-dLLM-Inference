@@ -1,0 +1,205 @@
+\documentclass{article}
+
+
+% if you need to pass options to natbib, use, e.g.:
+\PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2025
+
+
+% ready for submission
+% \usepackage{neurips_2025}
+
+
+% to compile a preprint version, e.g., for submission to arXiv, add add the
+% [preprint] option:
+\usepackage[preprint]{neurips_2025}
+
+
+% to compile a camera-ready version, add the [final] option, e.g.:
+%     \usepackage[final]{neurips_2025}
+
+
+% to avoid loading the natbib package, add option nonatbib:
+%    \usepackage[nonatbib]{neurips_2025}
+
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{wrapfig} 
+\usepackage{booktabs}    % For nicer rules in tables
+\usepackage{multirow}    % For multirow cells
+
+\usepackage[]{mdframed}
+\usepackage{framed}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{dsfont}
+\usepackage{makecell}
+\usepackage{enumitem, enumerate}
+\usepackage{tikz}
+\usepackage{booktabs}      % For professional-quality tables (\toprule, \midrule, etc.)
+\usepackage{xcolor}        % For \textcolor
+
+\usetikzlibrary{arrows.meta}
+\usepackage{amsmath, amssymb}
+\usepackage[noend]{algpseudocode}
+\usepackage{algorithm}
+\usepackage{algorithmicx}
+\usepackage{algpseudocode}
+\usepackage[most]{tcolorbox}
+\tcbuselibrary{breakable, listings}
+\usepackage{listings}
+\usepackage{colortbl}
+\usepackage{float, caption} % For minipage
+
+
+
+
+% Define colors for better readability
+\definecolor{lightgray}{gray}{0.9}
+
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage[capitalize,noabbrev,nameinlink]{cleveref}
+\usepackage{url}
+
+\tcbuselibrary{listings,breakable}
+\usepackage{graphicx}
+
+% Define colors if needed
+\definecolor{ForestGreen}{RGB}{34,139,34}
+\definecolor{Crimson}{RGB}{220,20,60}
+\usepackage{lineno}
+\usepackage{soul} 
+\usepackage{xspace}
+\usepackage{enumerate}
+
+
+\sethlcolor{lightgray}
+\definecolor{darkblue}{rgb}{0, 0, 0.5}
+\hypersetup{colorlinks=true, citecolor=darkblue, linkcolor=darkblue, urlcolor=darkblue}
+
+\newcommand{\mask}{{\texttt{mask}}}
+\newcommand{\grpo}{\emph{diffu}-GRPO\xspace}
+\newcommand{\budget}{\emph{diffu}-Budget Forcing}
+\newcommand{\piold}{\pi_{\theta_{\text{old}}}}
+\newcommand{\piref}{\pi_\text{ref}}
+\newcommand{\D}{\mathcal{D}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\set}[1]{\left\{#1\right\}}
+\newcommand{\indicator}{\mathds{1}}
+
+\newcommand{\sz}[1]{\textcolor{green}{[SZ: #1]}}
+\newcommand{\qq}[1]{\textcolor{orange}{[QQ: #1]}}
+\newcommand{\dev}[1]{\textcolor{red}{[Dev: #1]}}
+\newcommand{\ag}[1]{\textcolor{blue}{[AG: #1]}}
+
+\usepackage{titlesec}
+%\titlespacing{\section}{0pt}{5pt}{0pt}
+%\titlespacing{\subsection}{0pt}{5pt}{0pt}
+%\titlespacing{\subsubsection}{0pt}{5pt}{0pt}
+\titlespacing{\paragraph}{0pt}{0pt}{5pt}
+% \setlength{\textfloatsep}{5pt}
+% \setlength{\floatsep}{5pt}
+% \setlength{\abovedisplayskip}{5pt}
+% \setlength{\belowdisplayskip}{5pt}
+% \setlength\intextsep{7pt}
+
+
+
+
+\title{ \emph{d1}: Scaling Reasoning in Diffusion Large Language Models via Reinforcement Learning}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to break the
+% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
+% authors names on the first line, and the last on the second line, try using
+% \AND instead of \And before the third author name.
+
+
+\author{%
+  Siyan Zhao\thanks{Equal contribution.} \\
+  UCLA
+  \And
+  Devaansh Gupta\footnotemark[1] \\
+  UCLA
+  \And
+  Qinqing Zheng\thanks{Equal advising.} \\
+  Meta AI
+  \And
+  Aditya Grover\footnotemark[2] \\
+  UCLA
+}
+
+
+
+\begin{document}
+
+
+\maketitle
+
+
+\begin{abstract}
+
+
+Recent large language models (LLMs) have demonstrated strong reasoning capabilities that benefits from online reinforcement learning (RL).
+These capabilities have primarily been demonstrated within the left-to-right autoregressive (AR) generation paradigm. 
+In contrast, non-autoregressive paradigms based on diffusion generate text in a coarse-to-fine manner. Although recent diffusion-based large language models (dLLMs) have achieved competitive language modeling performance compared to their AR counterparts, it remains unclear if dLLMs can also leverage recent advances in LLM reasoning.
+To this end, we propose \emph{d1}, a framework to adapt pre-trained masked dLLMs into reasoning models via a combination of supervised finetuning (SFT) and RL.
+Specifically, we develop and extend techniques to improve reasoning in pretrained dLLMs: (a) we utilize a masked SFT technique to distill knowledge and instill self-improvement behavior directly from existing datasets, and (b) we introduce a novel critic-free, policy-gradient based RL algorithm called \grpo, the first integration of policy gradient methods to masked dLLMs. Through empirical studies, we investigate the performance of different post-training recipes on multiple mathematical and planning benchmarks. We find that \emph{d1} yields the best performance and significantly improves performance of a state-of-the-art dLLM. Our code is released at \url{https://dllm-reasoning.github.io/}.
+
+
+\end{abstract}
+
+
+\input{sections/intro}
+\input{sections/background}
+\input{sections/method}
+\input{sections/experiments}
+\input{sections/concise_relatedwork}
+\input{sections/conclusion}
+
+\newpage
+\bibliographystyle{plainnat}
+\bibliography{citation}
+\clearpage
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\input{sections/appendix}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \clearpage
+% \newpage
+
+% \section*{NeurIPS Paper Checklist}
+
+% %%% BEGIN INSTRUCTIONS %%%
+% The checklist is designed to encourage best practices for responsible machine learning research, addressing issues of reproducibility, transparency, research ethics, and societal impact. Do not remove the checklist: {\bf The papers not including the checklist will be desk rejected.} The checklist should follow the references and follow the (optional) supplemental material.  The checklist does NOT count towards the page
+% limit. 
+
+% Please read the checklist guidelines carefully for information on how to answer these questions. For each question in the checklist:
+% \begin{itemize}
+%     \item You should answer \answerYes{}, \answerNo{}, or \answerNA{}.
+%     \item \answerNA{} means either that the question is Not Applicable for that particular paper or the relevant information is Not Available.
+%     \item Please provide a short (1–2 sentence) justification right after your answer (even for NA). 
+%    % \item {\bf The papers not including the checklist will be desk rejected.}
+% \end{itemize}
+
+% {\bf The checklist answers are an integral part of your paper submission.} They are visible to the reviewers, area chairs, senior area chairs, and ethics reviewers. You will be asked to also include it (after eventual revisions) with the final version of your paper, and its final version will be published with the paper.
+
+% The reviewers of your paper will be asked to use the checklist as one of the factors in their evaluation. While "\answerYes{}" is generally preferable to "\answerNo{}", it is perfectly acceptable to answer "\answerNo{}" provided a proper justification is given (e.g., "error bars are not reported because it would be too computationally expensive" or "we were unable to find the license for the dataset we used"). In general, answering "\answerNo{}" or "\answerNA{}" is not grounds for rejection. While the questions are phrased in a binary way, we acknowledge that the true answer is often more nuanced, so please just use your best judgment and write a justification to elaborate. All supporting evidence can appear either in the main paper or the supplemental material, provided in appendix. If you answer \answerYes{} to a question, in the justification please point to the section(s) where related material for the question can be found.
+
+% IMPORTANT, please:
+% \begin{itemize}
+%     \item {\bf Delete this instruction block, but keep the section heading ``NeurIPS Paper Checklist"},
+%     \item  {\bf Keep the checklist subsection headings, questions/answers and guidelines below.}
+%     \item {\bf Do not modify the questions and only use the provided macros for your answers}.
+% \end{itemize} 
+ 
+
+
+
+\end{document}

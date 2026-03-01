@@ -1,0 +1,38 @@
+\section{Theoretical Details} \label{app:theory}
+
+\subsection{Concentration of the Supervision Region} \label{app:theory_concentration}
+
+\renewcommand{\themaster}{3.1} 
+\begin{proposition}[Supervision region] \label{prop:training_region}
+Let $\delta \in (0,1)$, empirical data $\{\rvx^{(i)}\}_{i=1}^{N}$, and $\rvz_t \sim \hat{p}_t$. Then
+\begin{equation*}
+  \mathbb{P}(\rvz_t \in \mathcal{T}_t(\delta)) \ge 1-\delta,\quad  \mathcal{T}_t(\delta) \colon =\Big\{\rvz : \exists\,i\in [N], \left|\|\rvz - \alpha_t \rvx^{(i)} \| - \sigma_t \sqrt{d} \right| \leq \sigma_t \sqrt{d\log(1/\delta)}\Big\}.
+    \vspace{-0.2\baselineskip}
+\end{equation*}
+\begin{proof}
+We use the well-known fact that for a $d$-dimensional standard Gaussian vector $\rveps\sim\mathcal{N}(0,\mI)$,
+\begin{equation*}
+    \left|\norm{\rveps}- \sqrt{d}\right|\le \sqrt{d\log(1/\delta)}
+\end{equation*}
+which holds with probability at least $1-\delta$. Next, recall the $\delta$-supervision region
+\begin{equation*}
+  \mathcal{T}_t(\delta) \colon =\Big\{\rvz : \exists\,i\in [N], \left|\|\rvz - \alpha_t \rvx^{(i)} \| - \sigma_t \sqrt{d} \right| \leq \sigma_t \sqrt{d\log(1/\delta)}\Big\}.
+\end{equation*}
+Therefore, for $\rvz_t \sim \hat{p}_t$,
+\begin{equation*}
+    \mathbb{P}\left(\rvz\notin \mathcal{T}_t(\delta)\right) \le \frac{1}{N}\sum_{i=1}^N  \mathbb{P}_{\rveps\sim\mathcal{N}(0,\mI),\rvz=\alpha_t \rvx^{(i)}+\sigma_t\rveps}\left(\left|\|\rvz - \alpha_t \rvx^{(i)} \| - \sigma_t \sqrt{d} \right| > \sigma_t \sqrt{d\log(1/\delta)}\right) \le \delta.
+\end{equation*}
+\end{proof}
+\end{proposition}
+
+\subsection{Non-Overlapping Property of the Supervision Region} \label{app:theory_overlap}
+
+We quantify distributional overlap of supervised shells using the Bhattacharyya coefficient: for two distributions $p$ and $q$ on $\R^d$,
+\begin{equation*}
+    0\le \int_{\mathbb{R}^d} \sqrt{p(\rvz)q(\rvz)}\mathrm{d}\rvz_t \le 1.
+\end{equation*}
+For the Gaussians $\gN(\rvz_t;\alpha_t \rvx^{(i)},\sigma_t\mI)$, the worst-case Bhattacharyya coefficient across shells simplifies to
+\begin{equation*}
+     C(t) := \max_{i \neq j} \int_{\R^d} \sqrt{\hat{p}_t^{(i)}(\rvz_t) \hat{p}_t^{(j)}(\rvz_t)} \mathrm{d}\rvz_t = \max_{i \neq j}\left[\exp\left(-\frac{\alpha_t^2 \norm{\rvx^{(i)}-\rvx^{(j)}}^2}{8\sigma_t^2}\right)\right].
+\end{equation*}
+Evaluating this constant on the ImageNet dataset~\citep{deng2009imagenet} and in the latent space of the SD-VAE~\citep{rombach2022high} yields \Cref{fig:phase-transition}.

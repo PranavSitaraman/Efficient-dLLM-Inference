@@ -1,0 +1,117 @@
+\begin{thebibliography}{10}
+
+\bibitem{sohl2015deep}
+J.~Sohl-Dickstein, E.~Weiss, N.~Maheswaranathan, and S.~Ganguli, ``Deep unsupervised learning using nonequilibrium thermodynamics,'' in {\em International conference on machine learning}, pp.~2256--2265, pmlr, 2015.
+
+\bibitem{ho2020denoising}
+J.~Ho, A.~Jain, and P.~Abbeel, ``Denoising diffusion probabilistic models,'' {\em Advances in neural information processing systems}, vol.~33, pp.~6840--6851, 2020.
+
+\bibitem{song2020score}
+Y.~Song, J.~Sohl-Dickstein, D.~P. Kingma, A.~Kumar, S.~Ermon, and B.~Poole, ``Score-based generative modeling through stochastic differential equations,'' {\em arXiv preprint arXiv:2011.13456}, 2020.
+
+\bibitem{austin2021structured}
+J.~Austin, D.~D. Johnson, J.~Ho, D.~Tarlow, and R.~Van Den~Berg, ``Structured denoising diffusion models in discrete state-spaces,'' {\em Advances in neural information processing systems}, vol.~34, pp.~17981--17993, 2021.
+
+\bibitem{campbell2022continuous}
+A.~Campbell, J.~Benton, V.~De~Bortoli, T.~Rainforth, G.~Deligiannidis, and A.~Doucet, ``A continuous time framework for discrete denoising models,'' {\em Advances in Neural Information Processing Systems}, vol.~35, pp.~28266--28279, 2022.
+
+\bibitem{lou2023discrete}
+A.~Lou, C.~Meng, and S.~Ermon, ``Discrete diffusion modeling by estimating the ratios of the data distribution,'' {\em arXiv preprint arXiv:2310.16834}, 2023.
+
+\bibitem{nie2025large}
+S.~Nie, F.~Zhu, Z.~You, X.~Zhang, J.~Ou, J.~Hu, J.~Zhou, Y.~Lin, J.-R. Wen, and C.~Li, ``Large language diffusion models,'' {\em arXiv preprint arXiv:2502.09992}, 2025.
+
+\bibitem{dream2025}
+J.~Ye, Z.~Xie, L.~Zheng, J.~Gao, Z.~Wu, X.~Jiang, Z.~Li, and L.~Kong, ``Dream 7b,'' 2025.
+
+\bibitem{ewer2024entp}
+E.~Ewer, D.~Chae, T.~Zeng, J.~Kim, and K.~Lee, ``Entp: Encoder-only next token prediction,'' {\em arXiv preprint arXiv:2410.01600}, 2024.
+
+\bibitem{li2024autoregressive}
+T.~Li, Y.~Tian, H.~Li, M.~Deng, and K.~He, ``Autoregressive image generation without vector quantization,'' {\em Advances in Neural Information Processing Systems}, vol.~37, pp.~56424--56445, 2024.
+
+\bibitem{uria2016neural}
+B.~Uria, M.-A. C{\^o}t{\'e}, K.~Gregor, I.~Murray, and H.~Larochelle, ``Neural autoregressive distribution estimation,'' {\em Journal of Machine Learning Research}, vol.~17, no.~205, pp.~1--37, 2016.
+
+\bibitem{yang2019xlnet}
+Z.~Yang, Z.~Dai, Y.~Yang, J.~Carbonell, R.~R. Salakhutdinov, and Q.~V. Le, ``Xlnet: Generalized autoregressive pretraining for language understanding,'' {\em Advances in neural information processing systems}, vol.~32, 2019.
+
+\bibitem{hoogeboom2021autoregressive}
+E.~Hoogeboom, A.~A. Gritsenko, J.~Bastings, B.~Poole, R.~v.~d. Berg, and T.~Salimans, ``Autoregressive diffusion models,'' {\em arXiv preprint arXiv:2110.02037}, 2021.
+
+\bibitem{pannatier2024sigma}
+A.~Pannatier, E.~Courdier, and F.~Fleuret, ``$\sigma$-gpts: A new approach to autoregressive models,'' in {\em Joint European Conference on Machine Learning and Knowledge Discovery in Databases}, pp.~143--159, Springer, 2024.
+
+\bibitem{hoogeboom2021argmax}
+E.~Hoogeboom, D.~Nielsen, P.~Jaini, P.~Forr{\'e}, and M.~Welling, ``Argmax flows and multinomial diffusion: Learning categorical distributions,'' {\em Advances in neural information processing systems}, vol.~34, pp.~12454--12465, 2021.
+
+\bibitem{shi2024simplified}
+J.~Shi, K.~Han, Z.~Wang, A.~Doucet, and M.~Titsias, ``Simplified and generalized masked diffusion for discrete data,'' {\em Advances in neural information processing systems}, vol.~37, pp.~103131--103167, 2024.
+
+\bibitem{sahoo2024simple}
+S.~Sahoo, M.~Arriola, Y.~Schiff, A.~Gokaslan, E.~Marroquin, J.~Chiu, A.~Rush, and V.~Kuleshov, ``Simple and effective masked diffusion language models,'' {\em Advances in Neural Information Processing Systems}, vol.~37, pp.~130136--130184, 2024.
+
+\bibitem{zheng2024masked}
+K.~Zheng, Y.~Chen, H.~Mao, M.-Y. Liu, J.~Zhu, and Q.~Zhang, ``Masked diffusion models are secretly time-agnostic masked models and exploit inaccurate categorical sampling,'' {\em arXiv preprint arXiv:2409.02908}, 2024.
+
+\bibitem{ou2024your}
+J.~Ou, S.~Nie, K.~Xue, F.~Zhu, J.~Sun, Z.~Li, and C.~Li, ``Your absorbing discrete diffusion secretly models the conditional distributions of clean data,'' {\em arXiv preprint arXiv:2406.03736}, 2024.
+
+\bibitem{devlin2019bert}
+J.~Devlin, M.-W. Chang, K.~Lee, and K.~Toutanova, ``Bert: Pre-training of deep bidirectional transformers for language understanding,'' in {\em Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers)}, pp.~4171--4186, 2019.
+
+\bibitem{kaplan2020scaling}
+J.~Kaplan, S.~McCandlish, T.~Henighan, T.~B. Brown, B.~Chess, R.~Child, S.~Gray, A.~Radford, J.~Wu, and D.~Amodei, ``Scaling laws for neural language models,'' {\em arXiv preprint arXiv:2001.08361}, 2020.
+
+\bibitem{liu2024discrete}
+A.~Liu, O.~Broadrick, M.~Niepert, and G.~V.~d. Broeck, ``Discrete copula diffusion,'' {\em arXiv preprint arXiv:2410.01949}, 2024.
+
+\bibitem{xu2024energy}
+M.~Xu, T.~Geffner, K.~Kreis, W.~Nie, Y.~Xu, J.~Leskovec, S.~Ermon, and A.~Vahdat, ``Energy-based diffusion language models for text generation,'' {\em arXiv preprint arXiv:2410.21357}, 2024.
+
+\bibitem{Gokaslan2019OpenWeb}
+A.~Gokaslan and V.~Cohen, ``Openwebtext corpus.'' \url{http://Skylion007.github.io/OpenWebTextCorpus}, 2019.
+
+\bibitem{paperno2016lambada}
+D.~Paperno, G.~Kruszewski, A.~Lazaridou, Q.~N. Pham, R.~Bernardi, S.~Pezzelle, M.~Baroni, G.~Boleda, and R.~Fern{\'a}ndez, ``The lambada dataset: Word prediction requiring a broad discourse context,'' {\em arXiv preprint arXiv:1606.06031}, 2016.
+
+\bibitem{merity2016pointer}
+S.~Merity, C.~Xiong, J.~Bradbury, and R.~Socher, ``Pointer sentinel mixture models,'' 2016.
+
+\bibitem{marcus1993building}
+M.~Marcus, B.~Santorini, and M.~A. Marcinkiewicz, ``Building a large annotated corpus of english: The penn treebank,'' {\em Computational linguistics}, vol.~19, no.~2, pp.~313--330, 1993.
+
+\bibitem{chelba2013one}
+C.~Chelba, T.~Mikolov, M.~Schuster, Q.~Ge, T.~Brants, P.~Koehn, and T.~Robinson, ``One billion word benchmark for measuring progress in statistical language modeling,'' {\em arXiv preprint arXiv:1312.3005}, 2013.
+
+\bibitem{arriola2025block}
+M.~Arriola, A.~Gokaslan, J.~T. Chiu, Z.~Yang, Z.~Qi, J.~Han, S.~S. Sahoo, and V.~Kuleshov, ``Block diffusion: Interpolating between autoregressive and diffusion language models,'' {\em arXiv preprint arXiv:2503.09573}, 2025.
+
+\bibitem{perez2018film}
+E.~Perez, F.~Strub, H.~De~Vries, V.~Dumoulin, and A.~Courville, ``Film: Visual reasoning with a general conditioning layer,'' in {\em Proceedings of the AAAI conference on artificial intelligence}, vol.~32, 2018.
+
+\bibitem{peebles2023scalable}
+W.~Peebles and S.~Xie, ``Scalable diffusion models with transformers,'' in {\em Proceedings of the IEEE/CVF international conference on computer vision}, pp.~4195--4205, 2023.
+
+\bibitem{germain2015made}
+M.~Germain, K.~Gregor, I.~Murray, and H.~Larochelle, ``Made: Masked autoencoder for distribution estimation,'' in {\em International conference on machine learning}, pp.~881--889, PMLR, 2015.
+
+\bibitem{strauss2021arbitrary}
+R.~Strauss and J.~B. Oliva, ``Arbitrary conditional distributions with energy,'' {\em Advances in Neural Information Processing Systems}, vol.~34, pp.~752--763, 2021.
+
+\bibitem{shih2022training}
+A.~Shih, D.~Sadigh, and S.~Ermon, ``Training and inference on any-order autoregressive models the right way,'' {\em Advances in Neural Information Processing Systems}, vol.~35, pp.~2762--2775, 2022.
+
+\bibitem{gu2019insertion}
+J.~Gu, Q.~Liu, and K.~Cho, ``Insertion-based decoding with automatically inferred generation order,'' {\em Transactions of the Association for Computational Linguistics}, vol.~7, pp.~661--676, 2019.
+
+\bibitem{kim2025train}
+J.~Kim, K.~Shah, V.~Kontonis, S.~Kakade, and S.~Chen, ``Train for the worst, plan for the best: Understanding token ordering in masked diffusions,'' {\em arXiv preprint arXiv:2502.06768}, 2025.
+
+\bibitem{yu2024randomized}
+Q.~Yu, J.~He, X.~Deng, X.~Shen, and L.-C. Chen, ``Randomized autoregressive visual generation,'' {\em arXiv preprint arXiv:2411.00776}, 2024.
+
+\bibitem{pang2024randar}
+Z.~Pang, T.~Zhang, F.~Luan, Y.~Man, H.~Tan, K.~Zhang, W.~T. Freeman, and Y.-X. Wang, ``Randar: Decoder-only autoregressive visual generation in random orders,'' {\em arXiv preprint arXiv:2412.01827}, 2024.
+
+\end{thebibliography}

@@ -1,0 +1,28 @@
+\section{d1: Adapting Pre-trained Masked dLLMs to Reasoning Models}
+
+
+We propose d1, a two-stage framework that enhances the reasoning performance of pre-trained masked dLLMs by sequentially combining SFT and online RL. \looseness=-1
+
+
+Online RL, particularly the GRPO algorithm,  has demonstrated its efficacy in improving the performance of offline trained language model~\citep{shao2024deepseekmath, guo2025deepseek, team2025kimi}. 
+However, the learning formulation of GRPO does not directly generalize to dLLMs. The objective of GRPO \eqref{eq:grpo_loss} requires computing the (log-)likelihood ratio of $\pi_\theta$ and $\pi_{\theta_{\text{old}}}$, at both the token level (for the advantage weights) and the sequence level (for the reverse KL term). \hl{Generally speaking, we need to efficiently compute the per-token and the sequence log-probability of dLLMs' completion $o$.} Autoregressive~(AR) models, such as Transformers, directly model the per-token log-probabilities, and the sequence-level log-probability of $o$ can be easily computed through the chain rule using one forward pass:
+$\log \pi_\text{AR}(o|q) = \sum_{k=1}^{|o|} \log \pi_\text{AR}(o^k|q, o^{<k})$. Similarly, the KL term can be decomposed as
+$
+D_{\text{KL}}\left[\pi_\theta(\cdot | q)\| \pi_\text{ref}(\cdot | q) \right] = \E_{o \sim \pi_\theta(\cdot \mid q)} \left[ \sum_{k=1}^{|o_i|} \log \frac{\pi_\theta(o^k|q, o^{<k})}{\piref(o^k|q, o^{<k})}   \right]
+$. Unlike AR models, dLLMs do not adhere to sequential factorization of the sequence log-probability. Meanwhile, the per-token log-probability are also costly to compute since the decoding process invokes the unmasking predictor $f_\theta$ multiple times\footnote{In other words, $\pi_\theta$ is a composition of $M$ $f_\theta$ functions for a $M$-step decoding process}. As the first step, we propose an efficient log-probability estimator in \cref{sec:method_logprob}. Next, using these estimators, we introduce \grpo, a variant of GRPO for dLLMs in \cref{sec:method_grpo}. Last, we discuss our SFT recipe in \cref{sec:method_sft}.
+
+
+\input{sections/method_grpo}
+
+\vspace{-2mm}
+\subsection{Supervised FineTuning with Reasoning Data}
+\vspace{-2mm}
+\label{sec:method_sft}
+We perform SFT of LLaDA on s1K \citep{muennighoff2025s1}, a curated dataset consisting of 1000 high-quality reasoning questions. 
+The reasoning traces in s1K exhibit detailed step-by-step problem-solving processes, including verification of intermediate results and backtracking when encountering errors or dead ends. 
+The SFT algorithm is summarized in \cref{alg:llada_sft}, where tokens are randomly masked during training according to a time-varying schedule. The model is optimized to predict the original tokens given their context. We find that for SFT to work effectively in practice, various design choices must be carefully considered, whose details are discussed in Appendix~\ref{appendix:sft-design}.
+
+
+
+
+

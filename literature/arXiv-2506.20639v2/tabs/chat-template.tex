@@ -1,0 +1,57 @@
+% Requires: \usepackage{tcolorbox,caption}
+\begin{table}[h]
+    \centering
+    \begin{minipage}[t]{0.48\textwidth}
+        \captionsetup{width=\linewidth}
+        \caption{Chat template during the evaluation for HumanEval and BigCodeBench (C).}
+        \label{tab:temp1}
+        \centering
+        \begin{tcolorbox}[
+            colback=gray!10,
+            boxrule=0.5pt,
+            left=2mm,right=2mm,
+            top=2mm,bottom=2mm,
+            width=\linewidth,
+        ]
+{\ttfamily\small
+<|im\_start|>system\\
+You are a helpful assistant.<|im\_end|>\\
+<|im\_start|>user\\
+Please complete the following problem:\\
+```\\
+\{prompt\}\\
+```\\
+<|im\_end|>\\
+<|im\_start|>assistant\\
+Here is the code to solve this problem:\\
+```python
+}
+        \end{tcolorbox}
+    \end{minipage}\hfill
+    \begin{minipage}[t]{0.48\textwidth}
+        \captionsetup{width=\linewidth}
+        \caption{Chat template during the evaluation for MBPP and BigCodeBench (I).}
+        \label{tab:temp2}
+        \centering
+        \begin{tcolorbox}[
+            colback=gray!10,
+            boxrule=0.5pt,
+            left=2mm,right=2mm,
+            top=2mm,bottom=2mm,
+            width=\linewidth,
+        ]
+{\ttfamily\small
+<|im\_start|>system\\
+You are a helpful assistant.<|im\_end|>\\
+<|im\_start|>user\\
+```\\
+\{prompt\}\\
+```\\
+<|im\_end|>\\
+<|im\_start|>assistant\\
+Here is the code to solve this problem:\\
+```python
+}
+        \end{tcolorbox}
+    \end{minipage}
+\end{table}

@@ -1,0 +1,16 @@
+\subsection{Reinforcement Learning Training}
+
+The application of policy gradient methods to diffusion models faces a fundamental hurdle: the intractability of the sequence-level log-likelihood, $\log \pi_{\theta}(\bm{x})$, which is essential for computing policy updates. While prior works have explored various approximations, they have historically struggled with high variance and prohibitive computational costs, limiting RL to small-scale experiments~\citep{wang2025revolutionizing,ou_principled_2025,wang2025spg}.
+We overcome this bottleneck by synthesizing \textbf{ELBO-based Block-level Policy Optimization (EBPO)} with robust infrastructure optimizations. By utilizing the Evidence Lower Bound (ELBO) as a principled proxy for exact likelihood and implementing \textbf{Vectorized Likelihood Estimation}~\citep{Blockdiffusion2025} to parallelize bound computation, we achieve orders-of-magnitude acceleration. This integration allows us to scale dLLMs RL to unprecedented context lengths and training magnitudes, establishing a stable and efficient pipeline for post-training.
+
+Formally, we maximize a clipped surrogate objective, where the advantage is weighted by the probability ratio $\rho$:
+\begin{equation}\label{eq:ebpo_objective}
+\mathcal{J}_{\text{EBPO}}(\theta) = \mathbb{E}_{\bm{x}, \bm{y} \sim \pi_{\theta_{\text{old}}}} \left[ \min \left( \rho(\bm{y}|\bm{x}) \hat{A}, \text{clip}(\rho(\bm{y}|\bm{x}), 1-\epsilon_{\text{low}}, 1+\epsilon_{\text{high}}) \hat{A} \right) \right],
+\end{equation}
+where $\hat{A}$ is an estimator of the advantage function at timestep $t$, quantifying the relative improvement of the chosen action over the average expectation under the current policy.
+For a set of discretized timesteps $\{t_n\}_{n=1}^N$ and weights $\{w_n\}$, we construct a composite input $\bm{z}_n = \bm{y}_{t_n} \oplus \bm{y}_0$ to compute all block-conditional probabilities in parallel:
+\begin{equation}
+\log \rho(\bm{y}|\bm{x}) \approx \sum_{n=1}^N w_n \sum_{b=1}^B \left( \log p_\theta(\bm{y}^b \mid \bm{z}_n, \bm{x}; \mathcal{M}) - \log p_{\theta_{\text{old}}}(\bm{y}^b \mid \bm{z}_n, \bm{x}; \mathcal{M}) \right).
+\end{equation}
+Here, $\mathcal{M}$ denotes a Block-Causal Mask ensuring the $b$-th block attends only to valid history. By aggregating block-level contributions ($\sum_{b=1}^B$) within a single forward pass per timestep $n$, we establish a computationally tractable pipeline for scaling reinforcement learning to long-context diffusion generation.
+

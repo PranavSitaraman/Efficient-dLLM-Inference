@@ -1,0 +1,32 @@
+\section{Related Work}
+
+\subsection{Diffusion Language Models}
+
+The emergence of the diffusion language model~(DLM) opens up an alternative path for language generation. 
+Recent works like Dream~\cite{dream2025}, LLaDA~\cite{nie2025large}, MDLM~\cite{sahoo2024simple}, and BD3-LM~\cite{arriola2025block} adapt diffusion processes to text generation. While promising, these methods are computationally expensive for computation, leading to incompetent latency compared to the conventional AR-based language model despite the high scalability. 
+With some preliminary trials, recent work imposes cached diffusion models~\cite{arriola2025block} for accelerated diffusion and reinforcement learning-based reasoning enhancement~\cite{zhao2025d1}. However, the fundamental latency issue still persists, which largely limits the practicality and scalability of DLM. More importantly, diffusion and autoregressive-based language models are not orthogonal. The potential compatibility between DLM and Autoregressive Model is worth further exploration. 
+
+% \subsection{Speculative Decoding}
+
+% Speculative decoding~\cite{levine2023} speeds up inference by combining fast draft models with verification, but has mostly been applied in AR models.
+
+\subsection{KV Caching for Autoregressive LLM}
+The overhead of KV Cache has been one of the most critical memory and computation overheads throughout the long-context generation with autoregressive LLM decoding. 
+Compressing the KV cache has been one of the major focuses of efficient LLM research. 
+The emergence of FlashAttention~\cite{dao2022flashattention, dao2023flashattention, shah2024flashattention} and PageAttention~\cite{kwon2023efficient} aims to alleviate the challenge from the system perspective, leading to a promising performance with high scalability across different LLM architectures. 
+From the perspective of compression algorithms, KV cache eviction~\cite{yang2024pyramidinfer, cai2024pyramidkv}, quantization~\cite{liu2024kivi, hooper2024kvquant}, structured pruning~\cite{lu2024not, xu2025think} are proposed to save memory traffic. 
+Due to the irregularity of the diffusion process, the diffusion language model~(DLM) requires the full-sized Key and Values for attention computation, where the bottleneck of memory bound largely degrades the latency, limiting the practicality of DLM on a larger scale. 
+A recent study on block diffusion~\cite{arriola2025block} proposes the sequential block with intra-block diffusion, whereas the cost of training overhead and under-verified scalability makes the diffusion model questionable for large-scale deployment. 
+
+% \paragraph{FreeCache vs. Block Diffusion}
+% While Block Diffusion (Arriola et al. 2025) also investigated KV caching, its method is designed for variable-length generation and cannot be adapted to pre-trained, fixed-length DLMs. Their approach has key limitations: (1) It requires \textbf{training from scratch} to build this robustness, and (2) it was only validated on \textbf{small-scale models} (<1B parameters). In contrast, our proposed FreeCache is a \textbf{training-free} method that works on existing, fixed-length SoTA DLMs. We introduce a \textbf{key design change}: pre-allocating and attending to the full-context K/V cache (including future masked blocks), to make caching compatible with these pre-trained models without retraining.
+
+\subsection{Speculative Decoding}
+In addition to the conventional compression algorithms~(e.g., pruning and quantization), speculative decoding~\cite{leviathan2023fast} provides an alternative perspective on accelerating autoregressive LLM decoding without hurting the performance~(e.g., accuracy). The lightweight assistant model generates a multi-token ``draft'', followed by the speculation and correction of the target model. 
+The reliability and acceleration of the speculative decoding system is determined by the matching ratio between the draft model output and target model speculation. In particular, the poor matching ratio between the draft and target model leads to frequent execution of the target model, which eventually deteriorates the system level latency. 
+Recent studies on autoregressive models focus on self-drafting~\cite{elhoushi2024layerskip, liu2024kangaroo}, multi-head decoding~\cite{cai2024medusa}, optimized token sampling~\cite{chensequoia} and search strategy. 
+Regardless the design of speculative decoding, the speculation and correction of the target model is actively required to ensure the lossless computation. 
+In the meantime, the diffusion model-based big-small model collaboration is largely under investigation. 
+Recent work~\cite{christopher2024speculative} explores speculative decoding with small-scale diffusion models as the drafter, relying on a more competent AR model for output quality and generation, whereas cross-model methods for accelerating large, pre-trained diffusion language models remain under-explored.
+
+

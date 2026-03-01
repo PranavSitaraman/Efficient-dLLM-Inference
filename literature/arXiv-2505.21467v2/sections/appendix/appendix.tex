@@ -1,0 +1,70 @@
+% \section{Appendix}
+
+% \subsection{Hyperparameters}
+
+% \subsection{Additional Figures}
+
+% sections/appendix/appendix.tex
+% \section{Extended Related Work}\label{sec:app-related}
+% Deeper discussion of diffusion acceleration (vision, NLP), connections to
+% classifier-guidance and KV-caching literature, etc.
+
+\section{LLM Usage}
+We used large language models, specifically ChatGPT (GPT-4, OpenAI) and Gemini (Google), in limited ways during this work. First, we used them to improve grammar, phrasing, and clarity of exposition, but not to generate substantive technical content. Second, we occasionally consulted them to help identify potentially relevant related work, while ensuring that all citations were independently checked and verified by the authors. Third, we used them at early stages as brainstorming aids to generate alternative perspectives or potential problem framings. All research directions, methods, and experiments were conceived, designed, and validated by the authors. All outputs from large language models were critically evaluated before inclusion, and the intellectual contributions of the paper are entirely the authors' own.
+
+
+
+\section{Supplementary Material}
+\subsection{Code \& Data Release Plan}\label{sec:app-release}
+\texttt{The implementation of our methods are available at \url{https://anonymous.4open.science/r/anon-flash-dlm-A42B/}.}
+
+
+
+% \subsection{Algorithms \& Proofs}\label{sec:app-algos}
+
+\section{Additional Experimental Results}
+\input{sections/appendix/llada}
+\input{sections/appendix/dream}
+\input{sections/appendix/mem}
+
+\subsection{Implementation Details}\label{sec:app-impl}
+
+\input{sections/appendix/detailed_exp}
+\input{sections/appendix/prompt}
+
+% \subsection{Extended Experiments}\label{sec:app-expts}
+% \subsection{Ablation Studies}
+% \begin{table}[H]
+%   \centering
+%   \begin{tabular}{lcc}
+%     \toprule
+%     Block size & Speedup & Acc.\ drop \\
+%     \midrule
+%     % 16 & 15× & 0.2\% \\
+%     % 32 & 20× & 0.5\% \\
+%     % 64 & 25× & 1.1\% \\
+%     \bottomrule
+%   \end{tabular}
+%   \caption{Cache block size ablation.}\label{tab:app-cache}
+% \end{table}
+% ... more subsections as needed ...
+
+% \subsection{Qualitative Examples}\label{sec:app-qual}
+% \begin{figure}[H]
+%   \centering
+%   \begin{subfigure}{.48\textwidth}
+%     \caption{Standard Diffusion}
+%     % \includegraphics[width=\linewidth]{figs/qual_diffusion.pdf}
+%   \end{subfigure}
+%   \hfill
+%   \begin{subfigure}{.48\textwidth}
+%     \caption{Guided Diffusion}
+%     % \includegraphics[width=\linewidth]{figs/qual_guided.pdf}
+%   \end{subfigure}
+%   \caption{Side-by-side generated outputs.}\label{fig:app-qual}
+% \end{figure}
+
+% \subsection{Limitations \& Ethical Considerations}\label{sec:app-limit}
+% Discussion of compute trade-offs, domain-shift risks, potential misuse, biases.
+
+

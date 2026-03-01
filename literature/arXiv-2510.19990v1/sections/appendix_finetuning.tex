@@ -1,0 +1,21 @@
+\section{Fine-tuning Details}\label{appsec:finetuning}
+
+We compare fine-tuning the LLaDA-8B Base \citep{nie2025largelanguagediffusionmodels} model on GSM8k \citep{cobbe2021training} reasoning data, versus posterior data sampled from the same model using the training questions and pre-filled answers.
+
+\paragraph{Data}
+
+The posterior data is from LLaDA-8B-Base by pre-filling the correct answer and reasoning template, and sampling with entropy decoding and a block size of $128$. For the gold GSM8k training data, we preprocess the data by removing the additional computations in angle brackets, and converting the "$\#\#\#\#$" format to our reasoning template. Additionally, unlike posterior data, GSM8k reasoning traces are of varying lengths. As a result, we truncate these traces to $L=144$ tokens. When traces are longer, we truncate to the \textit{last} $144$ tokens. Approximately $\sim 12\%$ of GSM8k samples are truncated. 
+
+\paragraph{Training}
+
+We use a batch size of $1$ per GPU, with $8$ different noise levels per batch element.
+We use LoRA \citep{hu2022lora} with $r=128, \alpha=32$. We fine-tune the model using $2$ Nvidia A100 GPUs, with a learning rate of $2.5 \times 10^{-6}$, and $32$ gradient accumulation steps. We train both models for $3300$ steps, or $30$ epochs.
+
+
+We modify the supervised fine-tuning code provided by \cite{zhao2025d1scalingreasoningdiffusion}.
+
+\paragraph{Sampling}
+
+We greedily sample from both models with left-to-right with a block-size of $1$. We allocate $144$ tokens for both models, and do not directly pre-fill a reasoning template. 
+
+

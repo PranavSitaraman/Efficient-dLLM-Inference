@@ -1,0 +1,434 @@
+%%%%%%%%%%%%
+
+@inproceedings{shazeer2017,
+title={ Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer},
+author={Noam Shazeer and Azalia Mirhoseini and Krzysztof Maziarz and Andy Davis and Quoc Le and Geoffrey Hinton and Jeff Dean},
+booktitle={International Conference on Learning Representations},
+year={2017}
+}
+
+@inproceedings{
+lepikhin2021gshard,
+title={GShard: Scaling Giant Models with Conditional Computation and Automatic Sharding},
+author={Dmitry Lepikhin and HyoukJoong Lee and Yuanzhong Xu and Dehao Chen and Orhan Firat and Yanping Huang and Maxim Krikun and Noam Shazeer and Zhifeng Chen},
+booktitle={International Conference on Learning Representations},
+year={2021},
+}
+
+
+% == Models ==
+
+@article{jiang2024mixtral,
+  title={Mixtral of experts},
+  author={Jiang, Albert Q and Sablayrolles, Alexandre and Roux, Antoine and Mensch, Arthur and Savary, Blanche and Bamford, Chris and Chaplot, Devendra Singh and Casas, Diego de las and Hanna, Emma Bou and Bressand, Florian and others},
+  journal={arXiv preprint arXiv:2401.04088},
+  year={2024}
+}
+
+@article{fedus2022switch,
+  title={Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity},
+  author={Fedus, William and Zoph, Barret and Shazeer, Noam},
+  journal={Journal of Machine Learning Research},
+  volume={23},
+  number={120},
+  pages={1--39},
+  year={2022}
+}
+
+
+@misc{qwen3technicalreport,
+      title={Qwen3 Technical Report}, 
+      author={{Qwen Team}},
+      year={2025},
+      eprint={2505.09388},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2505.09388}, 
+}
+
+@misc{openai2025gptoss120bgptoss20bmodel,
+      title={gpt-oss-120b & gpt-oss-20b Model Card}, 
+      author={OpenAI},
+      year={2025},
+      eprint={2508.10925},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2508.10925}, 
+}
+
+@misc{deepseekv2,
+      title={DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model}, 
+      author={DeepSeek-AI},
+      year={2024},
+      eprint={2405.04434},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
+
+@misc{nvidia_nemotron_nano_v3_2025,
+  title  = {{Nemotron 3 Nano}: Open, Efficient Mixture-of-Experts Hybrid {Mamba}-{Transformer} Model for {Agentic} Reasoning},
+  author = {{NVIDIA}},
+  year   = {2025},
+  url    = {https://arxiv.org/abs/2512.20848},
+  note   = {Technical report}
+}
+
+% Phi-mini-moe-instruct
+@inproceedings{li2025slimmoe,
+title={SlimMoE: Structured Compression of Large MoE Models via Expert Slimming and Distillation},
+author={Zichong Li and Chen Liang and Zixuan Zhang and Ilgee Hong and Young Jin Kim and Weizhu Chen and Tuo Zhao},
+booktitle={Second Conference on Language Modeling},
+year={2025}
+}
+
+% == Models END ===
+
+% == Quantization ==
+
+@inproceedings{frantar2022gptq,
+  author       = {Elias Frantar and
+                  Saleh Ashkboos and
+                  Torsten Hoefler and
+                  Dan Alistarh},
+  title        = {{OPTQ: Accurate Quantization for Generative Pre-trained Transformers}},
+  booktitle    = {International Conference on Learning Representations},
+  year         = {2023},
+}
+
+@article{lin2024awq,
+  title={Awq: Activation-aware weight quantization for on-device llm compression and acceleration},
+  author={Lin, Ji and Tang, Jiaming and Tang, Haotian and Yang, Shang and Chen, Wei-Ming and Wang, Wei-Chen and Xiao, Guangxuan and Dang, Xingyu and Gan, Chuang and Han, Song},
+  journal={Proceedings of machine learning and systems},
+  volume={6},
+  pages={87--100},
+  year={2024}
+}
+
+@article{tseng2024qtip,
+  title={Qtip: Quantization with trellises and incoherence processing},
+  author={Tseng, Albert and Sun, Qingyao and Hou, David and De Sa, Christopher M},
+  journal={Advances in Neural Information Processing Systems},
+  volume={37},
+  pages={59597--59620},
+  year={2024}
+}
+
+@inproceedings{egiazarian2024aqlm,
+  title={Extreme Compression of Large Language Models via Additive Quantization},
+  author={Egiazarian, Vage and Panferov, Andrei and Kuznedelev, Denis and Frantar, Elias and Babenko, Artem and Alistarh, Dan},
+  booktitle={International Conference on Machine Learning},
+  pages={12284--12303},
+  year={2024},
+  organization={PMLR}
+}
+
+@article{dettmers2023qlora,
+  title={Qlora: Efficient finetuning of quantized llms},
+  author={Dettmers, Tim and Pagnoni, Artidoro and Holtzman, Ari and Zettlemoyer, Luke},
+  journal={Advances in neural information processing systems},
+  volume={36},
+  pages={10088--10115},
+  year={2023}
+}
+
+@article{yao2022zeroquant,
+  title={Zeroquant: Efficient and affordable post-training quantization for large-scale transformers},
+  author={Yao, Zhewei and Yazdani Aminabadi, Reza and Zhang, Minjia and Wu, Xiaoxia and Li, Conglong and He, Yuxiong},
+  journal={Advances in neural information processing systems},
+  volume={35},
+  pages={27168--27183},
+  year={2022}
+}
+
+@inproceedings{xiao2023smoothquant,
+  title={Smoothquant: Accurate and efficient post-training quantization for large language models},
+  author={Xiao, Guangxuan and Lin, Ji and Seznec, Mickael and Wu, Hao and Demouth, Julien and Han, Song},
+  booktitle={International Conference on Machine Learning},
+  pages={38087--38099},
+  year={2023},
+  organization={PMLR}
+}
+
+
+@inproceedings{kim2023squeezellm,
+    author = {Kim, Sehoon and Hooper, Coleman and Gholami, Amir and Dong, Zhen and Li, Xiuyu and Shen, Sheng and Mahoney, Michael W. and Keutzer, Kurt},
+    title = {SqueezeLLM: dense-and-sparse quantization},
+    year = {2024},
+    booktitle = {Proceedings of the 41st International Conference on Machine Learning},
+}
+
+
+@inproceedings{park2024any,
+  title={Any-precision LLM: low-cost deployment of multiple, different-sized LLMs},
+  author={Park, Yeonhong and Hyun, Jake and Cho, SangLyul and Sim, Bonggeun and Lee, Jae W},
+  booktitle={Proceedings of the 41st International Conference on Machine Learning},
+  pages={39682--39701},
+  year={2024}
+}
+
+@inproceedings{shao2024omniquant,
+  title={OmniQuant: Omnidirectionally Calibrated Quantization for Large Language Models},
+  author={Shao, Wenqi and Chen, Mengzhao and Zhang, Zhaoyang and Xu, Peng and Zhao, Lirui and Li, Zhiqian and Zhang, Kaipeng and Gao, Peng and Qiao, Yu and Luo, Ping},
+  booktitle={International Conference on Learning Representations},
+  year={2024}
+}
+
+% == Quantization END ==
+
+% == MISC ==
+
+@misc{meta-pytorch-gpt-fast,
+  author       = {{meta-pytorch}},
+  title        = {gpt-fast: Simple and efficient PyTorch-native transformer text generation},
+  howpublished = {\url{https://github.com/meta-pytorch/gpt-fast}},
+  year         = {2023},
+  note         = {GitHub repository, BSD-3-Clause License},
+}
+
+@misc{alpaca_eval,
+  author = {Xuechen Li and Tianyi Zhang and Yann Dubois and Rohan Taori and Ishaan Gulrajani and Carlos Guestrin and Percy Liang and Tatsunori B. Hashimoto },
+  title = {AlpacaEval: An Automatic Evaluator of Instruction-following Models},
+  year = {2023},
+  month = {5},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  howpublished = {\url{https://github.com/tatsu-lab/alpaca_eval}}
+}
+
+@manual{nvidia2025cuda,
+  title        = {CUDA Programming Guide},
+  author       = {NVIDIA},
+  year         = {2025},
+  edition      = {Release 13.1},
+  url          = {https://docs.nvidia.com/cuda/cuda-programming-guide/pdf/cuda-programming-guide.pdf},
+  note         = {Accessed: 2026-01-18},
+}
+
+% == MISC END ==
+
+% == MINSEO ADD ==
+@article{cheng2025sdar,
+  title   = {SDAR: A Synergistic Diffusion-AutoRegression Paradigm for Scalable Sequence Generation},
+  author  = {Shuang Cheng and Yihan Bian and Dawei Liu and Linfeng Zhang and Qian Yao and Zhongbo Tian and Wenhai Wang and Qipeng Guo and Kai Chen and Biqing Qi and Bowen Zhou},
+  journal = {arXiv preprint arXiv:2510.06303},
+  year    = {2025}
+}
+
+@misc{wu2025fastdllmv2,
+  title         = {Fast-dLLM v2: Efficient Block-Diffusion LLM},
+  author        = {Chengyue Wu and Hao Zhang and Shuchen Xue and Shizhe Diao and Yonggan Fu and Zhijian Liu and Pavlo Molchanov and Ping Luo and Song Han and Enze Xie},
+  year          = {2025},
+  eprint        = {2509.26328},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL},
+  url           = {https://arxiv.org/abs/2509.26328}
+}
+
+@article{song2025seeddiffusion,
+  title={Seed Diffusion: A Large-Scale Diffusion Language Model with High-Speed Inference},
+  author={Song, Yuxuan and Zhang, Zheng and Luo, Cheng and Gao, Pengyang and Xia, Fan and Luo, Hao and Li, Zheng and Yang, Yuehang and Yu, Hongli and Qu, Xingwei and Fu, Yuwei and Su, Jing and Zhang, Ge and Huang, Wenhao and Wang, Mingxuan and Yan, Lin and Jia, Xiaoying and Liu, Jingjing and Ma, Wei-Ying and Zhang, Ya-Qin and Wu, Yonghui and Zhou, Hao},
+  journal={arXiv preprint arXiv:2508.02193},
+  year={2025},
+  url={https://arxiv.org/abs/2508.02193}
+}
+
+@article{wu2025fastdllm,
+  title={Fast-dLLM: Training-free Acceleration of Diffusion LLM by Enabling KV Cache and Parallel Decoding},
+  author={Wu, Chengyue and Zhang, Hao and Xue, Shuchen and Liu, Zhijian and Diao, Shizhe and Zhu, Ligeng and Luo, Ping and Han, Song and Xie, Enze},
+  journal={arXiv preprint arXiv:2505.22618},
+  year={2025},
+  url={https://arxiv.org/abs/2505.22618}
+}
+
+@article{ma2025dkvcache,
+  title={dKV-Cache: The Cache for Diffusion Language Models},
+  author={Ma, Xinyin and Yu, Runpeng and Fang, Gongfan and Wang, Xinchao},
+  journal={arXiv preprint arXiv:2505.15781},
+  year={2025},
+  url={https://arxiv.org/abs/2505.15781}
+}
+
+@article{wang2025sparsed,
+  title   = {SparseD: Sparse Attention for Diffusion Language Models},
+  author  = {Zeqing Wang and Gongfan Fang and Xinyin Ma and Xingyi Yang and Xinchao Wang},
+  journal = {arXiv preprint arXiv:2509.24014},
+  year    = {2025}
+}
+
+@inproceedings{xiao2024streamingllm,
+  title     = {Efficient Streaming Language Models with Attention Sinks},
+  author    = {Guangxuan Xiao and Yuandong Tian and Beidi Chen and Song Han and Mike Lewis},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2024}
+}
+
+@inproceedings{tang2024quest,
+  title     = {QUEST: Query-Aware Sparsity for Efficient Long-Context LLM Inference},
+  author    = {Jiaming Tang and Yilong Zhao and Kan Zhu and Guangxuan Xiao and Baris Kasikci and Song Han},
+  booktitle = {Proceedings of the 41st International Conference on Machine Learning},
+  pages     = {47901--47911},
+  year      = {2024}
+}
+
+@inproceedings{yang2025tidaldecode,
+  title     = {TidalDecode: A Fast and Accurate LLM Decoding with Position Persistent Sparse Attention},
+  author    = {Lijie Yang and Zhihao Zhang and Zhuofu Chen and Zikun Li and Zhihao Jia},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2025}
+}
+
+@article{yang2025lessismore,
+  title   = {Less Is More: Training-Free Sparse Attention with Global Locality for Efficient Reasoning},
+  author  = {Lijie Yang and Zhihao Zhang and Arti Jain and Shijie Cao and Baihong Yuan and Yiwei Chen and Zhihao Jia and Ravi Netravali},
+  journal = {arXiv preprint arXiv:2508.07101},
+  year    = {2025}
+}
+
+@article{cai2024pyramidkv,
+  title   = {PyramidKV: Dynamic KV Cache Compression based on Pyramidal Information Funneling},
+  author  = {Zefan Cai and Yichi Zhang and Bofei Gao and Yuliang Liu and Yucheng Li and Tianyu Liu and Keming Lu and Wayne Xiong and Yue Dong and Junjie Hu and Wen Xiao},
+  journal = {arXiv preprint arXiv:2406.02069},
+  year    = {2024}
+}
+
+@inproceedings{tu2025vlcache,
+  title     = {VL-Cache: Sparsity and Modality-Aware KV Cache Compression for Vision-Language Model Inference Acceleration},
+  author    = {Dezhan Tu and Danylo Vashchilenko and Yuzhe Lu and Panpan Xu},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2025}
+}
+
+@inproceedings{feng2025adakv,
+  title     = {Ada-KV: Optimizing KV Cache Eviction by Adaptive Budget Allocation for Efficient LLM Inference},
+  author    = {Yuan Feng and Junlin Lv and Yukun Cao and Xike Xie and S. Kevin Zhou},
+  booktitle = {Advances in Neural Information Processing Systems},
+  year      = {2025}
+}
+
+@article{zhu2025tactic,
+  title   = {Tactic: Adaptive Sparse Attention with Clustering and Distribution Fitting for Long-Context LLMs},
+  author  = {Kan Zhu and Tian Tang and Qinyu Xu and Yile Gu and Zhichen Zeng and Rohan Kadekodi and Liangyu Zhao and Ang Li and Arvind Krishnamurthy and Baris Kasikci},
+  journal = {arXiv preprint arXiv:2502.12216},
+  year    = {2025}
+}
+
+@article{lin2025twilight,
+  title   = {Twilight: Adaptive Attention Sparsity with Hierarchical Top-p Pruning},
+  author  = {Chaofan Lin and Jiaming Tang and Shuo Yang and Hanshuo Wang and Tian Tang and Boyu Tian and Ion Stoica and Song Han and Mingyu Gao},
+  journal = {arXiv preprint arXiv:2502.02770},
+  year    = {2025}
+}
+
+@article{kim2025beyond,
+  title   = {Beyond Next-Token Prediction: A Performance Characterization of Diffusion versus Autoregressive Language Models},
+  author  = {Kim, Minseo and Hooper, Coleman and Tomar, Aditya and Xu, Chenfeng and Farajtabar, Mehrdad and Mahoney, Michael W. and Keutzer, Kurt and Gholami, Amir},
+  journal = {arXiv preprint arXiv:2510.04146},
+  year    = {2025},
+  url     = {https://arxiv.org/abs/2510.04146}
+}
+
+@article{wang2025d2f,
+  title        = {Diffusion LLMs Can Do Faster-Than-AR Inference via Discrete Diffusion Forcing},
+  author       = {Wang, Xu and Xu, Chenkai and Jin, Yijie and Jin, Jiachun and Zhang, Hao and Deng, Zhijie},
+  journal      = {arXiv preprint arXiv:2508.09192},
+  year         = {2025},
+  url          = {https://arXiv.org/abs/2508.09192}
+}
+
+@article{kim2025cdlm,
+  title   = {CDLM: Consistency Diffusion Language Models for Faster Sampling},
+  author  = {Kim, Minseo and Xu, Chenfeng and Hooper, Coleman and Singh, Harman 
+             and Athiwaratkun, Ben and Zhang, Ce and Keutzer, Kurt and Gholami, Amir},
+  journal = {arXiv preprint arXiv:2511.19269},
+  year    = {2025},
+  url     = {https://arxiv.org/abs/2511.19269}
+}
+
+@article{pope2022efficient,
+  title={Efficiently Scaling Transformer Inference},
+  author={Pope, Reiner and Douglas, Sholto and Chowdhery, Aakanksha and Devlin, Jacob and Bradbury, James and Levskaya, Anselm and Heek, Jonathan and Xiao, Kefan and Agrawal, Shivani and Dean, Jeff},
+  journal={arXiv preprint arXiv:2211.05102},
+  year={2022},
+  url={https://arxiv.org/abs/2211.05102}
+}
+
+@article{nie2025large,
+  title={Large Language Diffusion Models},
+  author={Nie, Shen and Zhu, Fengqi and You, Zebin and Zhang, Xiaolu and Ou, Jingyang and Hu, Jun and Zhou, Jun and Lin, Yankai and Wen, Ji-Rong and Li, Chongxuan},
+  journal={arXiv preprint arXiv:2502.09992},
+  year={2025},
+  url={https://arxiv.org/abs/2502.09992}
+}
+
+@article{ye2025dream7b,
+  title        = {Dream 7B: Diffusion Large Language Models},
+  author       = {Ye, Jiacheng and Xie, Zhihui and Zheng, Lin and Gao, Jiahui and Wu, Zirui and Jiang, Xin and Li, Zhenguo and Kong, Lingpeng},
+  journal      = {arXiv preprint arXiv:2508.15487},
+  year         = {2025},
+  url          = {https://arXiv.org/abs/2508.15487}
+}
+
+@inproceedings{gong2023diffuseq,
+  title={DiffuSeq: Sequence to Sequence Text Generation with Diffusion Models},
+  author={Gong, Shansan and Li, Mukai and Feng, Jiangtao and Wu, Zhiyong and Kong, Lingpeng},
+  booktitle={International Conference on Learning Representations},
+  year={2023},
+  url={https://openreview.net/forum?id=D8DUDJQKZg}
+}
+
+@inproceedings{gong2025scalingdiffusion,
+  title        = {Scaling Diffusion Language Models via Adaptation from Autoregressive Models},
+  author       = {Gong, Shansan and Agarwal, Shivam and Zhang, Yizhe and Ye, Jiacheng and Zheng, Lin and Li, Mukai and An, Chenxin and Zhao, Peilin and Bi, Wei and Peng, Hao and Han, Jiawei and Kong, Lingpeng},
+  booktitle    = {Proceedings of the 2025 International Conference on Learning Representations (ICLR)},
+  year         = {2025},
+  url          = {https://arXiv.org/abs/2410.17891}
+}
+
+@misc{yang2025qwen3,
+  title         = {Qwen3 Technical Report},
+  author        = {An Yang and Anfeng Li and Baosong Yang and Beichen Zhang and Binyuan Hui and Bo Zheng and Bowen Yu and others},
+  year          = {2025},
+  eprint        = {2505.09388},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL},
+  url           = {https://arxiv.org/abs/2505.09388}
+}
+
+@inproceedings{arriola2025blockdiffusion,
+  title     = {Block Diffusion: Interpolating Between Autoregressive and Diffusion Language Models},
+  author    = {Marianne Arriola and Aaron Gokaslan and Justin T. Chiu and Zhihan Yang and Zhixuan Qi and Jiaqi Han and Subham Sekhar Sahoo and Volodymyr Kuleshov},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2025},
+  url       = {https://arxiv.org/abs/2503.09573}
+}
+
+@inproceedings{kim2025tokenordering,
+  title     = {Train for the Worst, Plan for the Best: Understanding Token Ordering in Masked Diffusions},
+  author    = {Jaeyeon Kim and Kulin Shah and Vasilis Kontonis and Sham Kakade and Sitan Chen},
+  booktitle = {Proceedings of the 42nd International Conference on Machine Learning},
+  year      = {2025}
+}
+
+@inproceedings{ainslie2023gqa,
+  title     = {GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints},
+  author    = {Joshua Ainslie and James Lee-Thorp and Michiel de Jong and Yury Zemlyanskiy and Federico Lebr{\'o}n and Sumit Sanghai},
+  booktitle = {Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing},
+  year      = {2023}
+}
+
+@article{ye2025flashinfer,
+  title={FlashInfer: Efficient and Customizable Attention Engine for LLM Inference Serving},
+  author={Ye, Zihao and Chen, Lequn and Lai, Ruihang and Lin, Wuwei and Zhang, Yineng and Wang, Stephanie and Chen, Tianqi and Kasikci, Baris and Grover, Vinod and Krishnamurthy, Arvind and Ceze, Luis},
+  journal={arXiv preprint arXiv:2501.01005},
+  year={2025}
+}
+
+@misc{bai2024longbenchbilingualmultitaskbenchmark,
+      title={LongBench: A Bilingual, Multitask Benchmark for Long Context Understanding}, 
+      author={Yushi Bai and Xin Lv and Jiajie Zhang and Hongchang Lyu and Jiankai Tang and Zhidian Huang and Zhengxiao Du and Xiao Liu and Aohan Zeng and Lei Hou and Yuxiao Dong and Jie Tang and Juanzi Li},
+      year={2024},
+      eprint={2308.14508},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2308.14508}, 
+}

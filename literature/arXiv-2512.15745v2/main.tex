@@ -1,0 +1,129 @@
+\documentclass[]{antgroup}
+\PassOptionsToPackage{numbers, compress}{natbib}
+\usepackage{antgroup}
+
+% Require Package
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{todonotes}
+\usepackage{multirow}
+\usepackage{amsmath}
+\usepackage{cleveref}
+\usepackage{subcaption}
+\usepackage{multicol}
+\usepackage{amssymb}
+\usepackage{array}
+\usepackage{bm}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{tabularx}
+\usepackage{booktabs} 
+\usepackage{bbm}
+\usepackage{makecell}
+\usepackage{wrapfig}
+\usepackage{colortbl}
+\usepackage{threeparttable}
+\usepackage{fontawesome5}
+\usepackage[normalem]{ulem}
+\usepackage{enumitem}
+\usepackage{caption}
+\captionsetup{font={small}}
+
+\useunder{\uline}{\ul}{}
+
+\input{math_commands}
+\input{setting-ai}
+
+\usepackage{xcolor}
+
+\definecolor{LightGray}{gray}{0.9}
+
+\definecolor{myPink}{HTML}{EE6B98}
+\definecolor{myBlue}{HTML}{6BB8FA}
+\definecolor{myPurple}{HTML}{9F63F0}
+\definecolor{myBlueBase}{HTML}{147BFF}
+
+\newcommand{\jz}[1]{\textcolor{red}{#1}}
+
+\renewcommand\thefootnote{}
+
+\title{LLaDA2.0: Scaling Up Diffusion Language Models to 100B}
+
+\author{\centering
+Tiwei Bie$^1$,
+Maosong Cao$^1$,
+Kun Chen$^1$,
+Lun Du$^1$,
+Mingliang Gong$^1$,
+Zhuochen Gong$^1$,
+Yanmei Gu$^1$,
+Jiaqi Hu$^{1,3}$,
+Zenan Huang$^1$,
+Zhenzhong Lan$^{1,4,\dag}$,
+Chengxi Li$^1$,
+Chongxuan Li$^2$,
+Jianguo Li$^{1,\dag}$,
+Zehuan Li$^1$,
+Huabin Liu$^1$,
+Lin Liu$^1$,
+Guoshan Lu$^1$,
+Xiaocheng Lu$^{1,5}$,
+Yuxin Ma$^1$,
+Jianfeng Tan$^1$,
+Lanning Wei$^1$,
+\\
+Ji-Rong Wen$^2$,
+Yipeng Xing$^1$,
+Xiaolu Zhang$^1$,
+Junbo Zhao$^{1,3,\dag}$,
+Da Zheng$^{1,\dag}$,
+Jun Zhou$^1$,
+Junlin Zhou$^1$,
+\\
+Zhanchao Zhou$^{1,4}$,
+Liwang Zhu$^1$,
+Yihong Zhuang$^1$
+}
+
+\footnotetext{Authors are listed in alphabetical order based on last name. $\dag$ indicates tech-leaders.}
+
+\affiliation{$^1$Ant Group, $^2$Renmin University of China,  $^3$Zhejiang University,\\$^4$Westlake University, $^5$HongKong University of Science and Technology}
+
+\begin{document}
+\maketitle
+
+\renewcommand\thefootnote{\arabic{footnote}}
+\setcounter{footnote}{0}
+
+% main document
+\input{doc/abstract}
+\begin{figure}[hb]
+    \centering
+    \small
+    \includegraphics[width=0.95\linewidth]{images/llada2_flash_main_bench}
+    \vspace{-2ex}
+\caption{\texttt{LLaDA2.0-flash} main results.}\label{fig:llada2_flash_main_bench}
+\vspace{-2ex}
+\end{figure}
+
+
+
+\newpage
+\input{doc/intro}
+\input{doc/related-work}
+\input{doc/paradigm}
+\input{doc/CPT}
+\input{doc/SFT}
+\input{doc/Evaluation}
+\input{doc/infra}
+\input{doc/conclusion}
+
+
+\bibliographystyle{antgroup}
+
+\bibliography{ref/reference}
+
+\clearpage
+
+\end{document}

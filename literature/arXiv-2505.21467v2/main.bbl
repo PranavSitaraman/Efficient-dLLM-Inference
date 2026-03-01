@@ -1,0 +1,217 @@
+\begin{thebibliography}{27}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Arriola et~al.(2025)Arriola, Sahoo, Gokaslan, Yang, Qi, Han, Chiu, and
+  Kuleshov]{arriola2025block}
+Marianne Arriola, Subham~Sekhar Sahoo, Aaron Gokaslan, Zhihan Yang, Zhixuan Qi,
+  Jiaqi Han, Justin~T Chiu, and Volodymyr Kuleshov.
+\newblock Block diffusion: Interpolating between autoregressive and diffusion
+  language models.
+\newblock In \emph{The Thirteenth International Conference on Learning
+  Representations (ICLR)}, 2025.
+
+\bibitem[Bai et~al.(2023)Bai, Bai, Chu, Cui, Dang, Deng, Fan, Ge, Han, Huang,
+  et~al.]{bai2023qwen}
+Jinze Bai, Shuai Bai, Yunfei Chu, Zeyu Cui, Kai Dang, Xiaodong Deng, Yang Fan,
+  Wenbin Ge, Yu~Han, Fei Huang, et~al.
+\newblock Qwen technical report.
+\newblock \emph{arXiv preprint arXiv:2309.16609}, 2023.
+
+\bibitem[Cai et~al.(2024{\natexlab{a}})Cai, Li, Geng, Peng, Lee, Chen, and
+  Dao]{cai2024medusa}
+Tianle Cai, Yuhong Li, Zhengyang Geng, Hongwu Peng, Jason~D Lee, Deming Chen,
+  and Tri Dao.
+\newblock Medusa: Simple llm inference acceleration framework with multiple
+  decoding heads.
+\newblock In \emph{International Conference on Machine Learning (ICML)}. PMLR,
+  2024{\natexlab{a}}.
+
+\bibitem[Cai et~al.(2024{\natexlab{b}})Cai, Zhang, Gao, Liu, Liu, Lu, Xiong,
+  Dong, Chang, Hu, et~al.]{cai2024pyramidkv}
+Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Tianyu Liu, Keming Lu, Wayne
+  Xiong, Yue Dong, Baobao Chang, Junjie Hu, et~al.
+\newblock Pyramidkv: Dynamic kv cache compression based on pyramidal
+  information funneling.
+\newblock \emph{arXiv preprint arXiv:2406.02069}, 2024{\natexlab{b}}.
+
+\bibitem[Chang et~al.(2022)Chang, Zhang, Jiang, Liu, and
+  Freeman]{chang2022maskgitmaskedgenerativeimage}
+Huiwen Chang, Han Zhang, Lu~Jiang, Ce~Liu, and William~T. Freeman.
+\newblock Maskgit: Masked generative image transformer, 2022.
+\newblock URL \url{https://arxiv.org/abs/2202.04200}.
+
+\bibitem[Chen et~al.(2024)Chen, May, Svirschevski, Huang, Ryabinin, Jia, and
+  Chen]{chensequoia}
+Zhuoming Chen, Avner May, Ruslan Svirschevski, Yuhsun Huang, Max Ryabinin,
+  Zhihao Jia, and Beidi Chen.
+\newblock Sequoia: Scalable, robust, and hardware-aware speculative decoding.
+\newblock \emph{CoRR}, 2024.
+
+\bibitem[Christopher et~al.(2024)Christopher, Bartoldson, Ben-Nun, Cardei,
+  Kailkhura, and Fioretto]{christopher2024speculative}
+Jacob~K Christopher, Brian~R Bartoldson, Tal Ben-Nun, Michael Cardei, Bhavya
+  Kailkhura, and Ferdinando Fioretto.
+\newblock Speculative diffusion decoding: Accelerating language generation
+  through diffusion.
+\newblock \emph{arXiv preprint arXiv:2408.05636}, 2024.
+
+\bibitem[Dao(2023)]{dao2023flashattention}
+Tri Dao.
+\newblock Flashattention-2: Faster attention with better parallelism and work
+  partitioning.
+\newblock \emph{arXiv preprint arXiv:2307.08691}, 2023.
+
+\bibitem[Dao et~al.(2022)Dao, Fu, Ermon, Rudra, and
+  R{\'e}]{dao2022flashattention}
+Tri Dao, Dan Fu, Stefano Ermon, Atri Rudra, and Christopher R{\'e}.
+\newblock Flashattention: Fast and memory-efficient exact attention with
+  io-awareness.
+\newblock \emph{Advances in neural information processing systems (NeurIPS)},
+  2022.
+
+\bibitem[Elhoushi et~al.(2024)Elhoushi, Shrivastava, Liskovich, Hosmer, Wasti,
+  Lai, Mahmoud, Acun, Agarwal, Roman, et~al.]{elhoushi2024layerskip}
+Mostafa Elhoushi, Akshat Shrivastava, Diana Liskovich, Basil Hosmer, Bram
+  Wasti, Liangzhen Lai, Anas Mahmoud, Bilge Acun, Saurabh Agarwal, Ahmed Roman,
+  et~al.
+\newblock Layerskip: Enabling early exit inference and self-speculative
+  decoding.
+\newblock \emph{arXiv preprint arXiv:2404.16710}, 2024.
+
+\bibitem[Hooper et~al.(2024)Hooper, Kim, Mohammadzadeh, Mahoney, Shao, Keutzer,
+  and Gholami]{hooper2024kvquant}
+Coleman Hooper, Sehoon Kim, Hiva Mohammadzadeh, Michael~W Mahoney, Sophia Shao,
+  Kurt Keutzer, and Amir Gholami.
+\newblock Kvquant: Towards 10 million context length llm inference with kv
+  cache quantization.
+\newblock \emph{Advances in Neural Information Processing Systems (NeurIPS)},
+  2024.
+
+\bibitem[Kim et~al.(2025)Kim, Shah, Kontonis, Kakade, and
+  Chen]{kim2025trainworstplanbest_topkmargin}
+Jaeyeon Kim, Kulin Shah, Vasilis Kontonis, Sham Kakade, and Sitan Chen.
+\newblock Train for the worst, plan for the best: Understanding token ordering
+  in masked diffusions, 2025.
+\newblock URL \url{https://arxiv.org/abs/2502.06768}.
+
+\bibitem[Kwon et~al.(2023)Kwon, Li, Zhuang, Sheng, Zheng, Yu, Gonzalez, Zhang,
+  and Stoica]{kwon2023efficient}
+Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody~Hao Yu,
+  Joseph Gonzalez, Hao Zhang, and Ion Stoica.
+\newblock Efficient memory management for large language model serving with
+  pagedattention.
+\newblock In \emph{Proceedings of the 29th Symposium on Operating Systems
+  Principles}, 2023.
+
+\bibitem[Leviathan et~al.(2023)Leviathan, Kalman, and
+  Matias]{leviathan2023fast}
+Yaniv Leviathan, Matan Kalman, and Yossi Matias.
+\newblock Fast inference from transformers via speculative decoding.
+\newblock In \emph{International Conference on Machine Learning (ICML)}, 2023.
+
+\bibitem[Liu et~al.(2024{\natexlab{a}})Liu, Feng, Xue, Wang, Wu, Lu, Zhao,
+  Deng, Zhang, Ruan, et~al.]{liu2024deepseek}
+Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang
+  Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et~al.
+\newblock Deepseek-v3 technical report.
+\newblock \emph{arXiv preprint arXiv:2412.19437}, 2024{\natexlab{a}}.
+
+\bibitem[Liu et~al.(2024{\natexlab{b}})Liu, Tang, Liu, Ni, Tang, Han, and
+  Wang]{liu2024kangaroo}
+Fangcheng Liu, Yehui Tang, Zhenhua Liu, Yunsheng Ni, Duyu Tang, Kai Han, and
+  Yunhe Wang.
+\newblock Kangaroo: Lossless self-speculative decoding for accelerating {LLM}s
+  via double early exiting.
+\newblock In \emph{The Thirty-eighth Annual Conference on Neural Information
+  Processing Systems (NeurIPS)}, 2024{\natexlab{b}}.
+
+\bibitem[Liu et~al.(2024{\natexlab{c}})Liu, Yuan, Jin, Zhong, Xu, Braverman,
+  Chen, and Hu]{liu2024kivi}
+Zirui Liu, Jiayi Yuan, Hongye Jin, Shaochen Zhong, Zhaozhuo Xu, Vladimir
+  Braverman, Beidi Chen, and Xia Hu.
+\newblock Kivi: A tuning-free asymmetric 2bit quantization for kv cache.
+\newblock \emph{arXiv preprint arXiv:2402.02750}, 2024{\natexlab{c}}.
+
+\bibitem[Lu et~al.(2024)Lu, Liu, Xu, Zhou, Huang, Zhang, Yan, and
+  Li]{lu2024not}
+Xudong Lu, Qi~Liu, Yuhui Xu, Aojun Zhou, Siyuan Huang, Bo~Zhang, Junchi Yan,
+  and Hongsheng Li.
+\newblock Not all experts are equal: Efficient expert pruning and skipping for
+  mixture-of-experts large language models.
+\newblock \emph{arXiv preprint arXiv:2402.14800}, 2024.
+
+\bibitem[Nie et~al.(2025)Nie, Zhu, You, Zhang, Ou, Hu, ZHOU, Lin, Wen, and
+  Li]{nie2025large}
+Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, JUN ZHOU,
+  Yankai Lin, Ji-Rong Wen, and Chongxuan Li.
+\newblock Large language diffusion models.
+\newblock In \emph{ICLR 2025 Workshop on Deep Generative Model in Machine
+  Learning: Theory, Principle and Efficacy}, 2025.
+
+\bibitem[Sahoo et~al.(2024)Sahoo, Arriola, Gokaslan, Marroquin, Rush, Schiff,
+  Chiu, and Kuleshov]{sahoo2024simple}
+Subham~Sekhar Sahoo, Marianne Arriola, Aaron Gokaslan, Edgar~Mariano Marroquin,
+  Alexander~M Rush, Yair Schiff, Justin~T Chiu, and Volodymyr Kuleshov.
+\newblock Simple and effective masked diffusion language models.
+\newblock In \emph{The Thirty-eighth Annual Conference on Neural Information
+  Processing Systems}, 2024.
+\newblock URL \url{https://openreview.net/forum?id=L4uaAR4ArM}.
+
+\bibitem[Shah et~al.(2024)Shah, Bikshandi, Zhang, Thakkar, Ramani, and
+  Dao]{shah2024flashattention}
+Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri
+  Dao.
+\newblock Flashattention-3: Fast and accurate attention with asynchrony and
+  low-precision.
+\newblock \emph{Advances in Neural Information Processing Systems (NeurIPS)},
+  2024.
+
+\bibitem[Touvron et~al.(2023)Touvron, Lavril, Izacard, Martinet, Lachaux,
+  Lacroix, Rozi{\`e}re, Goyal, Hambro, Azhar, et~al.]{touvron2023llama}
+Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne
+  Lachaux, Timoth{\'e}e Lacroix, Baptiste Rozi{\`e}re, Naman Goyal, Eric
+  Hambro, Faisal Azhar, et~al.
+\newblock Llama: Open and efficient foundation language models.
+\newblock \emph{arXiv preprint arXiv:2302.13971}, 2023.
+
+\bibitem[Vaswani et~al.(2017)Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez,
+  Kaiser, and Polosukhin]{vaswani2017attention}
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones,
+  Aidan~N Gomez, {\L}ukasz Kaiser, and Illia Polosukhin.
+\newblock Attention is all you need.
+\newblock \emph{Advances in neural information processing systems (NeurIPS)},
+  2017.
+
+\bibitem[Xu et~al.(2025)Xu, Jie, Dong, Wang, Lu, Zhou, Saha, Xiong, and
+  Sahoo]{xu2025think}
+Yuhui Xu, Zhanming Jie, Hanze Dong, Lei Wang, Xudong Lu, Aojun Zhou, Amrita
+  Saha, Caiming Xiong, and Doyen Sahoo.
+\newblock Think: Thinner key cache by query-driven pruning.
+\newblock In \emph{The Thirteenth International Conference on Learning
+  Representations (ICLR)}, 2025.
+
+\bibitem[Yang et~al.(2024)Yang, Han, Gao, Hu, Zhang, and
+  Zhao]{yang2024pyramidinfer}
+Dongjie Yang, XiaoDong Han, Yan Gao, Yao Hu, Shilin Zhang, and Hai Zhao.
+\newblock Pyramidinfer: Pyramid kv cache compression for high-throughput llm
+  inference.
+\newblock \emph{arXiv preprint arXiv:2405.12532}, 2024.
+
+\bibitem[Ye et~al.(2025)Ye, Xie, Zheng, Gao, Wu, Jiang, Li, and
+  Kong]{dream2025}
+Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo
+  Li, and Lingpeng Kong.
+\newblock Dream 7b, 2025.
+\newblock URL \url{https://hkunlp.github.io/blog/2025/dream}.
+
+\bibitem[Zhao et~al.(2025)Zhao, Gupta, Zheng, and Grover]{zhao2025d1}
+Siyan Zhao, Devaansh Gupta, Qinqing Zheng, and Aditya Grover.
+\newblock d1: Scaling reasoning in diffusion large language models via
+  reinforcement learning.
+\newblock \emph{arXiv preprint arXiv:2504.12216}, 2025.
+
+\end{thebibliography}

@@ -1,0 +1,21 @@
+\begin{abstract}
+    Diffusion large language models (dLLMs) have shown advantages in text generation, particularly due to their inherent ability for parallel decoding. 
+    %However, parallel decoding relies on an implicit assumption: that each position can be filled independently. In practice, tokens are often semantically coupled and the correct choice at one position constrains valid choices at others. Violating this assumption leads to inconsistent outputs, forcing existing methods to adopt conservative strategies that only decode high-confidence positions(这里留一下，这个描述准确嘛？). This leaves much of the parallelism potential unexploited.
+    However, constrained by the quality--speed trade-off, existing inference solutions adopt conservative parallel strategies, leaving substantial efficiency potential underexplored. A core challenge is that parallel decoding assumes each position can be filled independently, but tokens are often semantically coupled. Thus, the correct choice at one position constrains valid choices at others. Without modeling these inter-token dependencies, parallel strategies produce deteriorated outputs. 
+    % A core challenge is that dLLMs produce position-dependent distributions that contradict the independence assumption commonly adopted in parallel decoding. If conditional relationships among positions can be characterized during inference, this limitation can be fundamentally alleviated.
+    Motivated by this insight, we propose \textbf{\dawn{}}, a training-free, dependency-aware decoding method for fast dLLM inference. 
+    % \dawn{} leverages position dependencies to plan the trajectory of parallel decoding. 
+    % Accordingly, we verify that attention sinks in dLLMs bias the attention-based dependency proxies and observe that previously unmasked high-confidence tokens can reliably induce unmasking at dependent positions.
+    \dawn{} extracts token dependencies and leverages two key motivations: (1) positions dependent on unmasked certain positions become more reliable, (2) simultaneously unmasking strongly coupled uncertain positions induces errors.
+    % Given those findings, \dawn{} integrates three cooperating modules: \textit{Dependency Graph Construction}, \textit{Anchor-Guided Decoding}, and \textit{Conflict-Based Scheduling}. Guided by a dependency graph, \dawn{} relaxes the criteria and applies two selection rules to enable more efficient parallel updates. 
+    Given those findings, \dawn{} leverages a dependency graph to select more reliable unmasking positions at each iteration, achieving high parallelism with negligible loss in generation quality.
+    % \dawn{} extracts token dependencies and leverages two key motivations: (1) once a high-confidence token is unmasked, its dependent positions become more reliable, even if their own confidence is low; (2) simultaneously unmasking strongly coupled low-confidence positions induces errors. Accordingly, beyond accepting high-confidence positions, \dawn{} relaxes the confidence threshold for (i) dependency-anchored positions and (ii) the remaining approximately non-coupling positions, enabling more efficient parallel updates.
+    Extensive experiments across multiple models and datasets demonstrate that \dawn{} speedups the inference by \textbf{1.80 - 8.06$\times$} over baselines while preserving the generation quality. Code is released at \href{https://github.com/lizhuo-luo/DAWN}{https://github.com/lizhuo-luo/DAWN}.
+\end{abstract}
+
+
+
+% A core challenge is that parallel decoding assumes each position can be filled independently, but tokens are often semantically coupled, the correct choice at one position constrains valid choices at others. 
+% Without modeling these inter-token dependencies, parallel strategies produce deteriorated outputs.
+
+% We extract token dependencies and leverage two key observations: (1)Once a high-confidence token is unmasked, its dependent positions become more reliable, even if their own confidence is low., and (2) simultaneously unmasking strongly coupled low-confidence positions induces errors. Accordingly, DAWN relaxes confidence thresholds for dependency-anchored positions...

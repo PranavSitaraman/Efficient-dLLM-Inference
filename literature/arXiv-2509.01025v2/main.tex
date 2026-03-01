@@ -1,0 +1,139 @@
+\documentclass{article}
+\usepackage{iclr2025_conference,times}
+\input{math_commands.tex}
+\usepackage{mathtools}
+\mathtoolsset{showonlyrefs}
+\input{jaeyeon_color_utils}
+% our new packages--alphabetial order
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\algtext*{EndFor}
+\algrenewcommand\algorithmicdo{}
+\algtext*{EndIf}
+\algrenewcommand\algorithmicthen{}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{bbm}
+\usepackage{booktabs}
+\usepackage{bm}
+\usepackage{caption}
+\captionsetup[figure]{name=Figure, labelfont=bf, labelsep=colon} 
+\usepackage{duckuments}
+\usepackage{enumitem}
+\usepackage{etoolbox}
+\usepackage{float}
+\usepackage{graphicx}
+\usepackage{lipsum}
+\usepackage{listings}
+\usepackage{mdframed}
+\usepackage{multirow}
+\usepackage{soul}
+\usepackage{stmaryrd}
+\usepackage{subcaption}
+\usepackage{trimclip}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{xspace}
+\usepackage[normalem]{ulem}
+\usepackage{hyperref}
+
+
+% author list utlis: made by Jaeyeon
+\makeatletter
+\def\xthanks#1{\protected@xdef\@thanks{\@thanks\protect\footnotetext{#1}}}
+\makeatother
+\newcommand{\xsup}[1]{\rlap{\textsuperscript{\normalfont#1}}}
+
+
+\newtheorem{definition}{Definition}
+\newtheorem{prop}{Proposition}
+\newtheorem{proposition}{Proposition}
+\newtheorem*{corollary*}{Corollary} % disable the numbering
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\newcommand{\jay}[1]{\xblue{[Jay: #1]}}
+\newcommand{\sitan}[1]{\xpurple{[Sitan: #1]}}
+\newcommand{\lck}[1]{\xred{[Brian: #1]}}
+\newcommand{\michael}[1]{\xslategray{[Michael: #1]}}
+\newcommand{\mask}{\mathbf{m}}
+\newcommand{\insertat}[3]{#1\,\triangleleft_{#2}#3}
+\newcommand{\replaceat}[3]{#1[#1^{#2} \leftarrow #3]} 
+\newcommand{\bto}[1]{\overset{b_{#1}}{\rightarrow}}
+\newcommand{\length}[1]{\mathrm{len}(#1)}
+\newcommand{\ato}[1]{\overset{a_{#1,\mathsf{L}},a_{#1,\mathsf{R}}}{\longrightarrow}}
+\newtheorem{appprop}{Proposition}[section]
+% Redefine numbering of appendix propositions
+\renewcommand{\theappprop}{\thesection.\arabic{appprop}}
+
+\newtheorem{appdefinition}{Definition}[section]
+% Redefine numbering of appendix propositions
+\renewcommand{\theappdefinition}{\thesection.\arabic{appdefinition}}
+
+
+\newtheorem{appthm}{Theorem}[section]
+% Redefine numbering of appendix propositions
+\renewcommand{\theappthm}{\thesection.\arabic{appthm}}
+
+
+\newtheorem{applem}{Lemma}[section]
+% Redefine numbering of appendix propositions
+\renewcommand{\theapplem}{\thesection.\arabic{applem}}
+
+\title{Any-Order Flexible Length Masked Diffusion}
+
+
+\author{Jaeyeon Kim\xthanks{$^\star$equal contribution, randomized ordering; Lee Cheuk-Kit led the theoretical development of the method and engineering effort; Jaeyeon Kim led experiment development and paper presentation. $^\dagger$ lead senior authors.}\xsup{$1$,$\star$} 
+\hspace{2.1em}
+Lee Cheuk-Kit\xsup{$1,2$,$\star$}
+\hspace{2.1em}
+Carles Domingo-Enrich\xsup{$3$}
+\hspace{2.1em}
+Yilun Du\xsup{$1$,$2$}
+\AND
+Sham Kakade\xsup{$1$,$2$}
+\hspace{2.1em}
+Timothy Ngotiaoco\xsup{$1$,$2$}
+\hspace{2.1em}
+Sitan Chen\xsup{$1$,$\dagger$}
+\hspace{2.1em}
+Michael S. Albergo\xsup{$1,2,4$,$\dagger$}
+\\[1.0ex]
+~$^1$Harvard University ~$^2$Kempner Institute ~$^3$Microsoft Research New England \\~$^4$Institute for Artificial Intelligence and Fundamental Interactions, MIT
+}
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+\newcommand{\Replace}[3]{#1[#2\shortleftarrow#3]}
+\iclrfinalcopy
+
+
+\begin{document}
+\maketitle
+\begin{abstract}
+Masked diffusion models (MDMs) have recently emerged as a promising alternative to autoregressive models over discrete domains. MDMs generate sequences in an any-order, parallel fashion, enabling fast inference and strong performance on non-causal tasks. However, a crucial limitation is that they do not support token insertions and are thus limited to \emph{fixed-length} generations. To this end, we introduce \textbf{Flex}ible \textbf{M}asked \textbf{D}iffusion \textbf{M}odels (FlexMDMs), a discrete diffusion paradigm that simultaneously can model sequences of flexible length while provably retaining MDMs' flexibility of any-order inference. Grounded in an extension of the stochastic interpolant framework, FlexMDMs generate sequences by inserting mask tokens and unmasking them. Empirically, we show that FlexMDMs match MDMs in perplexity while modeling length statistics with much higher fidelity. On a synthetic maze planning task, they achieve $\approx$ 60\% higher success rate than MDM baselines. Finally, we show pretrained MDMs can easily be \emph{retrofitted} into FlexMDMs: on 16 H100s, it takes only three days to fine-tune LLaDA-8B into a FlexMDM, achieving superior performance on math (GSM8K, 58\%$\to$67\%) and code infilling performance (52\%$\to$65\%).
+\end{abstract}
+\input{1_Introduction}
+\input{2_CTMC}
+\input{3_VLMDM_informal}
+\input{4_VLMDM_inference}
+\input{5_Experiment}
+\input{6_Conclusion}
+\section*{Acknowledgements}
+We thank Peter Potaptchik for feedback on the theoretical exposition, Francisco Vargas for discussion on path measures, Jiaxin Shi for discussion on perplexity metrics, Zhenting Qi
+for discussion on instruction fine-tuning, and Andrew Campbell on architecture of the model. SC is supported by NSF CAREER award CCF-2441635. MSA is supported by a Junior Fellowship at the Harvard Society of Fellows as well as the National Science Foundation under Cooperative Agreement PHY-2019786 (The NSF AI Institute for Artificial Intelligence and Fundamental Interactions, http://iaifi.org/). This work has been made possible in part by a gift from the Chan Zuckerberg Initiative Foundation to establish the Kempner Institute for the Study of Natural and Artificial Intelligence.
+
+
+% \newpage
+\bibliographystyle{unsrtnat}
+\nocite{*}
+\bibliography{main}
+\newpage
+\tableofcontents
+\appendix
+\newpage
+\input{Appendix_related_work}
+\input{Appendix_theory_interpolant}
+\input{Appendix_theory_inference}
+\input{Appendix_exp_details}
+\end{document}

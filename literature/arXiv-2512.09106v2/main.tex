@@ -1,0 +1,102 @@
+\documentclass{applemlr}
+\input{apple_preamble}
+
+\usepackage{multirow,booktabs}
+
+%%% macros %%%
+\def\mask{{\bm{M}}}
+\def\txo#1{{\color{blue} [TXO: #1]}}
+\def\mcut#1{{\color{red} [MC: #1]}}
+\def\vturrisi#1{{\color{orange} [VT: #1]}}
+%%%%
+
+%%%% plot lines %%%
+\usepackage{tikz}
+
+\definecolor{Ee}{RGB}{44, 160, 44} 
+\newcommand{\greenline}{{\tikz[baseline=-0.5ex] \draw[very thick, color=Ee] (0., 0.) -- (0.3, 0.);}}
+
+\definecolor{Lxjp}{HTML}{9467BD}
+\newcommand{\purpleline}{{\tikz[baseline=-0.5ex] \draw[very thick, color=Lxjp] (0., 0.) -- (0.3, 0.);}}
+
+\definecolor{Lplugin}{HTML}{FF7F0E} 
+\newcommand{\orangeline}{{\tikz[baseline=-0.5ex] \draw[very thick, color=Lplugin] (0., 0.) -- (0.3, 0.);}}
+
+\definecolor{belowzero}{HTML}{D62728}
+\newcommand{\redline}{{\tikz[baseline=-0.5ex] \draw[very thick, color=belowzero] (0., 0.) -- (0.3, 0.);}}
+
+\definecolor{Lxypfa}{HTML}{1F77B4}
+\newcommand{\blueline}{{\tikz[baseline=-0.5ex] \draw[very thick, color=Lxypfa] (0., 0.) -- (0.3, 0.);}}
+
+\definecolor{yhat}{gray}{0.5}
+\newcommand{\greyline}{{\tikz[baseline=-0.5ex] \draw[very thick, color=yhat] (0., 0.) -- (0.3, 0.);}}
+
+\definecolor{TabYellow}{HTML}{FDC35D}
+\newcommand{\yellowline}{{\tikz[baseline=-0.5ex] \draw[very thick, dashed, color=TabYellow] (0., 0.) -- (0.3, 0.);}}
+
+\definecolor{TabYellow}{HTML}{FDC35D}
+\newcommand{\yellowdottedline}{{\tikz[baseline=-0.5ex] \draw[very thick, dotted, color=TabYellow] (0., 0.) -- (0.3, 0.);}}
+
+\newcommand{\dashedline}
+{{\tikz[baseline=-0.5ex] \draw[very thick, dashed] (0., 0.) -- (0.3, 0.);}}
+
+\newcommand{\solidline}{{\tikz[baseline=-0.5ex] \draw[very thick] (0., 0.) -- (0.3, 0.);}}
+
+\usepackage{scalerel}
+\definecolor{mplgreen}{rgb}{0.17254901960784313, 0.6274509803921569, 0.17254901960784313}
+\newsavebox{\boxgreen}
+
+\sbox{\boxgreen}{\tikz \draw[mplgreen!100, line width=6pt] (-0.4,-0.4) -- (0.4,0.4) (-0.4,0.4) -- (0.4,-0.4);}
+%%%%%%%
+
+%\title{RL-dLLM: Learning Samplers for Diffusion LLMs via Reinforcement Learning}
+%\title{A Little Bit of Confidence Goes a Long Way: Learning Lightweight Samplers for Diffusion LLMs via Reinforcement Learning
+% \title{Learning Confidence-based Unmasking Policies for Diffusion LLMs}
+% \title{Learning Confidence-based Sampling Policies for Diffusion LLMs}
+\title{Learning Unmasking Policies for\\ Diffusion Language Models}
+% \title{Automating Sampling Design in Diffusion LLMs via Reinforcement Learning}
+%title TODO obviously, send recs
+
+\author[*\dagger]{Metod Jazbec}
+\author[*\ddagger]{Theo X. Olausson}
+\author{Louis Béthune}
+\author{Pierre Ablin}
+\author{Michael Kirchhof}
+\author{Jo\~ao Monteiro}
+\author{Victor Turrisi}
+\author{Jason Ramapuram}
+\author{Marco Cuturi}
+
+\affiliation{Apple}
+\affiliation{University of Amsterdam$^\dagger$}
+\affiliation{Massachusetts Institute of Technology$^\ddagger$}
+
+\input{sections/abstract}
+
+\begin{document}
+\maketitle
+
+\input{sections/intro}
+\input{sections/background}
+%\input{sections/limitations_of_heuristics}
+\input{sections/method}
+% \input{sections/results}
+% \input{sections/results_nov4}
+\input{sections/results_nov12}
+
+\input{sections/related}
+
+\section{Conclusion}
+\input{sections/conclusion}
+
+\bibliographystyle{unsrtnat}
+\bibliography{main}
+
+\appendix
+\include{sections/appendix-dream}
+\include{sections/appendix-config}
+\include{sections/appendix-dpls}
+\include{sections/appendix-es}
+\include{sections/appendix-background}
+
+\end{document}

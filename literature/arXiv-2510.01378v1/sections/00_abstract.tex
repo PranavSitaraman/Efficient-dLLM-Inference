@@ -1,0 +1,6 @@
+Diffusion models have emerged as the principal paradigm for generative modeling across various domains. During training, they learn the score function, which in turn is used to generate samples at inference. They raise a basic yet unsolved question: \emph{which} score do they actually learn? In principle, a diffusion model that matches the empirical score in the entire data space would simply reproduce the training data, failing to generate novel samples. Recent work addresses this question by arguing that diffusion models \emph{underfit} the empirical score due to training-time inductive biases.
+%
+In this work, we refine this perspective, introducing the notion of \emph{selective underfitting}: instead of underfitting the score everywhere, better diffusion models more accurately approximate the score in certain regions of input space, while underfitting it in others.
+%
+We characterize these regions and design empirical interventions to validate our perspective. Our results establish that selective underfitting is essential for understanding diffusion models, yielding new, testable insights into their generalization and generative performance.
+\vspace{-0.1in}

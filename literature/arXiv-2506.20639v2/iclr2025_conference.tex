@@ -1,0 +1,127 @@
+\PassOptionsToPackage{dvipsnames}{xcolor}
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2025_conference,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+% \usepackage{hyperref}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{algorithm,algpseudocode}
+\usepackage{booktabs, multirow}
+\usepackage{caption}
+\usepackage{wrapfig}
+\usepackage{enumitem}
+% \usepackage[dvipsnames]{xcolor}
+\usepackage{amsthm}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}{Lemma}
+\usepackage{xcolor}
+\definecolor{mygray}{gray}{0.6}
+\usepackage{colortbl}
+\usepackage{tcolorbox}
+\definecolor{stringBlue}{RGB}{51,202,246}
+\definecolor{lightYellow}{RGB}{255, 165, 0}
+\definecolor{lightRed}{RGB}{255, 105, 180}
+\usepackage{subcaption}
+\definecolor{airforceblue}{rgb}{0.36, 0.54, 0.66}
+\definecolor{bluegray}{rgb}{0.4, 0.6, 0.8}
+\definecolor{bleudefrance}{rgb}{0.19, 0.55, 0.91}
+\usepackage[colorlinks=true,linkcolor=orange,citecolor=bleudefrance]{hyperref}
+\usepackage{arydshln}
+\usepackage{soul}
+\usepackage{todonotes}
+
+% \title{Towards Diffusion Large Language Models}
+% \title{DiffuCoder: Understanding {and} Improving Masked Diffusion Models {for} Code Generation}
+\usepackage{microtype}
+\title{DiffuCoder: Understanding and Improving Masked Diffusion Models for Code Generation}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+\iclrfinalcopy
+
+\author{Shansan Gong$^{1\ddagger2}$, Ruixiang Zhang$^1$, Huangjie Zheng$^1$, Jiatao Gu$^1$, Navdeep Jaitly$^{1\dagger}$,\\
+\textbf{{Lingpeng Kong}$^{2\dagger}$, {Yizhe Zhang}$^1$} \\
+$^1$Apple\quad $^2$The University of Hong Kong {$^\dagger$Core advising}\\
+\texttt{sansa933@connect.hku.hk;lpk@cs.hku.hk;yizhe\_zhang@apple.com} \\
+}
+% test
+
+
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+\newcommand{\lpk}[1]{\textcolor{blue}{\bf \small [#1 --lpk]}}
+\newcommand{\sansa}[1]{\textcolor{red}{\bf \small [#1 --sansa]}}
+% \newcommand{\yz}[1]{\textcolor{brown}{\bf \small [#1 --yizhe]}}
+\setlength{\marginparwidth}{2.8cm}
+\newcommand{\yz}[1]{\todo[color=brown!20,size=\small]{YZ:#1}}
+\newcommand{\rxz}[1]{\textcolor{green}{\bf \small [#1 --rxz]}}
+\newcommand{\hj}[1]{\textcolor{cyan}{\bf \small [#1 --huangj]}}
+% \newcommand{\ZRNS}[1]{\textcolor{brown}{\bf \small [#1 --reviewer-ZRNS]}}
+% \newcommand{\XhLb}[1]{\textcolor{orange}{\bf \small [#1 --reviewer-XhLb]}}
+% \newcommand{\rZH}[1]{\textcolor{blue}{\bf \small [#1 --reviewer-rZH1]}}
+% \newcommand{\p}[1]{\textcolor{purple}{\bf \small [#1 --reviewer-87p8]}}
+
+ % \iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\usepackage{eso-pic}
+
+\AddToShipoutPictureBG*{%
+  \AtTextUpperLeft{%
+    \raisebox{-4cm}{%
+      \makebox[\textwidth][l]{\; $^\ddagger$ Work done during the internship at Apple}%
+    }%
+  }
+}
+
+\begin{document}
+
+\maketitle
+\input{abs02}
+% \begin{abstract}
+% Diffusion large language models (dLLMs) are compelling alternatives to autoregressive (AR) models, especially for code generation due to their capacity for global planning. 
+% % However, the training recipes tailored towards dLLMs remain under-explored compared to recipes for AR models. 
+% To unlock the potential of open dLLMs for coding and demystify their decoding behavior, we systematically investigate both effective training pipelines and interpretable denoising processes. 
+% In this work, we introduce \textbf{DiffuCoder}, a 7B dLLM specialized for code generation that achieves SOTA performance among open-sourced dLLMs. 
+% We provide a full training pipeline spanning pre-, mid-, and post-training.
+% We also analyze the decoding behavior of dLLMs, revealing how they behave differently from AR models: increasing sampling temperature diversifies not only token choices but also their generation order. This diversity creates a rich search space, laying the groundwork for effective RL exploration.
+% During RL training, to reduce the variance of token log-likelihood estimates and maintain RL training efficiency, we propose \textbf{coupled-GRPO}, a novel sampling scheme that couples the masks of examples used in training. 
+% In our experiments, coupled-GRPO further improves DiffuCoder's performance on code generation benchmarks (+4.4\% on EvalPlus) without reliance on semi-AR decoding.
+% Our work provides a strong open-source model, a deeper insight into the machinery of dLLM generation, and an effective, diffusion-native training framework. \url{https://github.com/apple/ml-diffucoder}
+% \end{abstract}
+
+\input{01-intro-new-new}
+
+\input{02-preli}
+
+\input{03-analysis}
+
+\input{04-code}
+
+\input{05-related}
+
+\input{06-conclusion}
+
+\subsubsection*{Acknowledgments}
+We thank the following researchers for their stimulating discussions and valuable suggestions during the preparation of this manuscript: Shivam Agarwal from the University of Illinois Urbana-Champaign; Wenhao Chai from Princeton University; Richard Bai from Apple; Lin Zheng, Chenxin An and Zhihui Xie from the University of Hong Kong.
+
+\bibliography{iclr2025_conference}
+\bibliographystyle{iclr2025_conference}
+
+\newpage
+\appendix
+\input{07-appx}
+
+
+\end{document}

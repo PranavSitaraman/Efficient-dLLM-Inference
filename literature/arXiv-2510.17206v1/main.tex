@@ -1,0 +1,1138 @@
+
+\documentclass{article}
+\usepackage{iclr2026_conference,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{xurl} % for better URL new line 
+\usepackage{graphicx}
+% My packages
+\usepackage{booktabs} % For \toprule, |rule, \bottomrule
+\usepackage{enumitem} % space out bullets
+\usepackage{makecell} % For 2 lines in table cell
+\usepackage{array}
+\usepackage[table]{xcolor}
+\usepackage{multirow}
+\usepackage[linesnumbered, ruled, vlined]{algorithm2e}
+\newcommand\mycommfont[1]{\scriptsize\ttfamily{#1}}
+\SetCommentSty{mycommfont}
+\usepackage{xspace} 
+\newcommand{\mask}{[\texttt{MASK}]\xspace}
+\usepackage{subcaption}
+\usepackage{wrapfig}
+\usepackage[dvipsnames]{xcolor}
+
+\newcommand{\gain}[1]{\textit{\color{Green}#1}}
+
+\title{Soft-Masked Diffusion Language Models}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+\author{Michael Hersche$^{1}$, Samuel Moor-Smith$^{1,2}\thanks{Research conducted at IBM Research -- Zurich.}$\,\,, Thomas Hofmann$^{2}$, Abbas Rahimi$^{1}$\\
+\And
+\normalfont $^{1}$IBM Research -- Zurich, $^{2}$Department of Computer Science, ETH Zürich}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+% patches for arxiv version
+\iclrfinalcopy
+\colorlet{red}{.}
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+Diffusion models have demonstrated strong potential in language modeling, offering various advantages over traditional autoregressive approaches. 
+Their ability to generate and revise entire responses in parallel enables faster generation and built-in self-correction mechanisms.
+Most modern diffusion-based language models employ masked diffusion, where decoding involves iteratively processing masked tokens based on a binary decision: either retaining the mask or replacing it with the predicted token. 
+However, this binary choice discards valuable predictive information when the mask is retained.
+To address this limitation, we introduce \textit{soft-masking (SM)}, a novel method that dynamically blends the embedding of the mask token with the embeddings of the top-$k$ predicted tokens from the previous decoding step, for each retained mask.
+This provides the model with a more informative prior, preserving context from earlier computations and allowing partial information about masked tokens to propagate beyond a single step. 
+We propose a training methodology that adapts a pretrained masked diffusion language model to incorporate SM.
+We demonstrate that continuing pretraining a 169M parameter model with SM leads to improved perplexity and MAUVE scores.
+Furthermore, we finetune two state-of-the-art diffusion models, Dream-7B and Dream-Coder-7B, with SM.
+SM consistently improves performance across multiple coding benchmarks, particularly in high-throughput settings.
+\end{abstract}
+
+\begin{figure*}[h!]
+\centering
+\includegraphics[width=\textwidth]{figures/SM_illustration.pdf}
+\caption{
+Illustrative answer generation using masked diffusion language models (MDLMs) via iterative decoding with (a) standard binary masking or (b) our proposed soft-masking.
+%
+Our soft-masking enriches the feedback for the next decoding step by superposing the masked tokens with the previously predicted top-$k$ candidates, enabling more accurate and faster generation.
+}
+\label{fig:concept}
+\end{figure*}
+
+\section{Introduction}
+
+Generative large language models (LLMs) have transformed natural language processing. 
+%
+LLMs typically operate in an autoregressive (AR) mode~\citep{vaswani_attention_2017, brown_language_2020}, where the next token in a sequence is predicted based on the previously generated tokens. 
+%
+While AR models have proven highly effective, their sequential nature makes inference computationally expensive, leading to high latency and costs. 
+%
+These inference costs are particularly pronounced in large reasoning models~\citep{openai_learning_2024, deepseekai2025short, qwen_qwq_2024}, where different solutions are validated through sequential exploration via chain-of-thought (CoT)~\citep{wei_chain--thought_2022}.
+%
+
+As a potential remedy, recent work has shown that incorporating continuous feedback, rather than relying solely on discrete, sampled tokens, can improve AR model's performance~\citep{hao_training_2024, zhuang_text_2025, zhang_soft_2025}.
+%
+Such continuous feedback encodes multiple potential solutions in superposition~\citep{zhu_reasoning_2025}, enabling simultaneous exploration of diverse paths and thereby potentially reducing the number of generated tokens required.
+%
+However, training AR models with continuous feedback is slow, due to the sequential reliance on previous continuous token outputs.
+
+
+
+As a promising alternative, diffusion models---originally developed for continuous domains in vision~\citep{sohl-dickstein_deep_2015, ho_denoising_2020, song_score-based_2020}---have recently been adapted to natural language processing. These diffusion \emph{language} models (DLMs) offer key advantages over AR models, including accelerated sampling, controllable generation, bidirectional modeling, and built-in self-correction~\citep{ye_diffusion_2024}.  
+%
+Besides being more data-efficient than AR-models in training~\citep{ni_diffusion_2025}, they are particularly beneficial in non-causal tasks such as coding~\citep{nie_large_2025, gong_diffucoder_2025, xie_dream-coder_2025}.
+They consist of a forward process, which gradually corrupts data, and a backward process, which iteratively reverses this corruption to generate coherent outputs.
+
+Masked DLMs (MDLMs) have emerged as the most scalable and effective approach. 
+%
+They implement the forward process as a categorical transition function, mapping tokens to an absorption state, typically represented by a \mask token~\citep{austin_structured_2021, campbell_continuous_2022, lou_discrete_2024, sahoo_simple_2024, ou_your_2024, shi_simplified_2024}.
+%
+During decoding, the model makes a binary choice for each mask token: either replace it with a predicted token or retain the \mask (see \Figref{fig:concept}a). 
+%
+This discrete formulation allows for improved training and has enabled the development of large-scale MDLMs across both open-source~\citep{gong_scaling_2025, nie_large_2025, ye_dream_2025, xie_dream-coder_2025} and commercial~\citep{inception_mercury_2025, deepmind_gemini_2025} initiatives.
+
+
+
+Despite their scalability, MDLMs are fundamentally constrained by the binary unmasking process, which discards valuable predictive information. 
+%
+Likewise, AR models commit to a single discrete sampling decision, with no opportunity for refinement. 
+%
+Motivated by the success of continuous feedback mechanisms in AR models, which preserve and leverage uncertainty over multiple candidates, we propose a new feedback mechanism for MDLMs that propagates this rich predictive information throughout the generation process.
+
+
+% Our contribution
+\paragraph{This work: Continuous feedback in MDLMs via soft-masking}
+We introduce soft-masking~(SM), a simple yet effective mechanism for incorporating continuous feedback into MDLMs, as illustrated in~\Figref{fig:concept}b.
+%
+During decoding, SM enriches the \mask state with a convex combination of the top-$k$ predicted tokens, weighted by their confidence scores.
+%
+This allows the model to retain and propagate partial information across decoding steps, rather than discarding it through binary masking decisions.
+%
+Our method integrates seamlessly into existing MDLM architectures, requiring minimal adaptation.
+%
+Our contributions are as follows: 
+\begin{itemize}[itemsep=-0.0em, topsep=-0.1em]
+\item We propose soft-masking (SM), a novel decoding mechanism that enhances the expressiveness of the \mask token in MDLMs. SM only adds three additional parameters, which can be efficiently learned together with the MDLM parameters using a parallelizable training procedure that enables MDLMs to leverage the richer feedback.
+\item We show that SM improves language modeling performance after continuing pretraining a 169M-parameter MDLM on OpenWebText for only 100k steps. SM yields lower validation perplexity and higher MAUVE scores in unconstrained generation. 
+\item We demonstrate that SM generalizes to large-scale models by applying it to Dream-7B~\citep{ye_dream_2025} and Dream-Coder-7B~\citep{xie_dream-coder_2025}. 
+After minimal finetuning, SM improves performance on HumanEval~\citep{chen_evaluating_2021} and MBPP~\citep{mbpp_2021} code generation benchmarks (including their plus versions~\citep{evalplus_2023}), particularly in high-throughput regimes with limited decoding iterations.
+\item SM can be readily integrated into other MDLM efficiency enhancement techniques, such as unmasking and caching. We show that SM complements an advanced unmasking scheduler, ReMDM~\citep{wang_remasking_2025}, further improving unconstrained text generation quality. 
+Moreover, SM can leverage caching and confidence-aware blockwise decoding from Fast-dLLM~\citep{wu_fast-dllm_2025}, particularly improving generations in high-throughput settings.  
+\end{itemize}
+
+
+
+\section{Background: Masked Diffusion Language Models}
+We begin by formulating general diffusion models~\citep{sohl-dickstein_deep_2015} and continue with the forward and backward diffusion processes in MDLMs~\citep{gong_scaling_2025}. 
+% 
+We denote scalars with lower-case letters ($x$), vectors with bold lower-case letters ($\mathbf{x}$), sequences of length $T$ with a colon (e.g., $\mathbf{x}_{1:T})$, matrices with bold capital letters ($\mathbf{X}$), and the transpose with $\mathbf{X}^\top$. 
+% 
+
+Diffusion models describe a \emph{forward} diffusion process as a Markov chain that progressively corrupts the original data: $q(\mathbf{x}_{1:T} | \mathbf{x}_0) = \prod_{t=1}^T q(\mathbf{x}_t | \mathbf{x}_{t-1})$. 
+%
+Here, $\mathbf{x}_0\sim q_{\text{data}}(\mathbf{x}_0)$ is drawn from the data distribution and $q(\mathbf{x}_t | \mathbf{x}_{t-1})$ describes the transition probability at step $t$. 
+% 
+The marginalized target distribution ($q(\mathbf{x}_T)$) should be stationary and cheap to generate (e.g., a Gaussian distribution). 
+% 
+A \emph{reverse} diffusion process aims to reconstruct the original data with a parameterized function $p_\theta(\mathbf{x}_{0:T})=p_\theta(\mathbf{x}_{T})\prod_{t=1}^T p_\theta(\mathbf{x}_{t-1} | \mathbf{x}_t)$. 
+% 
+
+\subsection{MDLM Modeling}
+
+\paragraph{Forward corruption}
+
+We first focus on the corruption process for a single token; the extension to sequences is discussed later.
+% 
+We represent language tokens as one-hot vectors $\mathbf{x} \in \{0,1\}^{|\mathcal{V}|}$, where $|\mathcal{V}|$ represents the cardinality of the vocabulary. 
+% 
+The transition function in MDLMs is defined such that, at each step, the token either remains unchanged or is mapped to a designated absorption state: $\mask \in \mathcal{V}$.
+The transition can be expressed as 
+$
+    q(\mathbf{x}_t|\mathbf{x}_{t-1}) = \text{Cat}(\mathbf{x}_t; \mathbf{Q}^\top_t\mathbf{x}_{t-1}),
+$
+where $\text{Cat}(\cdot,\mathbf{p})$ is the categorical distribution given a probability mass vector $\mathbf{p}\in \Delta^{|\mathcal{V}|-1}$, and $[\mathbf{Q}_t]_{i,j}$ denotes the transition probability from token $i$ to token $j$ at time $t$.
+% 
+The marginal distribution after $s$ steps is: 
+\begin{align*}
+    q(\mathbf{x}_{s}| \mathbf{x}_0) = \text{Cat}(\mathbf{x}_s| \overline{\mathbf{Q}}^\top_s \mathbf{x}_0 ) = \alpha_s \mathbf{x}_0 + (1-\alpha_s) \mathbf{m},  
+\end{align*}
+where $\mathbf{m}$ is the mask token, $\overline{\mathbf{Q}}_s = \prod_{t=1}^s \mathbf{Q}_t$, and $\alpha_s$ describes the probability of retaining the original state. 
+%
+The schedule is typically chosen such that $\alpha_T = 0$, ensuring that the token is absorbed into the masking state with probability 1 at the final step $T$.
+% 
+For example, a linear masking schedule with $\alpha_t =(1-t/T)$ is a popular choice~\citep{austin_structured_2021, gong_scaling_2025, nie_large_2025}. 
+
+\paragraph{Reverse process}
+Decoding aims to reverse the corruption process by iteratively denoising the data, starting from the absorbed (masked) state at time step $T$.
+% 
+First, note that the forward transition probability between two time steps $0 \leq  s < t \leq T$ is given by:
+\begin{align*}
+    q(\mathbf{x}_s | \mathbf{x}_t) = \text{Cat}(\mathbf{x}_s; \overline{\mathbf{Q}}^\top_{t|s}\mathbf{x}_t), 
+\end{align*}
+where $\overline{\mathbf{Q}}_{t|s} = \overline{\mathbf{Q}}_s^{-1} \overline{\mathbf{Q}}_t$ represents the transition matrix from step $t$ back to step $s$.
+% 
+Assuming access to the ground-truth token $\mathbf{x}_0$, the exact posterior transition from $\mathbf{x}_t$ to $\mathbf{x}_s$ can be computed via Bayes: 
+\begin{align*}
+    q(\mathbf{x}_s | \mathbf{x}_t, \mathbf{x}_0) &= \frac{q(\mathbf{x}_t | \mathbf{x}_s) q(\mathbf{x}_s | \mathbf{x}_0)}{q(\mathbf{x}_t | \mathbf{x}_0)} = 
+\begin{cases}
+\frac{\alpha_s - \alpha_t}{1 - \alpha_t} \mathbf{x}_0 + \frac{1 - \alpha_s}{1 - \alpha_t} \mathbf{m} & \text{if } \mathbf{x}_t = \mathbf{m}, \\
+\mathbf{x}_0 & \text{if } \mathbf{x}_t \neq \mathbf{m}.
+\end{cases}
+\end{align*}
+Since $\mathbf{x}_0$ is unknown during inference, we approximate the posterior using a learnable function $f_\theta(\mathbf{x}_t)$ that predicts the original token from the corrupted input: 
+\begin{align*}
+    \hat{q}(\mathbf{x}_s | \mathbf{x}_t, \mathbf{x}_0) = p_\theta (\mathbf{x}_s | \mathbf{x}_t, f_\theta(\mathbf{x}_t)). 
+\end{align*}
+% 
+Here, a learnable function\footnote{While original denoising models use time conditioning ($f_\theta (\mathbf{x}_t, t)$),~\cite{ou_your_2024} present a method without time conditioning. We omit time conditioning in our theoretical formulation. However, we show experimentally that SM improves MDLMs \emph{with} (Section~\ref{sec:language_modeling}) and \emph{without} time conditioning (Section~\ref{sec:code_generation}).}
+($f_\theta$) approximates the ground-truth ($\mathbf{x}_0$); hence, it imitates the denoising from step $t$ to step $0$. 
+% 
+Substituting the approximation into the closed-form expression yields the parametric backward transition:
+\begin{align}
+  p_\theta(\mathbf{x}_s | \mathbf{x}_t) =   \frac{\alpha_s - \alpha_t}{1 - \alpha_t} f_\theta (\mathbf{x}_t) + \frac{1 - \alpha_s}{1 - \alpha_t} \mathbf{m}.  \label{eq:diff_decoding}
+\end{align}
+
+
+\paragraph{Reverse process in natural language processing}
+The input consists of sequences of $L$ tokens: $\mathbf{x}^{1:L}_0$. 
+% 
+Decoding begins from a fully masked sequence: $\mathbf{x}^{1:L}_T= \mathbf{m},...,\mathbf{m} $. 
+% 
+At each time step $t$, the current sequence estimate is passed through a bidirectional model (e.g., a non-causal Transformer~\citep{vaswani_attention_2017, peebles_scalable_2023}), yielding token-wise probability distributions:
+$
+    \mathbf{p}^{1:L}_{t-1}= g_\theta(\mathbf{x}^{1:L}_t), \label{eq:pmf}
+$
+where $\mathbf{p}^l_{t-1}\in \Delta^{\mathcal{|V|}-1}$ is the predicted probability mass vector on the $|\mathcal{V}|$-dimensional simplex for token $l$.
+% 
+Each probability mass vector ($\mathbf{p}^l_{t-1}$) is discretized using a sampling strategy (e.g., nucleus or argmax), yielding $\mathbf{\tilde{x}}^{1:L}_{t-1}$. 
+% 
+Describing the sampling function with $h(\cdot)$, we can write the reverse process of the entire model as $f_\theta= h \circ g_\theta  $. 
+% 
+
+\paragraph{Training objective}
+Given a linear schedule of $\alpha_s$, the parameters ($\theta$) are optimized by minimizing: 
+\begin{align*}
+    \Ls(\theta) =-\E_{t\sim U(0, 1),\mathbf{x}_0 \sim q_{\text{data}}(\cdot),\mathbf{x}_t \sim q(\cdot|\mathbf{x}_0}) \left[ \frac{1}{t} \sum_{i=1}^{L} \mathbf{1}_{\mathbf{x}^i_t=\mathbf{m}} \text{log}\left( (\mathbf{x}_0^i)^\top g_{\theta} (\mathbf{x}_0^i |\mathbf{x}^{1:L}_t)\right) \right], 
+    % \geq  -\text{log}\, q(\mathbf{x}_0) 
+\end{align*}
+where $\mathbf{1}_{\mathbf{x}^i_t=\mathbf{m}}$ is the identity function. 
+% 
+The loss $\Ls(\theta)$ is an upper bound on the negative log likelihood of the data distribution~\citep{shi_simplified_2024, ou_your_2024}. 
+% 
+$U(0,1)$ is the uniform distribution. 
+
+\subsection{MDLMs in Practice}
+
+\paragraph{Unmasking strategies} 
+Equation~\ref{eq:diff_decoding} suggests that the model \emph{randomly} decides---based on the noise schedule $\alpha_t$---whether or not to replace a masked token with the predicted value $f_\theta(\mathbf{x}_t)$.
+% 
+However, many MDLMs use additional unmasking heuristics that improve the generation quality.  
+%
+One approach is to unmask a fixed number of tokens per step, guided not only by the noise schedule but also by the model's confidence.
+% 
+For example, at time $t$,  Dream-7B~\citep{ye_dream_2025} selects $n\approx L/T$ tokens that have the lowest entropy values. Here, $T$ is the integer number of diffusion steps.
+%
+More recent methods introduce exploratory (remasking) and accelerated (aggressive unmasking) decoding stages~\citep{wei_accelerating_2025, wang_remasking_2025}. 
+% 
+\citet{rutte_generalized_2025} introduce an interpolation between masked and uniform diffusion, which introduces remasking already during the training stage. 
+
+\paragraph{Conditional generation} Conditioning the generative process on a prompt ($\mathbf{c}^{1:L_c}$) is straightforward. 
+% 
+For decoding, the prompt is simply prefixed to the (partially) masked solution at each iteration, i.e., $\mathbf{p}^{1:L}_{t-1}|\mathbf{c}^{1:L_c} = g_\theta ([\mathbf{c}^{1:L_c}, \mathbf{x}^{1:L}_t])$, where only the last $L$ tokens are updated. 
+
+
+\section{Soft-Masked Diffusion Language Models}\label{sec:method}
+
+As elaborated above, the iterative decoding in MDLMs makes a \emph{binary decision}: selecting either the original mask or the token predicted by the denoising model ($f_\theta$). 
+% 
+This binary choice results in a loss of valuable contextual information for the masked tokens.
+% 
+To overcome this limitation, we propose soft-masking (SM). SM augments the mask with intermediate context from the previous denoising step, thereby preserving informative cues and providing a richer input for the next denoising step.
+
+\subsection{Soft-Masking (SM)}
+We introduce SM, illustrated in \Figref{fig:sm}, which enhances the denoising process in MDLMs. 
+% 
+As shown, the overall denoising process follows the standard framework of MDLMs. 
+% 
+However, instead of discarding previous predictions during masking or remasking, SM gently retains information from the past predictions and incorporates them into subsequent decoding steps.
+%
+This provides richer feedback to guide the next denoising step.
+%
+To enable this, SM relaxes the binary constraint on the feedback tokens ($\mathbf{x}_{t-1}$) provided to the denoising model, allowing them to represent a \emph{distribution of solutions}, i.e., $\mathbf{x}^l_{t-1} \in \Delta^{|\mathcal{V}|-1}$ instead of the one-hot $\mathbf{x}^l_{t-1} \in \{0,1\}^{|V|}$. 
+% 
+\begin{figure}
+    \centering
+    \includegraphics[width=.8\linewidth]{figures/architecture.pdf}
+    \caption{
+    Iterative denoising in MDLMs using the proposed soft-masking (SM). 
+    % 
+    Given a context, the aim is to predict the answer via iterative denoising of an initially fully masked response.   
+    %   
+    Here, a bidirectional Transformer ($f_\theta$) performs a single denoising step.  
+    % 
+    This output is passed through an unmasking function that, based on the Transformer's token probabilities, determines which tokens remain masked.
+    Our proposed SM enriches the masked tokens by superposing them with the normalized top-$k$ tokens at each position, weighted by a confidence parameter ($\lambda$).
+    }
+    \label{fig:sm}
+\end{figure}
+
+\paragraph{General formulation}
+The feedback is formally defined as:
+\begin{align*}
+    \mathbf{x}^l_{t-1}=\text{sm}(\mathbf{\hat{x}}^l_{t-1}, \mathbf{p}^l_{t-1}) = \begin{cases} \left(1-\lambda(\mathbf{p}^l_{t-1})\right)\cdot\mathbf{m} + \lambda(\mathbf{p}^l_{t-1}) \sum_{i\in \text{top-$k$}(\mathbf{p}^l_{t-1})} \pi_i \cdot \mathbf{v}_i & \text{if } \mathbf{\hat{x}}^l_{t-1} = \mathbf{m}, \\
+\mathbf{\hat{x}}^l_{t-1} & \text{if } \mathbf{\hat{x}}^l_{t-1} \neq \mathbf{m}, 
+\end{cases}
+\end{align*}
+where $\mathbf{p}^l_{t-1}$ is the probability mass vector and $\mathbf{\hat{x}}^l_{t-1}$ is the discrete output from the denoising process. 
+% 
+SM is applied only to masked tokens; previously predicted tokens remain unchanged. 
+% 
+SM is implemented as a convex combination of the mask token and a weighted superposition of the top-$k$ predicted tokens. 
+Here, $\lambda \in [0,1)$ controls the amount of feedback, $\mathbf{v}_i\in \{0,1\}^{|\mathcal{V}|}$ is a one-hot vector representing token $i$, and $\pi_i$ is the result of the probability mass vector being normalized over the top-$k$ tokens: $\pi_i = [\mathbf{p}^l_{t-1}]_i / \sum_{j \in \text{top-k}(\mathbf{p}^l_{t-1})} [\mathbf{p}^l_{t-1}]_j$, which ensures that $\sum_i \pi_i = 1$.
+
+\paragraph{Confidence-based weighting}
+\label{sec:confidence_scaling}
+In the following, we describe the dynamic weighting strategy for SM.
+% 
+Intuitively, a higher confidence should correspond to a greater weight on the model's output, while a lower confidence should preserve more of the original mask token.
+% 
+To quantify confidence, we use the negative entropy of the probability mass vector $\mathbf{p}^l_{t-1}$, denoted as $-H(\mathbf{p}^l_{t-1})$.
+% 
+To map this confidence score to a weight in $[0, \omega_s]$, we apply a scaled sigmoid function:
+\begin{align}
+    \lambda (\mathbf{p}_{t-1}) = \omega_s\cdot \sigma \Big(\omega_a\big(-H(\mathbf{p}^l_{t-1})-\omega_b\big)\Big).
+    \label{eq:confidence_scaling}
+\end{align}
+% 
+ where $\sigma(\cdot)$ is the sigmoid function, and $\omega_a$ and $\omega_b$ control the steepness and offset, respectively. 
+%
+We control the amplitude of $\lambda$ using a scaling factor $\omega_s\in [0,1]$. 
+% 
+Finally, we train the parameters during pretraining or finetuning. 
+
+
+
+
+\subsection{Learning the SM Feedback}
+
+To teach the richer SM feedback to the model, we introduce a new training methodology that optimizes the SM parameters ($\omega$) concurrently with the main backbone model's parameters ($\theta$). 
+%
+This method allows the model to dynamically learn the optimal weighting between the mask token and the predicted tokens for each position, while the backbone simultaneously adapts to the richer feedback. 
+%
+As illustrated in Algorithm \ref{alg:training}, the training method is a \emph{two-pass process}. 
+%
+First, we approximate the probability distribution of the previous denoising step by passing the corrupted data through the backbone without a gradient, yielding $\mathbf{\tilde{p}}^{1:L}_{t-1}$. 
+%
+This distribution is then used to compute the soft-masked representation, which is passed through the backbone for a second time. 
+%
+The overall loss $\mathcal{L}$ from this second pass is used to update the learnable parameters for both the backbone ($\theta$) and the SM function ($\omega$) using their respective learning rates, $\eta_{\text{bb}}$ and $\eta_{\text{sm}}$. 
+%
+This approach can be highly parallelized with respect to the sequence length, unlike AR training with continuous CoT. 
+
+\citet{arriola_block_2024} showed that a narrower sampling interval for $t$ reduces the gradient variance when optimizing $\Ls$ with batched gradient descent. 
+% 
+Hence, we sample from the interval $[b_l, b_h]$, $0 \leq b_l < b_h \leq 1$. 
+%
+Moreover, following the approach of~\citet{chen_analog_2023}, we activate SM with probability $p_{\text{sm}}\in[0,1]$. 
+%
+This prepares the model to cope with both soft-masked and standard inputs, which is particularly necessary at the beginning of the denoising process. 
+%
+
+\begin{algorithm}[t]
+
+    \caption{Training with soft-masking (SM)}
+    \label{alg:training}
+    \KwIn{Backbone $g_\theta$, training corpus $q_{\text{data}}(\mathbf{x}_0)$, SM function with trainable parameters sm$_\omega$, sampling bounds $0\leq b_l < b_h \leq 1$, learning rates for backbone ($\eta_\text{bb}$) and SM ($\eta_{\text{sm}}$).}
+    \KwOut{Trained parameters for backbone ($\theta$) and SM parameters  ($\omega$).}
+    \BlankLine
+    \Repeat{end training}{
+        $\mathbf{x}^{1:L}_0 \sim q_{\text{data}}(\cdot)$ \tcp*{Draw samples from data distribution}
+        $t \sim \text{U}(b_l, b_h)$ \tcp*{Draw time step from bounded uniform distribution}
+        $\mathbf{x}^{1:L}_t \sim q(\cdot |\mathbf{x}^{1:L}_0)$ \tcp*{Corrupting samples}
+        $\tilde{\theta} \leftarrow \text{detach}(\theta)$ \tcp*{Generate detached copy of backbone parameters}
+        $\mathbf{\tilde{p}}^{1:L}_{t-1} \leftarrow g_{\tilde{\theta}}\left(\mathbf{x}^{1:L}_t\right)$ \tcp*{First model pass without gradient}
+        $\mathbf{p}^{1:L}_{t-1} \leftarrow g_\theta\left(\text{sm}_\omega (\mathbf{x}^{1:L}_{t},\mathbf{\tilde{p}}^{1:L}_{t-1})\right)$ \tcp*{Second model pass with SM and gradient}
+        $\mathcal{L}(\theta, \omega) \leftarrow \frac{1}{t} \sum_{l=1}^L \mathbf{1}_{\mathbf{x}^i_t=\mathbf{m}} \text{log}\left( (\mathbf{x}_0^i)^\top \mathbf{p}_{t-1}^i \right) $ \tcp*{Compute loss}
+        Update $\theta$ and $\omega$ based on loss $\Ls$ with Adam optimizer using learning rates $\eta_\text{bb}$ and $\eta_\text{sm}$; 
+    }
+\end{algorithm}
+
+
+\subsection{SM as an Interpolation Between Absorption and Uniform Diffusion}
+This section provides a conceptual interpretation of the proposed SM mechanism. 
+% 
+To this end, we consider two extreme values of the feedback-scaling parameter ($\lambda=0$ and $\lambda=1$) and simplify the feedback to a single value ($k=1$). 
+%
+First, assuming $\lambda=0$ recovers vanilla MDLM. 
+% 
+The model can always revert to this behavior by setting the scaling factor $\omega_s = 0$.
+% 
+Second, $\lambda=1$ feeds the previously predicted token (based on argmax) back to the denoising model: 
+\begin{align*}
+    \text{sm}(\mathbf{\hat{x}}^l_{t-1}, \mathbf{p}^l_{t-1})_{\lambda=1, k=1} =\begin{cases} \mathbf{v}_{\text{argmax}(\mathbf{p_i})} & \text{if } \mathbf{\hat{x}}^l_{t-1} = \mathbf{m}, \\
+\mathbf{\hat{x}}^l_{t-1} & \text{if } \mathbf{\hat{x}}^l_{t-1} \neq \mathbf{m}. 
+\end{cases}
+\end{align*}
+A uniform DLM~\citep{austin_structured_2021} would receive the same feedback. However, the unmasking strategy remains active. 
+%
+Hence, this corner case can be interpreted as a masked DLM with uniform feedback for the masked states. 
+%
+This allows the model to explore different solutions through self-correction, enabled in the masked regions.
+% 
+Note SM's forward corruption process ($\lambda=1$) deviates from the uniform formulation: SM determines the distribution $q(\mathbf{x}_t|\mathbf{x}_0)$ with the denoising model (see lines 6 and 7 in Algorithm~\ref{alg:training}) rather than from a uniform categorical sampling. 
+
+Relaxing the scaling factor to take intermediate values $\lambda\in[0,1]$ can then be seen as an interpolation between an MDLM and a mask-augmented uniform DLM. 
+% 
+Importantly, this interpolation occurs in the spatial embedding space.
+%
+Why might it be beneficial to retain a portion of the mask token besides attenuating low-confidence predictions?
+%
+One reason is that many MDLMs are pretrained to predict masked tokens, and the presence of the mask likely still carries useful positional or structural information. 
+%
+This effect is particularly relevant for denoising models that do not use time conditioning.
+
+\section{Experiments}\label{sec:experiments}
+\paragraph{General setup} 
+We begin by evaluating SM on a small-scale language modeling benchmark, using a 169M-parameter MDLM~\citep{sahoo_simple_2024} to demonstrate its benefits with both standard and improved unmasking strategies.
+% 
+We then apply SM to the large-scale Dream-7B~\citep{ye_dream_2025} and Dream-Coder-7B~\citep{xie_dream-coder_2025} models, showing improvements on downstream coding tasks.
+%
+Although SM supports training from scratch, we adopt a more efficient approach by adapting existing models either via continued pretraining for the small-scale models or finetuning for the large-scale models.
+% 
+For fair comparison, the baseline models with binary masking are trained with the same procedure.
+% 
+All trainings are repeated five times with different seeds. 
+
+\subsection{Language Modeling}
+\label{sec:language_modeling}
+\paragraph{Setup} 
+We evaluate SM on language modeling using a 169M-parameter MDLM~\citep{sahoo_simple_2024} built on a Diffusion Transformer (DiT) backbone~\citep{peebles_scalable_2023}, which integrates time-step conditioning into an encoder-only transformer.
+%
+This model was initially trained for 1M steps on OpenWebText (OWT)~\citep{Gokaslan2019OpenWeb}, and we continue pretraining for 100k steps on the same OWT split setting $k=3$. 
+%
+We report perplexity on the hold-out validation set of OWT, which, similar to training, requires two model passes.
+%
+As a second, more representative evaluation, we measure the quality of unconstrained generations ($L=1024$) following~\citet{wang_remasking_2025}. 
+%
+Evaluating unconstrained generations is non-trivial, as generative perplexity can be artificially lowered by producing low-entropy outputs. 
+%
+To address this, we report the more representative MAUVE score~\citep{pillutla2021mauve}, which captures both the quality and diversity of generated text.
+%
+We vary the number of function evaluations (NFE) between 128 and 1024. 
+%, keeping it strictly lower than the number of generated tokens. 
+%
+Importantly, both the baseline MDLM and our MDLM with SM require the same number of model passes. 
+%
+In addition to MDLM's standard unmasking, we also evaluate the models with a recent remasking strategy (ReMDM;~\citealt{wang_remasking_2025}). 
+%
+Appendix~\ref{app:finetuning-mdlm} provides additional details on the experimental setup.
+
+\begin{figure}[t!]
+    \centering % Center the entire figure
+    % --- First Sub-figure ---
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/perplexity_mean_std_plot.pdf}
+        \caption{Validation perplexity on OWT.}
+        \label{fig:owt-perplexity}
+    \end{subfigure}
+    \hfill % This command creates horizontal space between the figures
+    % --- Second Sub-figure ---
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/scale_mean_std_plot.pdf}
+        \caption{SM's learned scaling factor ($\omega_s$).}
+        \label{fig:owt-scale}
+    \end{subfigure}
+    % --- Main Caption ---
+    \caption{Continuing MDLM pretraining on OpenWebText. We show the average $\pm$ standard deviation (shaded) across 5 seeds. SM is configured with $k=3$. (a) Our SM yields better (lower) validation perplexity than binary masking. (b) The model learns to fully use SM by increasing its influence over the scaling factor $\omega_s$.}
+    \label{fig:owt}
+\end{figure}
+
+
+
+
+\begin{table*}[t!]
+\caption{MAUVE score ($\uparrow$) of unconstrained generation of $L=1024$ tokens using MDLM~\citep{sahoo_simple_2024} with binary masking or our SM. For unmasking, we use either the standard or the more recent ReMDM~\citep{wang_remasking_2025}; the highest scores are bolded. \textit{Gain} shows the performance improvement between the SM and the baseline MDLM pretrained for the same number of steps.}
+\centering
+\label{tab:mauve}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{lllllll}
+\toprule
+ &  & \multirow{2}{*}{Pretraining} & \multicolumn{4}{c}{Number of function evaluations (NFEs)} \\
+\cmidrule(r){4-7}
+Unmasking & Feedback & steps  & 128 & 256 & 512 & 1024 \\
+\cmidrule(r){1-3}\cmidrule(r){4-7}
+\multirow{4}{*}{Standard} 
+& Binary & 1M & $0.0129$ & $0.0194$ & $0.0190$ & $0.0212$      \\
+& Binary & 1M+100k & $0.0123_{(\pm0.0010 )}$ & $0.0165_{(\pm0.0009 )}$ & $0.0165_{(\pm0.0029 )}$ & $0.0221_{(\pm0.0016 )}$  \\
+& Our SM & 1M+100k & $\mathbf{0.0340}_{(\pm 0.0021 )}$ & $\mathbf{0.0838}_{(\pm 0.0076)}$ & $\mathbf{0.1309}_{(\pm 0.0125 )}$ & $\mathbf{0.1833}_{(\pm 0.0209 )}$
+   \\
+& \quad \textit{Gain} & & \gain{+0.0217} & \gain{+0.0673} & \gain{+0.1114} & \gain{+0.1612} \\
+\cmidrule(r){1-3}\cmidrule(r){4-7}
+\multirow{4}{*}{ReMDM} 
+& Binary & 1M & $0.0342$ & $0.0951$ & $0.2744$ & $0.3332$    \\
+& Binary & 1M+100k & $0.0260_{(\pm 0.0033 )}$ & $0.0909_{(\pm 0.0090 )}$ & $0.2350_{(\pm 0.0247 )}$ & $0.3078_{(\pm 0.0518 )}$  \\
+& Our SM & 1M+100k & $\mathbf{0.0669}_{(\pm 0.0041)}$ & $\mathbf{0.2673}_{(\pm 0.0197)}$ & $\mathbf{0.5256}_{(\pm 0.0185)}$ & $\mathbf{0.6053}_{(\pm 0.0351 )}$
+   \\
+& \quad \textit{Gain} & & \gain{+0.0409} & \gain{+0.1764} & \gain{+0.2906} & \gain{+0.2976} \\
+\bottomrule
+\end{tabular}
+}
+\end{table*}
+
+
+\paragraph{Results}
+As shown in~\Figref{fig:owt-perplexity}, our SM is able to decrease the validation perplexity on OWT (from 23.14 to 21.63).
+% 
+Binary MDLM (without SM) training also improves perplexity, but on a much smaller scale (from 23.14 to 22.88).
+% 
+\Figref{fig:owt-scale} shows that MDLM learns to make use of the richer SM feedback by increasing the scale from initially (almost) 0 to close to 1. 
+% 
+The high scaling factor could be enabled by the time-conditioned backbone, which is already provided with the time information and hence does not need to extract the time from the mask token volume. 
+%
+Next, we evaluate the unconditionally generated text of the models. 
+% 
+Table~\ref{tab:mauve} shows that our SM consistently improves the MAUVE score by up to 0.1612 points when using standard masking. 
+% 
+Moreover, our SM can further benefit from advanced remasking strategies, not only outperforming all the standard unmasking results but also ReMDM with the standard MDLM (by up to 0.2976 points). 
+% 
+This demonstrates that our SM improves general diffusion modeling performance and can be integrated into efficiency and quality-enhancing methods, such as ReMDM.
+
+\paragraph{Ablations}
+We evaluate our SM design choices on language modeling in Appendix~\ref{app:ablation-lm}. 
+We find that using SM 80\% of the time and $k=3$ superposition yields the best validation perplexities.  
+
+
+\begin{table}[t!]
+\caption{
+Accuracy (\%) on coding tasks. 
+%
+Evaluations are tabulated by varying NFE budgets.
+%
+We finetune the models with 5 seeds and report the mean accuracy ($\pm$ standard deviation). SM is configured with $k$=1.
+%
+\textit{Gain} shows the comparison between the SM model and the finetuned baseline. The best performing model is marked in bold. The learned SM parameters are given in Appendix~\ref{app:learned_parameters}.
+}
+\label{tab:downstream}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{clcllllllll}
+\toprule
+\multicolumn{1}{l}{}                                 &          & \multicolumn{1}{l}{}                                       & \multicolumn{4}{c}{Dream-Coder-7B} & \multicolumn{4}{c}{Dream-7B} \\
+\cmidrule(r){4-7}\cmidrule(r){8-11}
+\begin{tabular}[c]{@{}c@{}}NFE\\ budget\end{tabular} & Feedback & \begin{tabular}[c]{@{}c@{}}FT\\ steps\end{tabular} & HumanEval    & HumanEval+    & MBPP    & MBPP+   & HumanEval     & HumanEval+     & MBPP    & MBPP+    \\
+\cmidrule(r){1-3}\cmidrule(r){8-11}\cmidrule(r){4-7}\cmidrule(r){8-11}
+\multirow{4}{*}{1/4}                                 & Binary   & -                                                          &  $25.0$&        $25.0$&         $27.4$&         $35.2$&        $18.9$&         $17.1$&         $26.6$&          $34.9$\\
+                                                     & Binary   & 33.5k                                                      &       $28.5_{(\pm 1.3)}$&        $27.7_{(\pm 1.8)}$&         $25.9_{(\pm 1.5)}$&         $36.0_{(\pm 1.4)}$&        $19.0_{(±1.7)}$&         $15.9_{(\pm2.8)}$&         $27.0_{(±1.6)}$&          $36.1_{(\pm1.1)}$\\
+                                                     & Our SM       & 33.5k                                                      &       $\mathbf{29.5}_{(\pm 1.8)}$&        $\mathbf{28.2}_{(\pm 1.7)}$&         $\mathbf{33.2}_{(\pm 1.8)}$&         $\mathbf{43.9}_{(\pm 1.6)}$&        $\mathbf{24.8}_{(\pm±1.8)}$&         $\mathbf{23.0}_{(\pm1.3)}$&         $\mathbf{32.3}_{(\pm±1.3)}$&          $\mathbf{46.0}_{(\pm1.6)}$\\
+                                                     & \quad \textit{Gain}     &                                                            &   \gain{+1.0}&        \gain{+0.5}&         \gain{+7.3}&         \gain{+7.9}&        \gain{+5.8}&         \gain{+7.1}&         \gain{+5.3}&    \gain{+9.9}\\
+                                                     \cmidrule(r){1-3}\cmidrule(r){8-11}\cmidrule(r){4-7}\cmidrule(r){8-11}
+\multirow{4}{*}{1/2}                                 & Binary   & -                                                          &  $54.9$&        $50.6$&         $51.6$&         $68.5$&        $31.1$&         $29.3$&         $42.8$&          $54.8$\\
+                                                     & Binary   & 33.5k                                                      &       $53.8_{(\pm 1.4)}$&        $49.3_{(\pm 1.6)}$&         $49.8_{(\pm 0.9)}$&         $66.7_{(\pm 1.0)}$&        $33.0_{(±3.0)}$&         $29.5_{(\pm3.4)}$&         $43.1_{(±0.4)}$&          $53.7_{(\pm0.4)}$\\
+                                                     & Our SM       & 33.5k                                                      &       $\mathbf{57.2}_{(\pm 2.7)}$&        $\mathbf{52.}6_{(\pm 2.0)}$&         $\mathbf{56.2}_{(\pm 0.7)}$&         $\mathbf{70.8}_{(\pm 1.5)}$&        $\mathbf{38.3}_{(\pm±1.9)}$&         $\mathbf{33.8}_{(\pm2.6)}$&         $\mathbf{48.4}_{(\pm±1.2)}$&          $\mathbf{65.0}_{(\pm1.6)}$\\
+                                                     & \quad \textit{Gain}     &                                                            &   \gain{+3.4}&        \gain{+3.3}&         \gain{+6.4}&         \gain{+4.1}&        \gain{+5.3}&         \gain{+4.3}&         \gain{+5.3}&    \gain{+11.3}\\
+                                                     \cmidrule(r){1-3}\cmidrule(r){8-11}\cmidrule(r){4-7}\cmidrule(r){8-11}
+\multirow{4}{*}{1/1}                                 & Binary   & -                                                          &  $75.0$&        $69.5$&         $65.8$&         $80.7$&        $57.9$&         $\mathbf{53.0}$&         $57.8$&          $72.5$\\
+                                                     & Binary   & 33.5k                                                      &       $75.7_{(\pm 1.7)}$&        $68.9_{(\pm 2.0)}$&         $65.6_{(\pm 0.8)}$&         $82.3_{(\pm 0.6)}$&        $\mathbf{59.5}_{(±1.8)}$&         $\mathbf{53.0}_{(\pm1.0)}$&         $\mathbf{58.3}_{(±0.1)}$&          $72.7_{(\pm0.5)}$\\
+                                                     & Our SM       & 33.5k                                                      &       $\mathbf{76.2}_{(\pm 1.4)}$&        $\mathbf{70.4}_{(\pm 1.3)}$&         $\mathbf{67.0}_{(\pm 0.7)}$&         $\mathbf{83.5}_{(\pm 0.8)}$&        $57.8_{(\pm±1.9)}$&         $50.0_{(\pm0.7)}$&         $56.4_{(\pm±1.2)}$&          $\mathbf{72.9}_{(\pm0.9)}$\\
+                                                     & \quad \textit{Gain}     &                                                            &   \gain{+0.5}&        \gain{+1.5}&         \gain{+1.4}&         \gain{+1.2}&        \textit{-1.7}&         \textit{-3.0}&         \textit{-1.9}&    \gain{+0.2}\\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+
+\subsection{Code Generation}
+\label{sec:code_generation}
+\paragraph{Setup} 
+We integrate SM into the state-of-the-art Dream-7B~\citep{ye_dream_2025} and Dream-Coder-7B~\citep{xie_dream-coder_2025} instruction-tuned models. 
+% 
+For finetuning, we aim to use the same SFT datasets as the original models. 
+%
+Dream-7B uses Tulu 3~\citep{tulu3_2025} and SmolLM2~\citep{smol_2025}; Dream-Coder-7B uses Ling-Coder-SFT~\citep{codefuse2025samplemattersleveragingmixtureofexperts}.
+%
+We deploy parameter-efficient finetuning using weight-decomposed low-rank adaptation (DoRA;~\citealt{shih_dora_2024}) on 270k curated training samples with a batchsize of 8, yielding 33.5k update steps. 
+% 
+We then test the models on two coding tasks, HumanEval~\citep{chen_evaluating_2021} and MBPP~\citep{mbpp_2021}, as well as on their plus version~\citep{evalplus_2023}. 
+% 
+See Appendix~\ref{app:finetuning-large} for more details on the experimental setup.
+
+\begin{wrapfigure}[13]{R}{0.66\textwidth}
+    \vspace{-18pt}
+    \centering
+    \centering % Center the entire figure
+    % --- First Sub-figure ---
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/dllm_fast_time_vs_accuracy_he.pdf}
+        \caption{HumanEval}
+        \label{fig:fast_dllm_he}
+    \end{subfigure}
+    \hfill % This command creates horizontal space between the figures
+    % --- Second Sub-figure ---
+    \begin{subfigure}{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/dllm_fast_time_vs_accuracy_mbpp.pdf}
+        \caption{MBPP}
+        \label{fig:fast_dllm_mbpp}
+    \end{subfigure}
+    % --- Main Caption ---
+    \caption{Integrating SM into Fast-dLLM. We plot Dream-Coder-7B performance vs. throughput with both binary feedback and our SM. SM again excels in high-throughput settings.}
+    \label{fig:fast_dllm}
+\end{wrapfigure}
+\paragraph{Results}
+The mean results are given in Table~\ref{tab:downstream}, tabulated based on the NFE budget\footnote{The NFE budget (Appendix~\ref{app:nfe_budget}) is the ratio between the diffusion steps and the max generation length.} of the decoding. 
+% 
+First, we see that finetuned models (without SM) can maintain the performance of the original models, validating our finetuning procedure. 
+%
+Second, the benefits observed in small-scale language modeling transfer to performance gains in large-scale models: the table shows a performance boost on nearly all tasks (up to 11.3\%). The gains are particularly prominent at lower NFE budgets.
+% 
+Furthermore, we show that SM complements other efficiency-enhancement mechanisms. Figure~\ref{fig:fast_dllm} reports the mean performance of the finetuned Dream-Coder-7B models, with and without SM, when combined with Fast-dLLM's blockwise caching and confidence-aware decoding~\citep{wu_fast-dllm_2025}. The performance is plotted as a function of the token throughput, which is indirectly determined from the block length of the blockwise decoding---with longer blocks correlating with higher throughputs. The benefits of SM become more promising at higher throughputs.
+
+
+
+\paragraph{Ablations}
+To validate our design choices, we perform extensive ablation studies on the Dream models. 
+% 
+In Appendix~\ref{app:math_reasoning}, we evaluate SM on math tasks and notice similar performance gains.
+%
+In Appendix~\ref{app:top-k}, we vary the number of top-$k$ contributions. 
+%
+We find that $k=1$ is optimal for coding tasks and $k=3$ yields the best overall results.  
+% 
+We also tested a trainable k selection, by replacing the top-$k$ filtering with a softmax that uses a trainable temperature. 
+%
+However, this did not improve the performance. 
+% 
+Finally, Appendix~\ref{app:time} applies SM only in certain periods during denoising. 
+% 
+We find that SM is particularly beneficial in the first 20\% of decoding steps.
+
+
+\section{Related Works}
+
+\paragraph{Continuous feedback in AR}
+%
+Chain-of-continuous-thought (COCONUT)~\citep{hao_training_2024} feeds continuous token predictions back into the model to enhance reasoning capabilities.
+%
+Unfortunately, this requires training from scratch---an inherently sequential process due to its reliance on previous continuous token outputs.
+%
+To reduce computational demands, many have proposed summarizing sequences of tokens into higher-level continuous representations or concepts~\citep{lcm_large_2024, tack_llm_2025, geiping_scaling_2025}.
+% 
+Approximate training methods such as Jacobi iterations~\citep{wu_parallel_2025} further mitigate sequential training bottlenecks by iteratively refining AR thought tokens.
+%
+More recent methods feed weighted superpositions of token predictions back into the model without additional training~\citep{zhuang_text_2025, zhang_soft_2025}, enabling lightweight and training-free continuous feedback.
+%
+While these approaches can improve task performance, AR models often suffer from unreliable halting behavior, necessitating entropy-based heuristics to terminate decoding.
+% 
+In contrast, our approach introduces continuous feedback directly into MDLMs, preserving parallelism during training and inference, incurring only constant overhead during training, and avoiding the need for halting heuristics.
+
+
+\paragraph{Discrete vs. continuous representations in diffusion modeling}
+Continuous DLMs maintain a continuous latent space throughout the diffusion process and perform a discretization step at the final readout~\citep{li_diffusion-lm_2022, dieleman_continuous_2022, gong_diffuseq_2022,strudel_self-conditioned_2022, gong_diffuseq-v2_2023, gulrajani_likelihood-based_2023}; however, they generally achieve lower performance and do not allow for adaptation from pretrained AR models. 
+% 
+Several works explore hybrid representations.
+% HART 
+HART~\citep{tang_hart_2025} augments a discrete AR-based image predictor with a residual continuous diffusion model to correct quantization errors, but remains dependent on unidirectional AR generation, limiting self-correction.
+% Analog Bits
+Self-conditioning~\citep{chen_analog_2023} concatenates quantized and continuous bit representations, improving image tasks but increasing model complexity due to higher input dimensionality.
+%
+% Diffusion duality
+\citet{sahoo_diffusion_2025} derive discrete uniform-state diffusion from continuous Gaussian models, enabling faster training and generation, though scalability and downstream performance remain unproven.
+%
+% Beyond Masked and Unmasked
+\citet{chao_beyond_2025} propose fine-grained token representations using $l$-dimensional vectors with base-$b$ values, allowing partial unmasking during denoising, which is most effective with many decoding steps ($T \gg L$).
+% 
+In contrast, our SM approach improves decoding performance while maintaining constant input dimensionality. By superposing the \mask token and top-$k$ predictions, SM introduces continuous feedback without increasing complexity.
+
+
+% 
+\paragraph{Efficiency improvements of MDLMs}
+Improving the efficiency of MDLMs is an active area of research.
+% 
+dLLM-Cache~\citep{liu_dllm-cache_2025} introduces caching to MDLMs, maintaining a slow, almost static cache for prompts and a dynamic, fast cache for the responses. 
+% 
+This can result in an up to 9$\times$ speedup for long prompts at iso-accuracy. 
+% 
+Semi-autoregressive generation via block diffusion~\citep{arriola_block_2024, nie_large_2025}, optionally combined with caching~\citep{wu_fast-dllm_2025}, offers speedups but compromises full bidirectionality.
+% 
+NFE efficiency and generation quality have also been improved through dynamic unmasking strategies~\citep{jin_thinking_2025, wei_accelerating_2025, wang_remasking_2025}, which adapt the masking schedule during decoding.
+% 
+These techniques are complementary to our SM approach and can be readily integrated, as we have already demonstrated by integrating ReMDM~\citep{wang_remasking_2025} and Fast-dLLM~\citep{wu_fast-dllm_2025} with SM. 
+
+
+\section{Conclusion}
+We introduced soft-masking (SM), a lightweight mechanism for incorporating continuous feedback into masked diffusion language models (MDLMs).
+%
+By blending the \mask token with a convex combination of top-$k$ predictions during iterative decoding, SM enables more expressive and flexible updates without increasing model complexity.
+%
+Applied to both small and large-scale MDLMs, SM consistently improves performance across language modeling and coding tasks. 
+%
+These results demonstrate that continuous feedback can enhance the capabilities of discrete diffusion models. 
+
+
+\paragraph{Limitations and future works}
+
+Even though the training with SM is parallelizable in the sequence length, it requires an additional forward pass, which increases the complexity. 
+% 
+We see future work in incorporating reinforcement learning-based methods~\citep{black_training_2023, zhao_d1_2025, zhu_llada_2025} to leverage the richer feedback. 
+\section*{Ethics Statement}
+This work does not involve human subjects, personally identifiable information, or sensitive data. All experiments were conducted using publicly available models and datasets. The proposed method is intended for research in code generation and was evaluated in controlled settings. Our focus on improving model performance in low-compute budget environments was a central consideration to mitigate environmental impact. The authors declare no known conflicts of interest.
+
+\section*{Reproducibility Statement}
+This paper describes the proposed SM method, including the training Algorithm~\ref{alg:training} in Section~\ref{sec:method}. 
+The setup used for training and evaluating our model on language modeling tasks is described in Appendix~\ref{app:finetuning-mdlm}. 
+The setup used for training and evaluating the Dream models for code generation is available in Appendix~\ref{app:finetuning-large}. 
+% The code is provided in the supplementary materials, along with the required experimental environments.
+% Moreover, the provided README.md gives a step-by-step tutorial of how to apply soft-masking to the Dream models and reproduce all results in the paper.
+
+\section*{Acknowledgments}
+%
+We thank Ronan Tanios for his contributions to the experimental evaluation.
+%
+Moreover, we are grateful to Abu Sebastian for the managerial support.
+
+
+% \subsubsection*{Author Contributions}
+% If you'd like to, you may include  a section for author contributions as is done
+% in many journals. This is optional and at the discretion of the authors.
+
+% \subsubsection*{Acknowledgments}
+% Use unnumbered third level headings for the acknowledgments. All
+% acknowledgments, including those to funding agencies, go at the end of the paper.
+
+
+\bibliography{references_hd_learning, bib_short}
+\bibliographystyle{iclr2026_conference}
+
+\newpage
+\tableofcontents 
+
+\appendix
+% \section*{Appendix}
+\section{Experimental setup}
+This appendix provides details on the experiments conducted for language modeling and code generation. 
+%
+All experiments were run on a compute node with 1--8 NVIDIA A100 GPUs, each with 80~Gigabytes of VRAM.
+
+
+\subsection{Language Modeling}\label{app:finetuning-mdlm}
+
+\paragraph{Pretraining continuation}
+The pretraining experiments follow the setup by~\cite{sahoo_simple_2024}. 
+We use a bidirectional Transformer backbone with 12 layers, 12 attention heads, and 768 hidden dimensions. 
+% 
+Moreover, we use the GPT-2 tokenizer~\citep{radford_2019_gpt2}. 
+%
+The checkpoint was pretrained on OpenWebText (OWT)~\citep{Gokaslan2019OpenWeb} for 1M steps and released by~\cite{sahoo_simple_2024}. 
+% 
+We then continue pretraining on the same OWT split using the last 100k documents for validation.
+% 
+We use an AdamW optimizer with a linear learning warm-up for the first 2500 steps, and then keeping it constant at $\eta_{\text{bb}}=$3e-4 and $\eta_{\text{sm}}=$1e-2 for the backbone and the SM parameters, respectively. 
+% 
+We train the model for 100k training steps using a batchsize of 512. 
+% 
+The dropout rate is kept at 0.1. 
+% 
+We train each model with 5 different seeds (1, 2, 3, 4, 5) to account for training variability. 
+%
+Training was performed on 4 A100 GPUs with 80~Gigabytes of VRAM using a batchsize of 32 per device and deploying gradient accumulation to achieve an effective batchsize of 512. 
+%
+Pretraining one model took approximately 64 hours and 139 hours for binary and SM, respectively. 
+
+\paragraph{Soft-masking parameterization}
+\label{app:parameterization}For the SM feedback, we add a trainable module to the model. 
+%
+This module contains all SM logic and augments the input embeddings with SM before the main forward process. 
+%
+We initialize the three SM-feedback parameters with the parameters given in Appendix~\ref{app:initialization}.
+%
+We have a few imposed constraints on these values: $\omega_s \in [0,1], \omega_a \geq 0$, and $\omega_b \leq 0$.
+%
+To account for these constraints, we apply simple re-parameterizations during training:
+\begin{itemize}
+    \item $\omega_s$ is passed through a sigmoid, ensuring it remains in $[0,1]$.
+    \item $\omega_a$ and $\omega_b$ (negative version) are each passed through a softplus, guaranteeing non-negativity.
+\end{itemize}
+Before inference, the learned parameters are de-parameterized: we take the direct output of the optimization, apply the inverse transforms, and for $\omega_b$ additionally negate the result so that it respects the $\omega_b \leq 0$ constraint.
+%
+All other SM parameters (i.e., $k$) are specified in our added module. 
+%
+We simply perform a forward pass through this module to get the mixing weights for the new input embeddings.  
+
+\paragraph{Measuring the MAUVE score}
+Our MAUVE score evaluation follows the experimental setup by~\cite{wang_remasking_2025}. 
+% 
+We perform unconstrained generation of 5008 samples ($L=1024)$ per model with a batchsize of 16 using nucleus sampling with $p=0.9$. 
+% 
+We use GPT-2 large as the embedding model and set the MAUVE scaling hyperparameter to 5. 
+% 
+Concerning ReMDM unmasking, we use the max-capped schedule ($\eta_{\text{cap}}=0.04$) for fast sampling ($T<L$) and the loop-strategy ($t_{\text{on}}=0.55, t_{\text{off}}=0.05,\alpha(t_{\text{on}})=0.9, \eta_{\text{cap}}=0.02$) for inference-time scaling ($T\geq L$). 
+
+\subsection{Code Generation}\label{app:finetuning-large}
+This appendix describes the details of our finetuning experiments on Dream-7B and Dream-Coder-7B. 
+
+\paragraph{Backbone models} 
+\label{sec:backbones}
+%
+We use the pretrained Dream-7B~\citep{ye_dream_2025} and Dream-Coder-7B~\citep{xie_dream-coder_2025} backbones, respectively. 
+%
+Both of these are 7B parameter models that are adapted from the Qwen2.5 family~\citep{qwen_qwen25_2025, hui_qwen25-coder_2024}.
+%
+For both models, we use the instruction-tuned versions.
+
+\paragraph{Tasks} We primarily evaluate on four code synthesis benchmarks:
+\begin{itemize}
+    \item \textbf{HumanEval}~\cite{chen_evaluating_2021}: a benchmark of 164 Python programming problems designed to test a model’s ability to write correct and functional code from natural language specifications.
+    \item \textbf{MBPP}~\cite{mbpp_2021}: a benchmark consisting of 974 “Mostly Basic Programming Problems,” each specified in natural language and accompanied by input–output test cases, targeting introductory-level programming tasks. We only perform evaluation with the 500 samples in the test subset.
+    \item \textbf{EvalPlus: HumanEval$\mathbf{+}$ and MBPP$\mathbf{+}$}~\cite{evalplus_2023}: Extended benchmarks involving adding more unique test cases and correcting any inaccurate ground-truth solutions. 
+\end{itemize}
+
+For our experiments, we use the standard \path{instruct} implementations of these benchmarks as implemented by \path{lm-evaluation-harness} at the time of writing.  
+%
+For HumanEval$+$, we created a custom \path{instruct} version of the task, using the same prompt as \path{humaneval_instruct}.
+%
+All tasks were evaluated in a zero-shot setting with a temperature of $0.1$, a top-p value of $0.9$, and the entropy-based unmasking algorithm.
+%
+The HumanEval tasks were evaluated with a max generation length of 768, and the MBPP tasks were evaluated with a generation length of 512.
+%
+\paragraph{NFE Budget}
+\label{app:nfe_budget}
+
+MDLMs typically have a maximum generation length as a parameter during generation. For our experiments, we use 768 for HumanEval(+) and 512 for MBPP(+).
+%
+These models also have a parameter that quantifies the number of diffusion steps that should be taken to unveil all tokens.
+%
+Typically, diffusion models set the same number of steps as the number of maximum tokens. 
+%
+In these cases, exactly one token is unmasked at each diffusion step. 
+
+Decreasing the number of diffusion steps leads to a much more efficient computation---by unmasking more than one token each step. 
+%
+From a computational cost perspective, this is essentially a linear relationship. 
+%
+If four tokens are unmasked at each denoising step, the generation will happen $4\times$ faster than if only one is sampled each step.
+%
+This leads us to define the NFE budget of a generation:
+
+
+Given a fixed-length generation task with a max number of tokens, the NFE budget of the generation will be:
+\begin{align}
+    \text{NFE budget} = \frac{\text{\# of diffusion steps}}{\text{max \# of tokens}}
+    \label{eq:comp_budget}
+\end{align}
+
+In our experiments, we discuss NFE budgets of 1/4, 1/2, and 1/1. If the NFE budget is 1/$n$, it means that, on average, $n$ tokens are unmasked per step. 
+
+\paragraph{General setup and hyperparameters}
+%
+We aimed to keep the finetuning implementation as close to the original Dream-7B~\citep{ye_dream_2025} SFT implementation as possible. 
+%
+Due to the fact that the exact SFT implementation code is unavailable, we use the DiffuLLaMa code~\citep{gong_scaling_2025} and the Dream paper~\citep{ye_dream_2025} for reference. 
+%
+Algorithm~\ref{alg:training} displays an overview of the algorithm that we use. 
+%
+The only change for scaling the algorithm for finetuning larger models is that, rather than updating the full weights, we update only the weights of a light-weight parameter-efficient finetuning (PEFT) module.
+%
+As our PEFT module, we use a DoRA adaptor with parameters: rank $r=16$ and $\alpha=16$. 
+%
+We apply the module only to the attention matrices: \path{["q_proj","k_proj","v_proj","o_proj"]}. 
+%
+When finetuning the SM versions, we only use the \emph{two pass approach} and activate SM with $p_{\text{sm}} = 0.5$. We didn't see as much of an effect as language modeling with varying this value.
+%
+We use an AdamW optimizer with cosine scheduling, a 0.03 warmup ratio and a max gradient norm of 7.0. 
+%
+The learning rates are capped at
+$\eta_{\text{bb}}=$1e-5 and $\eta_{\text{sm}}=$1e-2 for the DoRA and the SM parameters, respectively.
+%
+The finetuning is performed with an effective batch size of 8 on one A100 40GB GPU and takes about 71 hours for 33.5k gradient steps.
+
+\paragraph{Training corpus}
+\label{training_set}
+For the training corpus, we aimed to use the same datasets that were used by the Dream models~\citep{ye_dream_2025, xie_dream-coder_2025} in the SFT phase of their Instruct model training. 
+%
+\begin{itemize}
+    \item \textbf{Dream-7B} The authors report instruction-tuning with \emph{...1.8M instruction-response pairs from Tulu 3~\citep{tulu3_2025} and SmolLM2~\citep{smol_2025}...} 
+    %
+    We use the same mix. 
+    %
+    For the Tulu 3 data, we use \path{allenai/tulu-3-sft-mixture}, consisting of 939,000 pairs in their \emph{training} set. Since there is no validation set, we hold out a random 1\% of these pairs for validation.
+    %
+    For the SmolLM2 data, we use \path{HuggingFaceTB/smoltalk}, consisting of both a training set with 1.04M pairs and a test set with 54.9k pairs. We used the defined \emph{test} set for validation. 
+    %
+    These datasets are the concatenated and shuffled to make up our training corpus.
+
+    \item \textbf{Dream-Coder-7B} For the Coder model, \citet{xie_dream-coder_2025} specify explicitly that they use \path{inclusionAI/Ling-Coder-SFT}~\citep{codefuse2025samplemattersleveragingmixtureofexperts} for their SFT training. We use the same dataset. This dataset consists of 4.48M pairs. We hold out a random 1\% at the beginning to be used for validation. 
+\end{itemize}
+
+\paragraph{Preprocessing} The preprocessing of these question-answer pairs is executed as follows:
+\begin{enumerate}
+    \item \textbf{Max train/validation size.} We first sample 300,000 datapoints to use for training and 500 to use for evaluation. 
+    
+    \item \textbf{Context and response splitting.} All datapoints contain a sequence of \emph{user} and \emph{assistant} messages. We consider the last assistant message to be the \emph{response} and all other previous messages to make up the \emph{context}. We apply the respective models' chat template to the messages before tokenization.
+
+    \item \textbf{Filtering the dataset.} We conduct dataset filtering on three different attributes of the data: \textbf{(1)} inputs $> 2048$ tokens; \textbf{(2)} responses $< 5$ tokens; \textbf{(3)} any examples with tool-calling (i.e., using $<$tool\_call$>$ and $<$/tool\_call$>$). 
+    %
+    After filtering, we are typically left with approximately 270,000 context-response pairs. 
+    %
+    While this varies with our sampling seed, the total number of tokens in our training set is often just under 200 million.
+    %
+    These 200 million tokens consist of a fifty-fifty split between prompt and response tokens.
+    
+    \item \textbf{Padding with $<$eos$>$ tokens.} 
+    %
+    After finetuning, we want the diffusion model to retain its ability to decide when to end its generation process. 
+    %
+    In MDLMs, this is typically done by predicting $<$eos$>$ tokens for all the end positions that the model does not want to use. 
+    %
+    In order to ensure this is a part of the training process we add $n_\text{end} \sim$ Uniform$(0,50)$ $<$eos$>$ tokens to the end of each training sample.
+    %
+    \footnote{It is not documented exactly how Dream performs this step, but for LLaDa, the authors describe always training with 2048 tokens---padding all responses until this point. Unfortunately, since these tokens must be considered in the loss, a large amount of these tokens can very much dilute the loss calculation.}
+    %
+    The amount of padding that is added to the training set varies for each sample. 
+
+    \item \textbf{Partially masking the responses for training.} We only apply masks to the response tokens during the training process. This is performed in the following way: 
+    %
+    First, as Algorithm~\ref{alg:training} describes, a mask probability value $t \sim \text{Uniform}(b_l,b_h)$ is sampled. 
+    %
+    This value $t$ is then used as the masking probability: a fraction $t$ of the \emph{response} tokens are masked for the loss calculation.
+    %
+    \citet{arriola_block_2024} found that sampling extremely low/high $t$ can lead to high variance in the gradient norms, making training quite difficult. For this reason, we use a clipped noise schedule of $(b_l, b_h) = (0.2,0.8)$.
+    %
+    The masks are sampled uniquely for each sample. 
+    %
+\end{enumerate}
+
+\paragraph{SM-feedback parameter initialization}
+\label{app:initialization}
+As mentioned in Section~\ref{sec:confidence_scaling}, we introduced a mapping from the entropy to the amount of feedback:
+\begin{align}
+    \lambda^l (\mathbf{p}^l_{t-1}) = \omega_s\cdot \sigma \Big(\omega_a\big(-H(\mathbf{p}^l_{t-1})-\omega_b\big)\Big). 
+\end{align}
+%
+These parameters: $\omega_a, \omega_b$ and $\omega_s$ are learnable during the training process. 
+%
+We ensure that the scale value, $s$, is initialized close to 0 at the start (slightly larger due to the sigmoid reparameterization discussed in Appendix~\ref{app:parameterization}. 
+%
+This ensures that the model only adds SM-feedback if it learns that this is optimal via the finetuning process.
+% 
+For the steepness and center of the sigmoid, we conduct a small statistical analysis of the expected entropy distribution.
+%
+Although the theoretical range of $-H(\mathbf{p}^l_{t-1})$ is $[-\log(|\mathcal{V}|), 0]$, in practice we observed that 95\% of values were above $\text{LB} \approx -1.5$.  
+%
+For this reason, we initialize the center of the sigmoid at $b = \text{LB}/2$ and choose $a = -10/\text{LB}$. Effectively, this normalizes the negative entropy to be between $[0,1]$ before applying a sigmoid of $a'=10, b'=0.5$.
+% 
+We found that the learning rate for the hyperparameters needed to be set much higher than for the DoRA adaptor in order for them to be able to traverse the entire range of options. 
+%
+The rate was set to $\eta_{\text{sm}}=$1e-2 for the training process. 
+
+
+\section{More Results and Ablations}\label{app:evaluating-large}
+
+\subsection{Language Modeling: Training Share and Top-k}\label{app:ablation-lm}
+This appendix ablates the SM training and the top-k value in the language modeling experiments.
+Recall that $k$ is the number of predicted tokens---generated from the previous step---that will be combined with the mask token.
+%
+We start with a default configuration of $p_{sm}=0.8$ and $k=3$ and vary each parameter separately.
+%
+As shown in Figure~\ref{fig:ablation_lm_p}, increasing the SM training probability from 0.5 to 0.8 improves the performance.
+%
+This is likely due to the model learning to leverage continuous feedback more effectively, as a higher probability means it is exposed to the soft-masking mechanism more frequently during training.
+%
+Increasing the SM training probability to 1 is detrimental, as the model loses its ability to handle binary masking, which is essential for the initial decoding steps.
+%
+Finally, Figure~\ref{fig:ablation_lm_k} shows that the perplexity improves when increasing the k from 1 to 5, with only a marginal gain from 3 to 5.
+Hence, we use the default parameter $k=3$.
+
+
+\begin{figure}[h!]
+    \centering % Center the entire figure
+    % --- First Sub-figure ---
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/perplexity_vs_steps_50k_interpolated.pdf}
+        \caption{SM training share}
+        \label{fig:ablation_lm_p}
+    \end{subfigure}
+    \hfill % This command creates horizontal space between the figures
+    % --- Second Sub-figure ---
+    \begin{subfigure}{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/k_ablation.pdf}
+        \caption{Top-$k$}
+        \label{fig:ablation_lm_k}
+    \end{subfigure}
+    % --- Main Caption ---
+    \caption{Ablation study language modeling on OWT. Default SM parameters are $p_{sm}=0.8$ and $k=3$. }
+    \label{fig:ablation_lm}
+\end{figure}
+
+\subsection{Mathematical Reasoning}\label{app:math_reasoning}
+
+We also perform experiments on mathematical reasoning tasks GSM8k~\citep{cobbe_training_2021} and Math-500~\citep{lightman2024math}. These evaluations are shown in Table~\ref{tab:downstream_math}. Both evaluations were performed with \path{lm-evaluation-harness} in a zero-shot setting. The max generation length for GSM8k was 256, and for Math-500 it was set to 512. These values were the same as the default ones used by Dream-7B in their original evaluation scripts. Since the MATH tasks are more difficult, the model often needs more generation space to come to the final answer.
+% Please add the following required packages to your document preamble:
+% \usepackage{multirow}
+\begin{table}[h!]
+\caption{
+Accuracy (\%) on math tasks. 
+%
+Evaluations are displayed under varying computational NFE budgets.
+%
+We finetune the models with 5 seeds and report the mean accuracy ($\pm$ standard deviation). SM is configured with $k$=3.
+%
+\textit{Gain} shows the comparison between the SM model and the finetuned baseline. 
+}
+\label{tab:downstream_math}
+\centering
+\resizebox{0.5\linewidth}{!}{%
+\begin{tabular}{clcll}
+\toprule
+\multicolumn{1}{l}{}                                 &          & \multicolumn{1}{l}{}    & \multicolumn{2}{c}{Dream-7B} \\
+\cmidrule(r){4-5}
+\begin{tabular}[c]{@{}c@{}}NFE\\ budget\end{tabular} & Feedback & \begin{tabular}[c]{@{}c@{}}FT\\ steps\end{tabular} & GSM8k    & Math-500  \\
+\cmidrule(r){1-3}\cmidrule(r){4-5}
+\multirow{4}{*}{1/4}                                 & Binary   & -      &         $57.8$&          $14.2$\\
+                                                     & Binary   & 33.5k     &         $59.5_{(\pm 1.1)}$&          $17.3_{(\pm 1.2)}$\\
+                                                     & Our SM       & 33.5k  &         $62.3_{(\pm 2.3)}$&          $19.8_{(\pm 2.1)}$\\
+                                                     & \quad \textit{Gain}     &                      &         \gain{+2.8}&    \gain{+2.5}\\
+                                                     \cmidrule(r){1-3}\cmidrule(r){4-5}
+\multirow{4}{*}{1/2}                                 & Binary   & -   &         $76.0$&          $36.6$\\
+                                                     & Binary   & 33.5k  &         $76.5_{(\pm 1.6)}$&          $36.3_{(\pm 0.8)}$\\
+                                                     & Our SM       & 33.5k   &         $79.4_{(\pm 0.5)}$&          $38.8_{(\pm 1.8)}$\\
+                                                     & \quad \textit{Gain}     &   &         \gain{+2.9}&    \gain{+2.5}\\
+                                                     \cmidrule(r){1-3}\cmidrule(r){4-5}
+\multirow{4}{*}{1/1}                                 & Binary   & -    &         $82.0$&          $45.6$\\
+                                                     & Binary   & 33.5k    &         $82.9_{(\pm 1.0)}$&          $42.7_{(\pm 1.4)}$\\
+                                                     & Our SM       & 33.5k   &         $84.0_{(\pm 0.7)}$&          $41.4_{(\pm 1.2)}$\\
+                                                     & \quad \textit{Gain}     &         &         \gain{+1.1}&    \textit{-1.3}\\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+
+
+
+
+
+\subsection{Coding: Top-$k$ Trainable Softmax Temperature}\label{app:top-k}
+We also perform ablation tests on $k$. For these tests, we finetune four models, each with the exact same configuration, but with one key exception: we train each of these models with a different $k\text{-value} \in [1,3,5,10]$. 
+%
+We use the same seed for all models to ensure the same training data and initial setup.
+
+We also train a \textit{fifth} model with a \textbf{trainable softmax temperature}. 
+%
+This method uses probabilities calculated with a learned temperature instead of using the top-k predicted tokens, letting the model scale the range of it's own feedback. 
+%
+In the results table, we call this ablation $k=|V|$
+
+The results given in Table~\ref{tab:k_experiment} illustrate a degrading performance with higher $k$ values, with $k=1$ and $k=3$ having the highest average performance. 
+%
+However, all $k$ ablations perform better than both of our baselines on average.
+%
+This further illustrates the success of our proposed method.
+
+\input{tables/k_experiment}
+
+\subsection{Coding: Time-dependent Masking}\label{app:time}
+
+We explored three methods of time-dependent (TD) feedback. By time-dependence, we mean scaling the amount of SM feedback as a function of the point in the decoding process (i.e. $t$).
+%
+The basic assumption here is that, the model may benefit from having more or less feedback at different steps in the diffusion process.
+%
+For the following, let $t = T,...,1$ be our current denoising step, with $T$ being the \textit{first} step in the \textit{reverse} process. 
+%
+Let $g(\mathbf{p}) = \omega_s\cdot \sigma \Big(\omega_a\big(-H(\mathbf{p}^l_{t-1})-\omega_b\big)\Big)$ be the \emph{default} (non-time-dependent) defined in~\eqref{eq:confidence_scaling}.
+%
+\begin{enumerate}
+    \item \textbf{No TD.} In this adaptation, we apply no time-dependent feedback modification. SM is applied exactly as described above. 
+    \item \textbf{Stepwise TD feedback function.} This time-dependent feedback defines a threshold value $0 \leq  t' \leq T$. At the threshold, the model switches between SM and Binary as follows:
+    \begin{align*}
+        \textbf{Binary$\rightarrow$SM stepwise TD function: }& \lambda^l (\mathbf{p}^l_{t-1}) = g(\mathbf{p})\cdot \mathbf{1}_{(t \leq t')}\\
+        \textbf{SM$\rightarrow$Binary stepwise TD function: }& \lambda^l (\mathbf{p}^l_{t-1}) = g(\mathbf{p})\cdot \mathbf{1}_{(t \geq t')}
+    \end{align*}
+    \item \textbf{Linear TD feedback function.} For the last formulation, we add a linear time-dependence to the feedback magnitude. Again, this entails a model switch from SM to Binary, or vice versa. The switch happens with a linear transition function:
+    \begin{align*}
+        \textbf{Binary$\rightarrow$SM linear TD function: }& \lambda^l (\mathbf{p}^l_{t-1}) = \left(1-\frac{t}{T}\right)\left[g(\mathbf{p})\right]\\
+        \textbf{SM$\rightarrow$Binary linear TD function: }& \lambda^l (\mathbf{p}^l_{t-1}) = \left(\frac{t}{T}\right)\left[g(\mathbf{p})\right]
+    \end{align*}
+\end{enumerate}
+Note that these expressions are written this way because, in the reverse process, the time index $t$ \textit{decreases} from $T \rightarrow 1$. 
+%
+Although we did not explicitly finetune the models to incorporate external time-dependence (TD) in the feedback function, we perform ablation studies on the TD during inference.
+%
+\subsubsection{Early vs. Late Stage SM Impact}
+
+We first look at a simple comparison of whether SM is more beneficial at the \textit{early} or \textit{late} stages of denoising.
+%
+To test this, we use the \textbf{stepwise feedback function}:
+%
+Specifically, we compare the \textbf{SM$\rightarrow$Binary} and the \textbf{Binary$\rightarrow$SM} stepwise TD functions. 
+%
+We define each with thresholds set such that $80\%$ of denoising steps use SM and the remaining $20\%$ use Binary:
+\begin{enumerate}
+    \item \textbf{Binary$\rightarrow$SM stepwise TD feedback with threshold $\mathbf{t'=0.8}$:} SM only during the \textit{last} $80\%$ of the denoising steps.
+    
+    \item \textbf{SM$\rightarrow$Binary stepwise TD feedback with threshold $\mathbf{t'=0.2}$:} SM only during the \textit{first} $80\%$ of the denoising steps.
+\end{enumerate}
+
+The results given in Table~\ref{tab:time_dependence} evaluate both approaches, comparing them with both binary baselines. % the standard baselines
+%
+We can clearly see that ablation \textbf{(2)} performs significantly better than ablation \textbf{(1)}, suggesting that SM is necessary during the early denoising steps.
+
+\input{tables/time-dependence}
+
+\subsubsection{When Is SM Most Beneficial?}
+
+After confirming that SM is necessary during the early denoising steps, we can start looking at the exact steps of the denoising where SM is more beneficial.
+%
+To further understand this time-dependence, we compare five forms of our $\textbf{SM$\rightarrow$Binary}$ TD feedback: 
+%
+\textbf{(1)} no time-dependence (TD); 
+%
+\textbf{(2)} linear SM$\rightarrow$Binary TD; 
+%
+\textbf{(3)-(5)} SM$\rightarrow$Binary stepwise TD feedback with thresholds of $\mathbf{t'=0.2}$, $\mathbf{t'=0.5}$, and $\mathbf{t'=0.8}$.
+
+The results are given in Table~\ref{tab:time_dependence_early}.
+%
+We tabulate with the \textit{mean} of the finetuned binary models to show that all given TD ablations of SM still perform better than the binary feedback.
+
+\input{tables/time-dependence-early}
+
+\subsection{Coding: Learned SM-feedback Parameters}
+\label{app:learned_parameters}
+
+As we discussed in Section~\ref{sec:confidence_scaling}, we add the SM-feedback parameters: SM-scaling~$=\omega_s$, SM-offset~$=\omega_b$, and SM-steepness~$=\omega_a$ to the computation graph, allowing the optimizer to train these parameters. We also add the softmax temperature for our $k=|\mathcal{V}|$ ablation (Section~\ref{app:top-k}). 
+%
+The progression of these parameters throughout the full training of our SM-FT models is illustrated in Figure~\ref{fig:learned_th_parameters}. We find that the learned scale is much lower than in the language modeling. This is likely due to the absence of time conditioning. Since the model has no other cues telling it at what stage it is at in the decoding and/or which tokens are actually masked, it relies on the existence of the mask tokens for this information.
+
+\begin{figure}[h!]
+     \centering
+    \includegraphics[width=\textwidth]{figures/training/learned_parameters.pdf}
+    \caption{Plots of all four tunable hyperparameters over all of my SM-FT runs and ablations. We show the evolution of the SM-scale (top-left), the SM-offset (top-right), the SM-steepness (bottom-left), and the tunable softmax temperature (bottom-right) (for the $k=|V|$ ablation described in Section~\ref{app:top-k}). 
+    }
+    \label{fig:learned_th_parameters}
+\end{figure}
+
+\end{document}

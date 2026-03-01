@@ -1,0 +1,49 @@
+
+\section{Preliminary}
+\subsection{Background}
+\textbf{Autoregressive (AR) Models.} AR models factorize the data's likelihood using the chain rule from left to right:
+\begin{equation}\label{eq:ar loss}
+    -\log p_{\boldsymbol{\theta}}\left(\boldsymbol{x}\right) =  - \sum_{i=1}^n \log p_{\boldsymbol{\theta}}\left(\boldsymbol{x}_i | \boldsymbol{x}_{<i}\right) \coloneqq \mathcal{L}_{\text{AR}}.
+\end{equation}
+\textbf{Any-Order Autoregressive (AO-AR) Models.}
+Unlike standard AR models which rely on a fixed factorization order, AO-AR models aim to model the likelihood of averaging or marginalizing over all possible $n!$ permutations of the data sequence. Prominent examples include NADE~\cite{uria2016neural}, XL-Net~\cite{yang2019xlnet}, Autoregressive Diffusion Models~\cite{hoogeboom2021autoregressive}, and $\sigma$-GPT~\cite{pannatier2024sigma}. The log-likelihood can be expressed as:
+\begin{equation}\label{eq:ao-ar loss}
+\begin{aligned}
+-\log p_{\boldsymbol{\theta}}\left(\boldsymbol{x}\right) &= -\log \mathbb{E}_{\sigma\sim \mathcal{U}(S_n)} p_{\boldsymbol{\theta}}\left(\boldsymbol{x}|\sigma\right)\\
+&\leq \mathbb{E}_{\sigma\sim \mathcal{U}(S_n)} \left[ -\sum_{i=1}^n \log p_{\boldsymbol{\theta}}\left(\boldsymbol{x}_{\sigma_i}| \boldsymbol{x}_{\sigma_{<i}}\right)\right] \coloneqq \mathcal{L}_{\text{AO-AR}}.
+\end{aligned}
+\end{equation}
+\textbf{Discrete Diffusion Models.}
+Early explorations into diffusion models for discrete data were conducted by~\cite{sohl2015deep} and~\cite{hoogeboom2021argmax}.
+Building on this, D3PM~\cite{austin2021structured} introduced a more generalized framework. D3PM defines the forward noising process using a discrete-state Markov chain with specific transition matrices $\boldsymbol{Q}_t$ and learns the reverse process $p_{\theta}(\boldsymbol{x}_0 | \boldsymbol{x}_t)$ by maximizing the Evidence Lower Bound (ELBO).
+Campbell et al.~\cite{campbell2022continuous} further extended D3PM to continuous time, formalizing it as a continuous-time Markov Chain (CTMC).
+Separately, SEDD~\cite{lou2023discrete} takes a different approach by parameterizing the likelihood ratio $\frac{p_t(\boldsymbol{y})}{p_t(\boldsymbol{x})}$ to learn the reverse process and employs Denoising Score Entropy for training this ratio. Among the various approaches within the discrete diffusion framework, MDMs (also known as absorbing state diffusion models) have gained significant attention. These models define a forward noising process where tokens are progressively masked:
+\begin{equation}
+q_{t|0}\left(\boldsymbol{x}_t | \boldsymbol{x}_0\right) = \prod_{i=1}^n q_{t|0}\left(\boldsymbol{x}_t^i | \boldsymbol{x}_0^i\right) = \prod_{i=1}^n \text{Cat}\left(\boldsymbol{x}_t^i;(1-t)\delta_{\boldsymbol{x}_0^i} + t \delta_{[\text{MASK}]}\right).
+\end{equation}
+Here, $t \in [0, 1]$ represents the diffusion time or masking level, interpolating between the original data $\boldsymbol{x}_0$ ($t=0$) and a fully masked sequence ($t=1$).
+More recently, for MDMs, studies by MDLM~\cite{shi2024simplified,sahoo2024simple,zheng2024masked} and RADD~\cite{ou2024your} have demonstrated that different parameterizations are equivalent. These studies also show that the training objective can be simplified or directly derived from the likelihood, leading to the following objective function, which is an ELBO on the data likelihood:
+\begin{equation}
+-\log p_{\boldsymbol{\theta}}\left(\boldsymbol{x}\right) \leq \int_{0}^1 \frac{1}{t} \mathbb{E}_{q_{t|0}\left(\boldsymbol{x}_t | \boldsymbol{x}_0\right)}\left[ \sum_{i:\boldsymbol{x}_0^i = [\text{MASK}]} -\log p_{\boldsymbol{\theta}}(\boldsymbol{x}_0^i|\boldsymbol{x}_t)\right] \mathrm{d}t \coloneqq \mathcal{L}_{\text{MDM}}.
+\end{equation}
+$\mathcal{L}_{\text{MDM}}$ and $\mathcal{L}_{\text{AO-AR}}$ are equivalent through simple derivations using techniques in NADE~\cite{uria2016neural} and RADD~\cite{ou2024your}. In the remainder of the paper, we will use the terms "Masked Diffusion Models (MDMs)" and "Any-Order Autoregressive Models (AO-AR)" interchangeably, as they are equivalent.
+
+\subsection{Decoupling Formulation and Architecture} \label{sec:decoupling}
+
+\paragraph{Training Efficiency} Decoder-only models leverage almost every token for prediction, offering high signal density. Encoder-only MDMs, while predicting more tokens (on average, $50\%$) than traditional BERT~\cite{devlin2019bert} ($15\%\sim25\%$), still typically utilize fewer tokens per example than their AR counterparts.
+
+\paragraph{Density Estimation Efficiency} To evaluate the joint density of a sequence under a given order (e.g., left-to-right), a decoder-only model computes the sequence likelihood in a single pass, achieving $O(n)$ complexity\footnote{For simplicity, our complexity analysis assumes the context length $n_{\text{ctx}}$ is relatively small compared to $12\cdot d_{\text{model}}$, leading to a linear scaling with the number of tokens, as discussed in~\cite{kaplan2020scaling}.}. In contrast, an encoder-only model requires $n$ separate network evaluations, resulting in $O(n^2)$ complexity. Notably, estimating the AO-AR loss with an encoder-only model necessitates $O(T\cdot n)$ complexity, where $T$ represents the number of Monte Carlo samples.
+% TODO here
+\paragraph{Generation Efficiency} Inference procedures also differ markedly. Standard decoder-only AR models generate $n$ tokens through $n$ sequential forward passes; efficient Key-Value (KV) caching makes the total complexity approximately $O(n)$. In contrast, encoder-only MDMs require $T$ iterative refinement steps. With each step processing the full sequence via full attention ($O(n)$ per step), their total complexity is around $O(T\cdot n)$. Notably, $T$ (the number of steps) is often comparable to $n$, partly due to conditional independence assumptions when generating multiple tokens simultaneously~\cite{liu2024discrete,xu2024energy}. For comparison, decoder-only masked diffusion models can also achieve $O(n)$ complexity.
+
+These fundamental differences in training, density estimation, and inference characteristics across architectures highlight the critical need to decouple the generative formulation (AR vs. MDM/AO-AR) from architectural choices (causal-attention decoder vs. full-attention encoder). Without such decoupling, comparing a standard decoder-only AR model to an encoder-only MDM inevitably conflates these two variables, obscuring a fair assessment of each paradigm.
+
+\subsection{Experiment Setting}
+
+Our approach trains MDMs using a decoder-only AR framework. A fundamental requirement for this is enabling the model to predict tokens in an arbitrary, non-sequential order, a departure from standard left-to-right autoregression. To achieve this any-order capability, we build upon the $\sigma$-GPT architecture~\cite{pannatier2024sigma}, which integrates explicit target position information to guide predictions. We selected $\sigma$-GPT as our foundation over alternatives like XL-Net~\cite{yang2019xlnet} due to its architectural alignment with contemporary decoder-only large language models.
+
+Building on this baseline, our AO-GPT incorporates several key enhancements. We explore and refine methods for injecting target position information more effectively within the Transformer blocks and investigate the impact of training techniques such as Exponential Moving Average (EMA) to improve stability and performance.
+% The inference mechanism for the diffusion steps also leverages an efficient sampling algorithm (Lemma~\ref{lemma:efficient_sampling}) to minimize computational costs.
+A comprehensive exposition of the AO-GPT architecture, its training paradigm, the specific design choices and ablations (including target position injection strategies and EMA), and the inference procedure is detailed in Section~\ref{sec:model}.
+
+Following SEDD, we train our models on the OpenWebText dataset~\cite{Gokaslan2019OpenWeb}, as the original WebText dataset is not publicly available. For evaluation, we test on a suite of standard benchmarks: LAMBADA~\cite{paperno2016lambada}, WikiText2~\cite{merity2016pointer}, PTB~\cite{marcus1993building}, WikiText103~\cite{merity2016pointer}, and the One Billion Words dataset~\cite{chelba2013one}. A context length of 1024 tokens is utilized for all experiments. For data splits and processing, we exactly follow the methodologies outlined in SEDD~\cite{lou2023discrete}, which includes techniques such as packing sentences to generate uniform-length input blocks.

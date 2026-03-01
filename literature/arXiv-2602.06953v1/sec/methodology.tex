@@ -1,0 +1,87 @@
+\section{Methodology}
+
+Driven by the observations, we propose \dawn{}, a training-free, dependency-aware solution to accelerate dLLM inference while maintaining the generation quality.  
+% The key idea is to extract positional dependencies to steer dLLMs along more efficient decoding trajectories that avoid errors arising from nonindependent token probabilities across positions. 
+The key idea is to \textit{extract positional dependencies and leverage them to select a larger set of reliable positions for update at each iteration}.
+\dawn{} realizes efficient inference by three cooperating modules, as shown in Fig~\ref{fig:arch}.
+\textit{Dependency Graph Construction} builds a sparse directed graph from a lightweight proxy of token dependencies based on attention maps. \textit{Anchor-Guided Decoding} first selects high-confidence masked positions that are approximately independent, and then leverages high-confidence prompts or committed positions as anchors, enabling strongly coupled positions (induced positions) to be unmasked with a relatively low confidence. These together produce a parallel set $\mathcal{U}^{(t)}_{\text{anchor}}$. For the remaining tokens, \textit{Conflict-Based Scheduling} uses conflict relations induced by the dependency graph to select a maximum independent set $\mathcal{U}^{(t)}_{\text{conflict}}$ from positions that meet a lower confidence threshold. Finally, the positions in  $\mathcal{U}^{(t)}_{\text{anchor}}\cup~\mathcal{U}^{(t)}_{\text{conflict}}$ are unmasked in parallel in this iteration. These three modules are pipelined within each denoising iteration to enable accurate and efficient inference. The following subsections describe their mechanisms in detail.
+
+\subsection{Dependency Graph Construction}
+Many prior works \cite{fastv, spargeattn, sageattention, svg} use attention maps to characterize interactions among tokens, thereby enabling more efficient inference. Inspired by these applications, we treat attention maps as a lightweight, approximate proxy for token dependencies during decoding. This coupling signal is readily available from each forward pass and can be converted into a sparse directed dependency graph, which serves as the basis for subsequent efficient scheduling.
+
+Since attention patterns evolve across denoising iterations, the dependency graph is constructed at each iteration from the model's attention maps. To obtain a signal that is closer to the final prediction and less noisy, attention weights are averaged across the last few layers and all heads. As discussed in Sec.~\ref{obs: attnsinks}, dLLMs often exhibit attention sinks, where a small set of positions absorbs most of the attention mass due to systematic bias rather than semantic relevance. This can lead to misleading dependent relations when attention is used as a proxy for dependency. To mitigate this effect, sink positions are identified via outlier detection and filtering of their incoming attention mass: given an aggregated attention matrix $A^{(t)}\in\mathbb{R}^{L\times L}$ at iteration $t$, the incoming attention mass of position $j$ is defined as
+\begin{equation*}
+\bar{A}^{(t)}_j = \frac{1}{L}\sum_{i=1}^{L} A^{(t)}_{i,j},
+\end{equation*}
+and position $j$ is marked as a sink if $\bar{A}^{(t)}_j$ is larger than a predefined threshold $\tau_{sink}$. Self-attention on the diagonal is ignored as it does not capture cross-position dependencies.
+
+Given the processed attention proxy at iteration $t$, a directed sparse dependency graph is constructed to capture salient token couplings during decoding. 
+Specifically, to keep the graph sparse and focus on the most informative relations, edges are retained based on thresholded ($\tau_{edge}$) attention scores. A directed edge $j\!\rightarrow\! i$ is added if query position $i$ places a sufficiently large attention mass on key position $j$, indicating that the prediction at token $i$ can be significantly conditioned by token $j$. 
+ The resulting graph provides an approximate representation of positional dependencies and will be used by subsequent modules.
+
+\subsection{Anchor-Guided Decoding}
+Prior work \cite{fastdllm} suggests that sufficiently high-confidence positions are approximately independent as well as non-conflicting, motivating a high conservative threshold $\tau_{high}$ for selecting them for parallel updates, where $\tau_{high}$ is usually set to 0.9. 
+Meanwhile, some low-confidence tokens at masked positions can still be consistent with the final response, indicating that only confidence thresholding remains a limit for dLLM inference. Motivated by this, \textit{Anchor-Guided Decoding} is introduced to accept approximately independent positions and reliable positions under a relaxed confidence criterion. 
+
+%After selecting positions whose confidence passes $\tau_{high}$. 
+As discussed in Sec.~\ref{obs: anchors}, low-confidence positions that are strongly coupled to previously unmasked positions meet the confidence threshold $\tau_{high}$ and often match the final result. Following this observation, we define anchors as positions that have been unmasked and their confidence meets $\tau_{high}$. Using the dependency graph, we identify the induced positions $\mathcal{I}$ as masked positions that are reachable via directed edges from anchor tokens. Intuitively, higher-confidence anchors provide more reliable context, allowing the corresponding induced positions to be unmasked at lower confidence. Accordingly, the set of positions eligible to be unmasked at the denoising step $t$ is defined as:
+% \begin{equation*}
+% \mathcal{U}^{(t)}_{\text{anchor}} = \left\{\, i \in M^{(t)} \; \middle| \;ci \ge \tau_{high}\,\right\} \cup
+% \left\{\, i \in \mathcal{I}^{(t)} \; \middle| \;
+% c_i \ge \tau_{induced} \,\right\},
+% \end{equation*}
+% \begin{equation*}
+% \mathcal{U}^{(t)}_{\text{anchor}}
+% =
+% \left\{
+% \, i \;\middle|\;
+% \big(i \in M^{(t)} \land c_i \ge \tau_{\text{high}}\big)
+% \ \lor\
+% \big(i \in \mathcal{I}^{(t)} \land c_i \ge \tau_{\text{induced}}\big)
+% \right\}.
+% \end{equation*}
+\begin{equation*}
+\mathcal{U}^{(t)}_{\text{anchor}}
+=
+\left\{
+\, i \;\middle|\;
+\begin{array}{l}
+i \in M^{(t)},\ c_i \ge \tau_{\text{high}}
+\ \text{or}\\
+i \in \mathcal{I}^{(t)},\ c_i \ge \tau_{\text{induced}}
+\end{array}
+\right\}.
+\end{equation*}
+where $\tau_{induced}$ is the confidence threshold for unmasking induced positions. 
+Overall, \textit{Anchor-Guided Decoding} selects approximately independent positions under a high confidence threshold and relaxes the threshold for induced positions, enabling more efficient inference.
+% Overall, \textit{Anchor-Guided Decoding} enables more efficient unmasking while maintaining decoding quality by allowing certain reliable positions to be unmasked even when their confidence falls below the base unmasking threshold.
+
+\subsection{Conflict-Based Scheduling}
+% Prior work \cite{fastdllm} suggests that sufficiently high-confidence positions are approximately independent as well as non-conflicting, motivating a conservative threshold for selecting them for parallel updates.
+For the remaining positions that are strongly coupled and satisfy a lower confidence threshold $\tau_{low}$, simultaneously unmasking them may introduce inconsistent commitments, as discussed in Sec.~\ref{prl: parallel}. To mitigate such errors while retaining high parallelism, \textit{Conflict-Based Scheduling} is introduced to prevent lower-confidence but highly coupled positions from being decoded in the same step.
+
+Since the dependency graph captures salient positional dependencies, it can be used to identify strongly coupled position pairs. A conflict relation is defined between two positions connected by an edge in the dependency graph, regardless of direction: if either $i\rightarrow j$ or $j\rightarrow i$ is present, then positions $i$ and $j$ are considered to be in conflict and should not be unmasked simultaneously.
+
+Algorithm~\ref{alg:conflict} shows the detailed procedure. Specifically, at iteration $t$, based on these conflicts and the graph topology, a greedy independent set is constructed from the remaining positions that (i) are not yet included in and not conflicting neighbors of ~$\mathcal{U}^{(t)}_{\text{anchor}}$, and (ii) satisfy a lower confidence threshold, yielding additional positions that can be decoded in parallel. Concretely, positions are greedily selected in descending order of confidence: the highest-confidence position is added to the update set $\mathcal{U}^{(t)}_{\text{conflict}}$, and all of its conflicting neighbors are removed from further consideration. This procedure repeats until no candidate positions remain.
+
+\begin{algorithm}[tb]
+  \caption{Conflict-Based Scheduling}
+  \label{alg:conflict}
+  \begin{algorithmic}[1]
+    \STATE {\bfseries Input:} remaining candidate positions $\mathcal{C}^{(t)}$, anchor update set $\mathcal{U}^{(t)}_{\text{anchor}}$, confidence scores $\{c_i\}_{i\in\mathcal{C}^{(t)}}$, conflict neighbors $\{\mathcal{N}(i)\}_{i\in\mathcal{C}^{(t)}}$, lower threshold $\tau_{\mathrm{low}}$
+    \STATE {\bfseries Output:} parallel update set $\mathcal{U}^{(t)}_{\text{conflict}}$
+    \STATE Initialize $\mathcal{U}^{(t)}_{\text{conflict}} \leftarrow \emptyset$
+    \STATE $\mathcal{X} \leftarrow \mathcal{U}^{(t)}_{anchor} \cup \bigcup_{i \in \mathcal{U}^{(t)}_{anchor}} \mathcal{N}(i)$ \COMMENT{selected positions and their conflicts}
+    \STATE $\mathcal{R} \leftarrow \{\, i \in \mathcal{C}^{(t)} \mid c_i \ge \tau_{\mathrm{low}} \,\} \setminus \mathcal{X}$ \COMMENT{remaining candidates}
+    \WHILE{$\mathcal{R} \neq \emptyset$}
+      \STATE Select $i^\star \leftarrow \arg\max_{i \in \mathcal{R}} c_i$
+      \STATE $\mathcal{U}^{(t)}_{\text{conflict}} \leftarrow \mathcal{U}^{(t)}_{\text{conflict}} \cup \{i^\star\}$
+      \STATE $\mathcal{R} \leftarrow \mathcal{R} \setminus \left(\{i^\star\} \cup \mathcal{N}(i^\star)\right)$
+    \ENDWHILE
+    \STATE {\bfseries return} $\mathcal{U}^{(t)}_{\text{conflict}}$
+  \end{algorithmic}
+\end{algorithm}
+
+In practice, quality degradation from naively lowering the confidence threshold is largely driven by positional coupling. By explicitly avoiding simultaneous unmasking of strongly coupled positions, \textit{Conflict-Based Scheduling} helps maintain decoding quality while allowing a lower confidence threshold $\tau_{low}$, thus speeding up the inference. 
+
+

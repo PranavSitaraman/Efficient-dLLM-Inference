@@ -1,0 +1,288 @@
+\section{Related works}
+\paragraph{Discrete diffusion models.}
+(Continuous) diffusion models were originally built on continuous-space Markov chains with Gaussian transition kernels \cite{sohldickstein2015deep,ho2020denoising}. This was later extended to continuous time through the theory of stochastic differential equations \cite{song2021score}. In a similar vein, discrete diffusion models have emerged from discrete-space Markov chains \cite{hoogeboom2021argmax}. Specifically, \cite{austin2023structured} introduced D3PM with various types of transition matrices. Later, \citet{lou2024discrete} proposed SEDD, incorporating a theoretically and practically robust score-entropy objective. Additionally, \citet{varma2024glauber,liu2024think} introduced novel modeling strategies that classify tokens in a noisy sequence as either signal (coming from clean data) or noise (arising from the forward process). In particular, \citet{liu2024think} uses this to give a \emph{planner} that adaptively determines which tokens to denoise. While this is similar in spirit to our general discussion about devising adaptive inference strategies, we emphasize that their approach is specific to discrete diffusions for which the forward process \emph{scrambles} the token values, rather than masking them.
+
+\paragraph{Masked diffusion models.} Meanwhile, the absorbing transition kernel has gained popularity as a common choice due to its better performance than other kernels. Building on this, \citet{sahoo2024simple,shi2025simplified} aligned its framework with continuous diffusion, resulting in a simple and principled training recipe, referring to it as \emph{Masked Diffusion Model}. Subsequent studies have explored various aspects of MDM. \citet{gong2024scaling} efficiently trained MDM via adaptation from autoregressive models, scaling MDM up to 7B parameters. \citet{zheng2024maskeddiffusionmodelssecretly} interpreted 
+MDMs as order-agnostic learners and proposed a first-hitting sampler based on this insight. \citet{ye2024beyond,gong2024scaling} demonstrated that MDM outperforms autoregressive models in reasoning and planning tasks, emphasizing its impact on downstream applications. \citet{nie2024scaling} examined the scaling laws of MDM, while \citet{xu2024energy,liu2024copula} identified limitations in capturing coordinate dependencies when the number of sampling steps is small and proposed additional modeling strategies to address this issue. \citet{schiff2024simple} studied conditional generation using MDM and \citet{rectorbrooks2024steering} tackled the challenge of controlling generated data distributions through steering methodologies. \citet{chen2024convergence} provided a theoretical analysis showing that sampling error is small given accurate score function estimation.
+
+
+\paragraph{Any-order reasoning.} Even though language tasks generally have a natural order of ``left-to-right" token generation, in many tasks like planning, reasoning, and combinatorial optimization, the natural order of token generation can be quite different from ``left-to-right". Even though prominent autoregressive-based language models achieve impressive performance on various tasks, many works \cite{golovneva2024reverse, chen2024premise, kitouni2024factorization} have shown that this performance is tied to the training order of the tasks and therefore can cause brittleness from it. For example, \citet{chen2024premise} showed that simply permuting the premise order on math tasks causes a performance drop of 30\%. The reason behind such brittleness regarding the ordering is the inherent ``left-to-right" nature of the autoregressive models. Several works \cite{liao-etal-2020-probabilistically} have tried to address this issue in the autoregressive framework. In particular, \cite{papadopoulos2024arrows} highlighted the significance of left-to-right ordering in natural language by comparing its likelihood to that of the reverse (right-to-left) ordering.
+
+Recently, discrete diffusion models have emerged as a promising approach for discrete data apart from autoregressive models. Additionally, the order-agnostic training of discrete diffusion models opens up the multiple sampling paths during the inference but it also faces some challenges during the training therefore, they seem a promising approach to elicit any order reasoning. \citet{zheng2024reparameterized} proposed different ways of implementing an adaptive inference strategy for MDM but a \emph{concrete understanding of why such an adaptive inference strategy is needed is still lacking}. In this work, we explore various aspects of vanilla MDM training and how adaptive MDM inference can mitigate the issues raised by vanilla MDM training and elicit any order reasoning. 
+
+We also want to mention the concurrent work by \citet{peng2025path} that proposes an alternative adaptive inference strategy by selecting $\mathcal F(\theta, x_t)$ based on the BERT model or the denoiser itself. In particular, \citet{peng2025path} uses the BERT model or the denoiser to obtain the uncertainty of a token and then uses Top-$K$ to decide the positions to unmask it. In contrast to their work, we disentangle the impact of token ordering on MDM training vs. MDM inference and provide a more complete understanding of the motivations for and benefits of adaptive inference. Additionally, our results indicate drawbacks to using Top-$K$ strategy as opposed to Top-$K$ margin in deciding which tokens to unmask when there are multiple values with high probabilities.
+
+\paragraph{Beyond autoregressive models.}
+Efforts to learn the natural language using non-autoregressive modeling began with BERT \cite{devlin-etal-2019-bert}. Non-causal approaches can take advantage of the understanding the text data representation. \cite{chang2022maskgit} adopted a similar approach for learning image representations. Building on these intuitions, 
+\cite{shih2022training,hoogeboom2022autoregressive} proposed any-order modeling, which allows a model to generate in any desired order. \citet{shih2022training} made the same observation that any-order models by default have to solve exponentially more masking problems than autoregressive models. However, whereas our work shows that learning in the face of this challenging task diversity can benefit the model at inference time, their work sought to alleviate complexity at training time by reducing the number of masking problems that need to be solved.
+
+
+\section{Technical details from Section~\ref{sec:hardness}}
+
+
+\paragraph{Notations.} Throughout this section, we use $x^i$ to denote the $i$-th coordinate of the vector $x$ and $z{(j)}$ to denote the $j$-th example. The $i$-th coordinate of the vector $z{(j)}$ is denoted by $z{(j)}^i$.
+
+\subsection{Additional example: sparse parity observations}
+\label{app:parity}
+
+\begin{example}[Noisy sparse parity observations]\label{example:xor}
+    Let $m = 2$,  $k\in\mathbb{N}$, and $N^2\log N \ll P \le N^{0.49k}$. Fix \emph{noise rate} $\eta > 0$ as well as strings $z{(1)},\ldots, z{(P)}$ sampled independently and uniformly at random from the set of $k$-sparse strings in $\{0,1\}^N$. For each $j\in[P]$, define $\mathcal{O}_j(x)$ to be the distribution which places mass $1 -\eta$ on $1$ (resp. $2$) and mass $\eta$ on $2$ (resp. $1$) if $\sum_i x^i z{(j)}^i$ is odd (resp. even). Note that for $k = O(1)$, each of these observations is efficiently learnable by brute-force.
+\end{example}
+
+Below we show that for a certain range of masking fractions, a constant fraction of the masking problems for the corresponding L\&O distributions are computationally hard under the \emph{Sparse Learning Parity with Noise} assumption~\cite{alekhnovich2003more}. Formally we have:
+
+\begin{proposition}\label{prop:lpn}
+    Let $0 < \alpha < 1$ be an arbitrary absolute constant, and let $\eta = 1/\mathrm{poly}(N)$ be sufficiently large. Let $x$ be a sample from a L\&O distribution $p_{\rm data}$ with noisy parity observations as defined in Example~\ref{example:xor}. Suppose each token is independently masked with probability $\alpha$, and $M$ is the set of indices for the masked tokens. If $1 - 1/N \le \alpha \le 1 - 1/2N$, then under the Sparse Learning Parity with Noise (SLPN) assumption (see Definition~\ref{def:lpn}), with constant probability over $M$, no polynomial-time algorithm can solve the resulting masking problem of predicting any of the masked tokens among $x^{\pi(1)}, \ldots, x^{\pi(N)}$ given $x[M]$.
+\end{proposition}
+
+We note that it is important for us to take the observations to be \emph{sparse} parities and to leverage the \emph{Sparse} Learning Parity with Noise assumption. If instead we used \emph{dense} parities and invoked the \emph{standard} Learning Parity with Noise (LPN) assumption, we would still get the hardness of masking problems, but the observations themselves would be hard to learn, assuming LPN. This result is based on the following standard hardness assumption:
+
+\begin{definition}[Sparse Learning Parity with Noise]\label{def:lpn}
+    Given input dimension $N$, noise parameter $0 < \eta < 1/2$, and sample size $P$, an instance of the \emph{Sparse Learning Parity with Noise (SLPN)} problem is generated as follows:
+    \begin{itemize}
+        \item Nature samples a random bitstring $x$ from $\{0,1\}^N$
+        \item We observe $P$ examples of the form $(x{(i)},y{(i)})$ where $x{(i)}$ is sampled independently and uniformly at random from $k$-sparse bitstrings in $\{0,1\}^N$, and $y$ is given by $\epsilon_i + \langle x{(i)}, x\rangle \pmod{2}$, where $\epsilon_i$ is $1$ with probability $\eta$ and $0$ otherwise.
+    \end{itemize}
+    Given the examples $\{(x{(i)},y{(i)})\}^P_{i=1}$, the goal is to recover $x$.
+
+    The \emph{SLPN assumption} is that for any $P = N^{(1 - \rho)k/2}$ for constant $0 < \rho < 1$, and any sufficiently large inverse polynomial noise rate $\eta$, no $\mathrm{poly}(N)$-time algorithm can recover $x$ with high probability.
+\end{definition}
+
+\begin{proof}[Proof of Proposition~\ref{prop:lpn}]
+    With probability at least $1 - (1 - 1/N)^N \ge \Omega(1)$, all of the variable tokens $x^{\pi(i)}$ for $i \le N$ are masked. Independently, the number of unmasked tokens among the observation tokens $\mathcal{O}_j$ is distributed as $\mathrm{Bin}(P, 1-\alpha)$, so by a Chernoff bound, with probability at least $1 - e^{-\Omega(P/N^2)} = 1 - 1/\mathrm{poly}(N)$ we have that at least $P/4N = \Omega(N\log N)$ observation tokens are unmasked. The masking problem in this case amounts to an instance of SLPN with input dimension $N$ and sample size in $[\Omega(N\log N), O(N^{0.49k})]$. Because of the lower bound on the sample size, prediction of $\mathbf{x}^M$ is information-theoretically possible. Because of the upper bound on the sample size, the SLPN assumption makes it computationally hard. As a result, estimating the posterior mean on any entry of $\mathbf{x}^M$ given the unmasked tokens is computationally hard as claimed.
+\end{proof}
+
+\subsection{Additional example: random slab observations}
+\label{app:slab}
+
+\begin{example}[Random slab observations]\label{example:perceptron}
+    Let $m = 2$ and $P = \gamma N^2$ for constant $\gamma > 0$. Fix \emph{slab width} $\beta$ and vectors $z{(1)}, \ldots, z{(P)}$ sampled independently from $\mathcal{N}(0,I)$. For each $j\in[P]$, define the corresponding observation $\mathcal{O}_j(x)$ to be deterministically $1$ if $|\langle z{(j)}, 2x - \mathbf{1}\rangle| \le \beta\sqrt{N}$, and deterministically $0$ otherwise.
+\end{example}
+
+In~\cite{alaoui2024hardness}, it was shown that \emph{stable} algorithms (Definition~\ref{def:stable}), which encompass many powerful methods for statistical inference like low-degree polynomial estimators, MCMC, and algorithmic stochastic localization~\cite{gamarnik2021overlap}, are unable to sample from the posterior distribution over a random bitstring conditioned on it satisfying $|\langle z{(j)}, x\rangle| \le \beta\sqrt{N}$ for any $\Theta(N)$ number of constraints $z{(1)},\ldots,z{(P')}$, provided $P'$ is not too large that the support of the posterior is empty. This ensemble is the well-studied \emph{symmetric perceptron}~\cite{aubin2019storage}. The following is a direct reinterpretation of the result of~\cite{alaoui2024hardness}:
+
+\begin{proposition}\label{prop:perceptron_masking}
+    Let $p_{\rm data}$ be a L\&O distribution with random slab observations as defined in Example~\ref{example:perceptron}, with parameter $\gamma > 0$ and slab width $\beta > 0$. There exists a constant $c_\beta > 0$ such that for any absolute constant $0 < c < c_\beta$, 
+    if $1 - c_\beta N/2P \le \alpha \le 1 - c N / P$ and $\gamma > c_\beta$, the following holds. Let $p'_{\rm data}$ denote the distribution given by independently masking every coordinate in $p_{\rm data}$ with probability $\alpha$. Then \emph{any} $(1 - \tilde{\Omega}(1/\sqrt{N}))$-stable algorithm, even one not based on masked diffusion, which takes as input a sample $x'$ from $p'_{\rm data}$ and, with probability $1 - o(1)$ outputs a Wasserstein-approximate\footnote{Here the notion of approximation is $o(1)$-closeness in Wasserstein-2 distance.} sample from $p_{\rm data}$ conditioned on the unmasked tokens in $x'$, must run in super-polynomial time.
+\end{proposition}
+
+The upshot of this is that any stable, polynomial-time masked diffusion sampler will, with non-negligible probability, encounter a computationally hard masking problem at some point during the reverse process.
+
+For the proof, we first formally define the (planted) symmetric Ising perceptron model:
+
+\begin{definition}
+    Let $\alpha, \beta > 0$. The \emph{planted symmetric Ising perceptron} model is defined as follows: 
+    \begin{itemize}
+        \item Nature samples $\sigma$ uniformly at random from $\{\pm 1\}^N$
+        \item For each $j = 1,\ldots,P = \lfloor \alpha N\rfloor$, we sample  $z{(j)}$ independently from $\mathcal{N}(0,I_N)$ conditioned on satisfying $|\langle z{(j)}, \sigma\rangle| \le \beta\sqrt{N}$.
+    \end{itemize}
+    The goal is to sample from the posterior on $\sigma$ conditioned on these observations $\{z{(i)}\}^P_{i=1}$.
+\end{definition}
+
+Next, we formalize the notion of \emph{stable algorithms}.
+
+\begin{definition}\label{def:stable}
+    Given a matrix $Z\sim\mathcal{N}(0,1)^{\otimes P\times N}$, define $Z_t = tZ + \sqrt{1 - t^2}Z'$ for independent $Z'\sim\mathcal{N}(0,1)^{\otimes P\times N}$. 
+    A randomized algorithm $\mathcal{A}$ which takes as input $Z\in\mathbb{R}^{P\times N}$ and outputs an element of $\{\pm 1\}^N$ is said to be \emph{$t_N$-stable} if $\lim_{N\to\infty} W_2(\mathrm{law}(\mathcal{A}(Z)), \mathrm{law}(\mathcal{A}(Z_t))) = 0$.
+\end{definition}
+
+As discussed at depth in~\cite{gamarnik2021overlap}, many algorithms like low-degree polynomial estimators and Langevin dynamics are stable. 
+
+\begin{theorem}[Theorem 2.1 in~\cite{alaoui2024hardness}\footnote{Note that while the theorem statement in~\cite{alaoui2024hardness} refers to the non-planted version of the symmetric binary perceptron, the first step in their proof is to argue that these two models are mutually contiguous in the regime of interest.}]\label{thm:gamarnik}
+    For any constant $\beta > 0$, there exists $c_\beta > 0$ such that the following holds for all constants $0 < \alpha < c_\beta$. For $t_N \le 1 - \Omega(\log^2(n) / n^2)$, any $t_N$-stable randomized algorithm $\mathcal{A}$ which takes as input $Z = (z{(1)},\ldots,z{(P)})$ and outputs an element of $\{\pm 1\}^N$ will fail to sample from the posterior on $\sigma$ conditioned on $Z$ in the symmetric Ising perceptron model to Wasserstein error $o(\sqrt{N})$.
+\end{theorem}
+% \kulin{define stable algorithm.}
+
+
+\begin{proof}[Proof of Proposition~\ref{prop:perceptron_masking}]
+    By a union bound, with probability at least $1 - (1 - \alpha) N \ge 1 - c_\beta N^2/P \ge 1 - c_\beta /\gamma$ over a draw $x' \sim p'_{\rm data}$, all of the $x^{\pi(i)}$ tokens are masked. The number of unmasked tokens in $x'$ among the observations $\mathcal{O}_j$ is distributed as $\mathrm{Bin}(P, 1 - \alpha)$. By a Chernoff bound, this is in $[3cN/4, 3c_\beta N/4]$ with at least constant probability. The claim then follows immediately from Theorem~\ref{thm:gamarnik} above. 
+\end{proof}
+
+\subsection{Proof outline of Proposition~\ref{prop:csp}} \label{appendix:pf_outline_hardness}
+ To understand the proof idea, we consider the case where all the latent tokens are masked and some of the observation tokens are unmasked. In this case, the prediction task reduces to learning to recover the latent tokens that are consistent with the observations. Intuitively, each observation provides some constraints and the task is to recover an assignment that satisfies the constraints. This is reminiscent of \emph{Constraint Satisfaction Problems} (CSPs). Indeed, to show the hardness result, we use the rich theory developed for \emph{planted} CSPs at the intersection of statistical physics and average-case complexity. 
+
+In a planted CSP, there is an unknown randomly sampled vector $y$ of length $N$ and, one is given randomly chosen Boolean constraints %(e.g., $y^7 \wedge y^{8} \wedge y^{3} = 1$) 
+which $y$ is promised to satisfy, and the goal is to recover $y$ as best as possible (see Definition~\ref{def:plantedcsp}). Prior works have shown the hardness of efficiently learning to solve the planted CSP problem \cite{krzakala2009hiding, alaoui2024hardness}. We show the hardness of masking problems in L\&O distributions based on these results. Consider the ground truth latent tokens as the random vector $y$ and each observation as a constraint. In this case, the problem of learning to recover the latent tokens from the observation tokens reduces to recovery for the planted CSP.
+
+
+There are precise predictions for the values of vocabulary size $m$ and the number of observations for which the information-theoretically best possible overlap and the best overlap achievable by any computationally efficient algorithm are different. We show that these predictions directly translate to predictions about when masking problems become computationally intractable:
+
+\begin{figure}
+    \centering
+    \hspace{-5mm}    \includegraphics[width=0.5\linewidth]{Figures/bp_fig_1.png}
+    \vspace{-0.05in}
+    \caption{Overlap achieved by belief propagation initialized at ground truth versus random for planted CSP with $k = 3$, $m = 3$, and $g = \mathrm{NAE}$, for $N = 10000$ and varying choices of average degree $D$. $D_{\rm KS} / K$ can be shown analytically to be $64$, consistent with the phase transition depicted. Plot suggests $D_{\rm cond}/K \approx 50$. By Prop.~\ref{prop:csp} this implies a range of masking fractions at which $\Omega(1)$ fraction of masking problems are computationally hard.}
+    \label{fig:csp}
+\end{figure}
+
+
+As a simple example, let us consider sparse predicate observations with $k=2$ and $g(x',x'') = \mathbf{1}[x' \neq x'']$. These can be formally related to the well-studied problem of \emph{planted $m$-coloring}. In the planted $m$-coloring, a random graph of average degree $D$ is sampled consistent with an unknown vertex coloring and the goal is to estimate the coloring as well as possible~\cite{krzakala2009hiding}, as measured by the \emph{overlap} of the output of the algorithm to the ground-truth coloring (see Definition~\ref{def:plantedcsp}). As a corollary of our main result, we show that when all the latent tokens $x^{\pi(1)}, \ldots, x^{\pi(N)}$ are masked and a few unmasked observation tokens provide the information of the form $g(x^{\pi(i)}, x^{\pi(j)}) = \mathbf{1}[ x^{\pi(i)} \neq x^{\pi(j)} ]$ for $i, j \leq N$, then solving the masking problem can be reduced to solving planted coloring. 
+
+
+For planted $m$-coloring, when $m = 5$ the thresholds in Proposition~\ref{prop:csp} are given by $D_{\rm KS} / 2 = 16$ and $D_{\rm cond} / 2 \approx 13.23$~\cite{krzakala2009hiding} (the factor of $2$ here is simply because the observations correspond to \emph{ordered} subsets of size $2$). For general predicates and arities, there is an established recipe for numerically computing $D_{\rm KS}$ and $D_{\rm cond}$ based on the behavior of the \emph{belief propagation} algorithm (see the discussion in Appendix~\ref{app:planted_result}). As an example, in Fig.~\ref{fig:csp}, we execute this recipe for $m = 3$, $k = 3$, and $g$ given by the Not-All-Equal predicate $\mathrm{NAE}(x',x'',x'') = 1 - \mathbf{1}[x' = x'' = x''']$ to obtain thresholds that can be plugged into Proposition~\ref{prop:csp}.
+
+\paragraph{Additional examples of the hardness.} The above setup can also be generalized to capture \emph{Bayesian constraint satisfaction problems}~\cite{montanari2008estimating,liu2022statistical}, one notable example of which is the stochastic block model~\cite{PhysRevE.84.066106}. There are analogous predictions for the onset of hardness of inference, which can likewise be translated to hardness of masking problems for seemingly benign L\&O distributions. In Appendix~\ref{app:parity} and~\ref{app:slab}, we give two more examples of L\&O distributions for which order-aware training is tractable yet order-agnostic training of the MDM is computationally hard. 
+
+First, we consider L\&O distributions whose observations are sparse, noisy parities in the latents and deduce hardness for order-agnostic training from the Sparse Learning Parity with Noise assumption~\cite{alekhnovich2003more}. We then consider L\&O distributions whose observations are \emph{generalized linear models} in the latents, and deduce hardness for a large class of efficient algorithms from existing results on Lipschitz hardness~\cite{alaoui2024hardness} for the symmetric binary perceptron~\cite{aubin2019storage}.
+
+
+
+
+\subsection{Proof of Proposition~\ref{prop:csp}: sparse predicate observations}
+\label{app:planted_result}
+
+Here we formally define the relevant notions needed to formalize our claim about hardness in Proposition~\ref{prop:csp}.
+
+\begin{definition}[Planted CSPs]\label{def:plantedcsp}
+    Given arity $k\in\mathbb{N}$, vocabulary/alphabet size $m\in\mathbb{N}$, predicate $g: \{1,\ldots,m\}^k \to \{0,1\}$, latent dimension $N$, and clause density $P/N$, the corresponding \emph{planted constraint satisfaction problem} is defined as follows: Nature samples an unknown assignment $\sigma$ uniformly at random from $\{ 1, \ldots, m \}^N$, and then for each ordered $k$-tuple $S$ of distinct elements from $[N]$, we observe the \emph{clause} $S$ independently with probability $\phi / N^{k-1}$ if $g(\sigma|_S) = 1$.
+
+    To measure the quality of an algorithm for recovering $\sigma$ given the observations, define the \emph{overlap} between an estimate $\hat{\sigma}$ and the ground truth $\sigma$ by $d(\sigma,\hat{\sigma}) \triangleq \min_{\pi\in\mathbb{S}_N} \sum_i \mathbf{1}[\sigma_i = \pi(\hat{\sigma}_i)]$ where $\mathbb{S}_N$ denotes the set of all permutations of $\{0, 1, \ldots, N-1\}$. Define the \emph{average degree} to be $kP/N$, i.e. the expected number of variables that share at least one clause with a given variable.
+\end{definition}
+
+We begin by defining the central algorithm driving statistical physics predictions about hardness for random constraint satisfaction problems: belief propagation (BP).
+
+
+
+\begin{definition}[BP update rules]\label{def:BP}
+    Belief propagation is an algorithm that iteratively updates a set of \emph{messages} $\{\msg^{i\to S}_c[t], \msg^{S\to i}_c[t]\}$, where $i, S$ range over all pairs of variable indices $i\in[N]$ and observations $S\ni i$. At time $t+1$, the messages are computed via
+    \begin{align}
+        \msg^{i\to S}_c[t+1] &\propto \prod_{T: i\in T\neq S} \msg^{T\to i}_c[t] \\
+        \msg^{S\to i}_c[t+1] & \propto \sum_{\overline{\sigma}\in \{ 1,\ldots,m \}^{S\backslash i}} g(\overline{\sigma}\cup_i c) \prod_{j: i\neq j\in S} \msg^{j\to S}_{\overline{\sigma}_j}[t]\,,
+    \end{align}
+    where $\overline{\sigma}\cup_i c \in \{1, \ldots, m \}^S$ assigns $c$ to entry $i$ and $\overline{\sigma}$ to the remaining entries.
+
+    A set of messages can be used to estimate the marginals of the posterior on $\sigma$ conditioned on the observations as follows. The marginal on the $i$-th variable has probability mass function over $\{1, \ldots, m\}$ proportional to $\{\prod_{T: i\in T} \msg^{T\to i}_c\}$. Given a set of marginals, a natural way to extract an estimate for $\sigma$ is to round to the color in $\{1, \ldots, m\}$ at which the probability mass function is largest.
+\end{definition}
+
+Throughout we will make the following assumption that ensures that the trivial messages $\msg^{i\to S}_c = 1/m$ and $\msg^{S\to i}_c = 1/m$ are a fixed point, sometimes called the \emph{paramagnetic fixed point}, for the iteration above:
+
+\begin{assumption}\label{assume:paramagnetic}
+    The quantity $\sum_{\overline{\sigma}\in \{1,\ldots,m\}^{[k]}\backslash i} g(\overline{\sigma}\cup_i c)$ is constant across all $c\in \{1,\ldots,m\} $ and $i\in[k]$.
+\end{assumption}
+
+\begin{definition}\label{def:thresholds}
+    Given $k,m,g$, the \emph{Kesten-Stigum} threshold $D_{\rm KS}$ is defined to be the largest average degree for which BP is locally stable around the paramagnetic fixed point, that is, starting from a small perturbation of the paramagnetic fixed point, it converges to the paramagnetic fixed point. More formally, $D_{\rm KS}$ is the largest average degree at which the Jacobian of the BP operator $\{\msg^{i\to S}[t]\}\mapsto \{\msg^{i\to S}[t+1]\}$ has spectral radius less than $1$.
+
+    The \emph{condensation} threshold $D_{\rm cond}$ is defined to be the largest average degree at which the planted CSP ensemble and the following simple \emph{null model} become mutually contiguous and thus statistically indistinguishable as $N \to \infty$. The null model is defined as follows: there is no single unknown assignment, but instead for every ordered subset $S$ of $k$ variables, Nature independently samples an unknown local assignment $\sigma_S \in \{1,\ldots,m\}^S$, and the observation is included with probability $\phi / N^{k-1}$ if $g(\sigma_S) = 1$. 
+\end{definition}
+
+For $D_{\rm cond} < kP/N < D_{\rm KS}$, there exists some \emph{other} fixed point of the BP operator whose marginals, once rounded to an assignment, achieves strictly higher overlap than does BP with messages initialized randomly. The prediction is that in this regime, no efficient algorithm can achieve optimal recovery~\cite{krzakala2009hiding}.
+
+\begin{conjecture}[1RSB cavity prediction]\label{conj:1rsb}
+    Suppose $k, m, g$ satisfy Assumption~\ref{assume:paramagnetic}, and let $D_{\rm KS}$ and $D_{\rm cond}$ denote the associated Kesten-Stigum and condensation thresholds for the average degree. Then for all $P$ for which $D_{\rm cond} < kP/N < D_{\rm KS}$, the best overlap achieved by a computationally efficient algorithm for recovering $\sigma$ is strictly less than the best overlap achievable.
+\end{conjecture}
+
+\begin{proof}[Proof of Proposition~\ref{prop:csp}]
+    At masking fraction $\alpha$ satisfying the bounds in the Proposition, with probability at least $\alpha^N \ge (1 - \gamma^{-1}D_{\rm KS}/N^{k-1})^N \ge \Omega(1)$ we have that all tokens corresponding to latents $x_{\pi(i)}$ get masked. Independently of this, the number of unmasked tokens among the observation tokens $\mathcal{O}_S$ is distributed as $\mathrm{Bin}(N(N-1)\cdots (N-k+1), 1 - \alpha)$, so by standard binomial tail bounds, with constant probability (depending on the gap between $D_{\rm cond}$ and $D_{\rm KS}$) this lies between $\gamma^{-1} D_{\rm cond}N/k$ and $\gamma^{-1} D_{\rm KS}N/k$. Furthermore, of these unmasked tokens in expectation $\gamma$ fraction of them correspond to observations for which the associated predicate evaluates to $1$. Conditioned on the above events, the masking problem thus reduces exactly to inference for a planted constraint satisfaction problem at average degree $D_{\rm cond} < D < D_{\rm KS}$, from which the Proposition follows.
+\end{proof}
+
+\section{Experimental details in Section~\ref{sec:hardness}}
+
+\subsection{Experimental details in Section~\ref{sec:hardness_text}} \label{appendix:exp_detail_text}
+
+\paragraph{$\pi$-learner configurations.} We consider two distributions of $\pi$ that interpolate between $\mathrm{Unif\,}(\mathbb{S}_L)$ where $\mathbb{S}_L$ denote the uniform distribution over all permutations of indices $\{0,1, \ldots, L-1\}$ and the point mass at the identical distribution: (Closer) and (Much-closer). To construct those distributions, we start from the identity permutation and perform a certain number of random swapping operations. Since $L\log(L)$ number of swaps results in a distribution that is very close to $\mathrm{Unif\,}(\mathbb{S}_L)$ \cite{bormashenko2011coupling}, we use $L/10$ and $\sqrt{L}$ swaps to construct the (Closer) and (Much-closer) distributions, respectively. For consistency, we repeat this sampling process three times.
+
+\paragraph{Model and training configurations.} As explained in Section~\ref{sec:hardness_text}, to evaluate the scaling law of the $\pi$-learner, we can simply adapt the autoregressive training setup (a transformer with causal attention) by modifying the input to $\pi(x_0)$ and using a learnable positional embedding layer instead of RoPE. We borrow the training configurations from \cite{nie2024scaling}, which are also consistent with the TinyLlama \cite{zhang2024tinyllama} configurations. In particular, we use AdamW optimizer \cite{loshchilov2019decoupled}, setting $\beta_1 = 0.9$, $\beta_2 = 0.95$, and a weight decay of $0.1$ and $L=2048$.
+A cosine learning rate schedule is applied, with a maximum learning rate of $4 \times 10^{-4}$ and a minimum learning rate of $4 \times 10^{-5}$. We also note that \textbf{unless otherwise specified, we maintain the same training configuration throughout the paper.}
+
+
+\paragraph{Examining scaling laws.} We conduct IsoFLOP analysis \cite{hoffmann2022trainingcomputeoptimallargelanguage}. For a given number of FLOPs $C$, by varying the number of non-embedding parameters of transformers, we set the iteration numbers so that the total number of tokens observed by the model during training equals $C/6N$, following prior studies \cite{hoffmann2022trainingcomputeoptimallargelanguage, kaplan2020scaling}. We then select the smallest validation loss and set it as a data point.
+
+
+\subsection{Experimental details in Section~\ref{sec:imbalance_error}}
+\label{appendix:exp_detail_3_3}
+
+\subsubsection{Experiment on L\&O-NAE-SAT distribution} We consider the L\&O-NAE-SAT distribution with $(N,P) = (20,280)$. For each example sequence from L\&O-NAE-SAT, we pad the last $212$ tokens with an additional token value of $2$. We employ a $19$M MDM with RoPE and a maximum sequence length of $512$. Then, this MDM is trained for $2\times 10^3$ iterations. To attain a proxy MDM for the Bayes optimal predictor, we further train it for $5 \times 10^4$ iterations. 
+
+To measure the error across different tasks, we consider the following setup. For each $\ell \in [1, N-1]$, we randomly mask $\ell$ tokens in the latent positions and $\ell \times (P/N)$ tokens in the observed positions. Across all masked prediction positions, $\ell (1 + P/N)$, we measure the error for each position. For certainty, we repeat this process $1000$ times. The result in Figure~\ref{fig:scaling_laws} corresponds to the case when $\ell = 11$, and we observe the same tendency for other values of $\ell$.
+
+
+\subsubsection{Experiment on text data}
+We take a $170$M MDM pretrained with text data for a baseline model. To measure the performance imbalance between likelihood modeling tasks 
+
+\begin{equation*}
+    \mathbb{E}_{x_0 \sim p_{\rm{data}}}\left[\sum_{i=0}^{L-1} \log p_\theta \left( x_0^{\pi(i)} \Big| x_0 [\pi\{i,\ldots,L-1\}] \right) \right].
+\end{equation*}
+As done in the experiments in Section~\ref{sec:hardness_text}, we sample $\pi$s from 
+three different distributions: $\mathrm{Unif}(\mathbb{S}_L)$, (Closer), the point mass of identical distribution. For each case, we calculate the expectation over $1024$ samples of $x_0 \sim p_{\rm{data}}$.
+
+
+\section{Experimental details in Section~\ref{sec:inference}}
+
+\subsection{Experimental details in Section~\ref{subsec:adaptive_inference}}
+\label{appendix:exp_detail_inference}
+
+\subsubsection{Experiment on L\&O-NAE-SAT distribution}
+We consider five instances of L\&O-NAE-SAT: $(N,P) = (25,275), (30,270), (40,260), (50,250), (100,200)$. For each distribution, we train a 19M MDM and measure the accuracy difference between vanilla inference and adaptive inference using top probability margin.
+
+
+\subsubsection{Experiment on text data}
+
+\paragraph{Top probability margin sampler with temperature.}
+To modify our inference for text data modeling, which does not have a determined answer, we found that adding a certain level of temperature to the oracle is useful. This is because the top probability margin or the top probability often leads to greedy sampling, which harms the diversity (entropy) of the generated samples. Therefore, we consider a variant of the oracle as follows, incorporating a Gaussian noise term $\epsilon$. 
+\begin{align*}
+    \mathcal{F}(\theta, x_t) = \text{Top } K \left(| p_\theta(x^i = j_1 | x_t) - p_\theta(x^i = j_2 | x_t) | + \epsilon \right).
+\end{align*}
+Note that this approach has also been employed for unconditional sampling \cite{wang2024diffusion,zheng2024reparameterized}.
+
+\paragraph{Generative perplexity and entropy.} 
+We employ a 1.1B MDM pretrained on text data as a baseline. For each sampling step, we unconditionally generate samples using both vanilla and adaptive inference. Next, we calculate the likelihood using LLama2-7B as a baseline large language model. Moreover, we denote the entropy of a generated sample $x$ as  $\sum p_i \log p_i$, where $p_i = \# \{x^i = i \}/L$.
+
+\paragraph{Choice of number of tokens to unmask.} We set the number of tokens to unmask $K$ so that the number of unmasked tokens matches that of vanilla MDM inference in expectation. For an inference transition from step $t$ to $s$, vanilla MDM expects $(\#\text{ mask tokens in the current }x_t)\times\frac{\alpha_s-\alpha_t}{1-\alpha_t}$ unmasked. Accordingly, we choose $K = (\#\text{ mask tokens in the current }x_t)\times\frac{\alpha_s-\alpha_t}{1-\alpha_t}$. This choice keeps the number of revealed tokens balanced throughout inference. Alternatively, one can sample $K$ stochastically from $\mathrm{Binom}(\#\text{ mask tokens in the current }x_t,\frac{\alpha_s-\alpha_t}{1-\alpha_t})$. We found that both the deterministic and stochastic choices of $K$ result in comparable generative perplexity.
+
+This choice of $K$ can be potentially helpful when the network is time-conditioned, since this keeps $(\# \text{mask tokens in the current $x_t$})\approx (1-\alpha_t)\times L$ where $L$ is the max sequence length--matching the marginal that the model saw during training.
+
+
+\subsection{Experimental details on Sudoku and Zebra puzzles}
+\label{appendix:sudoku-zebra-exp-details}
+
+\paragraph{Dataset.} For both Sudoku and Zebra puzzles, we use the dataset provided in \citet{shah2024causal} to train our model. To evaluate our model on the same difficulty tasks, we use the test dataset proposed in \citet{shah2024causal}. This dataset is created by filtering the puzzles from \cite{david_g__radcliffe_2020} that can be solved using a fixed list of 7 strategies. To create a hard dataset to evaluate easy-to-hard generalization, we use the remaining puzzles from \cite{david_g__radcliffe_2020} as they either require a new strategy unseen during the training and/or require backtracking. The hard dataset contains around 1M Sudoku puzzles.
+
+\paragraph{Model, training, and inference.} For the training and inference, we use the codebase of \cite{ye2024beyond} with keeping most of the hyperparameters default given in the codebase. For the Sudoku dataset, we use $6$M GPT-2 model, and for the Zebra dataset, we use $19$M model. We set the learning rate to 0.001 with a batch size of 128 to train the model for 300 epochs. For the inference, we use 50 reverse sampling steps using the appropriate strategy.  Additionally, we add Gumbel noise with a coefficient of 0.5 to the MDM inference oracle $\mathcal{F}$. 
+
+\subsection{Experimental details on LLaDA-8B} \label{sec:llada_detail}
+
+Our evaluation covers two task categories: (i) infilling(HumanEval-Infill and ROCStories) and (ii) instruction–answering (Math). For instruction–answering tasks, we employ a semi-autoregressive sampling strategy, whereas for infilling tasks we retain the non-autoregressive approach. For infilling tasks, the output length is predetermined—matching the size of the masked span—whereas instruction–answering tasks require an explicit length specification. For the latter, we follow the sampling configuration of \cite{nie2025large}.
+
+
+For HumanEval-Infill, we adopt the problem set introduced by \cite{bavarian2022efficienttraininglanguagemodels}. Each instance is grouped by the span of the masked code—the region the model must infill—into three categories: \textit{single-line}, \textit{multi-line}, and \textit{split}. The task difficulty rises as the length of the masked span increases.
+
+
+\section{Omitted proofs}
+\label{appenix:mdm-equivalent-loss}
+
+\begin{proof}[Proof of Proposition~\ref{prop:mdm_loss}]
+We build on Proposition 3.1 from \cite{zheng2024maskeddiffusionmodelssecretly} to obtain the result of Proposition~\ref{prop:mdm_loss}. We first re-state the result from \cite{zheng2024maskeddiffusionmodelssecretly} for the case when the denoising network $p_\theta$ does not depend on the noise-scale $t$ explicitly. Let $x(n)$ be a sequence with $n$ tokens being masked from $x_0$, and $x^i(n)$ denotes the $i^{\textrm{th}}$ token value of the sequence $x(n)$. Let $\Tilde{q}(x(n) | x_0)$ be the probability distribution corresponding to randomly and uniformly masking $n$ tokens of $x_0$. 
+
+\begin{proposition}[Proposition~3.1 of \cite{zheng2024maskeddiffusionmodelssecretly}]
+For clean data $x_0$, let $\tilde{q}(x(n)\mid x_0)$ be the discrete forward process that randomly and uniformly masks $n$ tokens of $x_0$.
+Suppose the noise schedules $\alpha_t$ satisfies $\alpha_0 = 0$ and $\alpha_1 = 1$. Then, the MDM training loss \eqref{eqn:mdm_loss} can be reformulated as
+\begin{align} \label{appendix:prop_pf_1}
+    \mathcal{L}_\theta = - \sum_{n=1}^L \;\; \mathop{\mathbb{E}}_{x(n)\sim \tilde{q}(\cdot\mid x_0)}\left[\frac{1}{n}\sum_{\ell:x^\ell(n) = 0} \log p_\theta(x_0^\ell\mid x(n))\right].
+\end{align}
+\end{proposition}
+To obtain an alternative formulation of \eqref{appendix:prop_pf_1}, we expand the expectation $x(n)\sim \tilde{q}(\cdot\mid x_0)$. Since there are total $L$ positions of $x_0$, we have the probability assigned for each $x(n)$ equals $1/\binom{L}{n}$. Therefore, expanding the above equation with the expectation $x(n)$ and treating $x(n)$ as $x[M]$ for some set $M$ of size $n$, we obtain the result. 
+\begin{align*}
+      \mathcal{L}_\theta 
+      = -\sum_{M \in [L], i \in M} \frac{1}{\binom{L}{|M|}} \cdot \frac{1}{|M|} \log p_\theta(x_0^\ell\mid x[M]).
+\end{align*}
+\end{proof}
+
+\subsection{Equivalence between the MDM loss and any-order autoregressive loss}
+\label{sec:mdm-aoarm}
+
+In this section, we will demonstrate the equivalence for MDM loss and any-order autoregressive loss. In particular, for all $x_0$, we show
+\begin{align*}
+   -\mathop{\mathbb{E}}_{\pi\sim\mathrm{Unif}(\mathbb{S}_L)}\left[\sum_{j=0}^{L-1} \log p_\theta \left( x_0^{\pi(j)} \Big| x_0 [\pi\{j\},\ldots,\pi \{L-1\}] \right) \right] = -\sum_{ M\subseteq [L],i \in M}\frac{1}{\binom{L}{|M|}} \frac{1}{| M |} \displaystyle   \log p_\theta(x^i_0 | x_0[M]). 
+\end{align*}
+We now consider $\{\pi(j),\dots,\pi(L-1) \}=M \subseteq [L]$ and $\pi(j) =i $ and count the number of $\pi \in \mathbb S_L$ that induces a specific term $\log p_\theta(x_0^i | x_0[M])$. To induce the term, for a given $M\in [L]$ and $i \in M$, $\pi$ must satisfy
+\begin{align*}
+    \pi(j) = i, \quad  \{\pi(j),\dots,\pi(L-1) \}=M.
+\end{align*}
+The number of $\pi$ that satisfies above is $(L-|M|)! \times (|M|-1)!$. Using this and the number of total permutations is $L!$, we obtain the result.
+\begin{align*}
+&\mathop{\mathbb{E}}_{\pi\sim\mathrm{Unif}(\mathbb{S}_L)}\left[\sum_{j=0}^{L-1} \log p_\theta \left( x_0^{\pi(j)} \Big| x_0 [\pi\{j\},\ldots,\pi \{L-1\}] \right) \right] \\
+=&\frac{1}{L!}\sum_{\pi \in \mathrm{Unif}(\mathbb{S}_L) } \sum_{j=0}^{L-1} \log p_\theta \left( x_0^{\pi(j)} \Big| x_0 [\pi\{j\},\ldots,\pi \{L-1\}] \right) \\
+=& \frac{1}{L!}\sum_{M \in [L], i \in M} \big[\log p_\theta(x_0^i | x_0[M]) \times(L-1-|M|)! \times (|M|-1)! \big] \\
+=& \sum_{M \in [L], i \in M} \frac{1}{\binom{L}{|M|}} \frac{1}{|M|} \log p_\theta(x_0^i | x_0[M]).
+\end{align*}

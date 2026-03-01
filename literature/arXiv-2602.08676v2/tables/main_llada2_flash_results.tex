@@ -1,0 +1,70 @@
+\begin{table}[htbp]
+\centering
+\caption{Benchmark Performance of LLaDA2.1-flash, comparing with several baseline models. For diffusion language model, we report its scores across each benchmark along with its TPF (tokens per forward); for AR model, we report its scores only, as its TPF is inherently equal to 1.}
+\label{tab:flash_benchmark}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcc|ccc}
+\toprule
+\textbf{Benchmark} 
+& \makecell[b]{\textbf{Qwen3-30B-} \\ \textbf{A3B-Inst-2507} \\ \scriptsize (Score)}
+& \makecell[b]{\textbf{Ling-flash-2.0} \\ \textbf{}\\ \scriptsize (Score)}
+& \makecell[b]{\textbf{LLaDA2.0-flash} \\ \textbf{}\textbf{} \\ \scriptsize (Score $\mid$ TPF)}
+& \makecell[b]{\textbf{LLaDA2.1-flash} \\ \textbf{(S Mode)}\\ \scriptsize (Score $\mid$ TPF)}
+& \makecell[b]{\textbf{LLaDA2.1-flash} \\ \textbf{(Q Mode)}\\ \scriptsize (Score $\mid$ TPF)} 
+\\
+
+\midrule
+\textbf{Average}& 73.09 & 71.52 & 72.43 $\mid$ 3.08 & 72.34 $\mid$ 5.93  & 73.54 $\mid$ 3.64 \\
+\midrule
+\multicolumn{6}{c}{\textbf{Knowledge}} \\
+\midrule
+GPQA & 54.14 & 69.16 & 62.31 $\mid$ 3.29 & 66.67 $\mid$ 3.95  & 67.30 $\mid$ 2.37 \\
+MMLU-Pro & 74.21 & 77.55 & 74.79 $\mid$ 2.36 & 75.31 $\mid$ 4.43  & 76.59 $\mid$ 2.62 \\
+C-EVAL & 88.12 & 87.54 & 85.21 $\mid$ 1.90 & 86.93 $\mid$ 2.71  & 86.71 $\mid$ 1.75 \\
+PHYBench & 29.84 & 27.67 & 30.06 $\mid$ 2.70 & 26.04 $\mid$ 4.10  & 28.23 $\mid$ 2.66 \\
+TriviaQA & 65.61 & 69.76 & 66.88 $\mid$ 1.94 & 72.55 $\mid$ 4.30  & 72.93 $\mid$ 2.92 \\
+\midrule
+\multicolumn{6}{c}{\textbf{Reasoning}} \\
+\midrule
+BIG-Bench Hard & 85.54 & 89.36 & 86.75 $\mid$ 2.66 & 87.82 $\mid$ 5.61  & 88.69 $\mid$ 3.28 \\
+BIG-Bench Extra Hard & 37.80 & 23.24 & 27.86 $\mid$ 4.60 & 33.51 $\mid$ 5.04 &  35.77 $\mid$ 3.17 \\
+bbh-zh & 86.18 & 75.09 & 87.52 $\mid$ 3.21 & 82.55 $\mid$ 5.78  & 86.23 $\mid$ 3.77 \\
+MuSR & 79.15 & 82.72 & 82.72 $\mid$ 1.70 & 80.10 $\mid$ 2.90 & 79.84 $\mid$ 1.85 \\
+ZebraLogic & 90.97 & 87.60 & 82.30 $\mid$ 2.74 & 84.20 $\mid$ 5.80  & 88.90 $\mid$ 3.26 \\
+PrOntoQA & 97.12 & 97.88 & 96.50 $\mid$ 2.64 & 95.00 $\mid$ 9.23  & 97.00 $\mid$ 5.73 \\
+PIQA & 91.57 & 91.95 & 96.50 $\mid$ 1.43 & 92.44 $\mid$ 2.38  & 92.17 $\mid$ 1.44 \\
+OCNLI & 71.59 & 65.36 & 71.63 $\mid$ 1.09 & 72.17 $\mid$ 1.83  & 72.75 $\mid$ 1.32 \\
+HellaSwag & 86.31 & 81.59 & 84.97 $\mid$ 1.26 & 85.60 $\mid$ 2.31  & 85.31 $\mid$ 1.51 \\
+KOR-Bench & 69.2 & 69.44 & 63.04 $\mid$ 3.44 & 62.80 $\mid$ 4.97  & 65.12 $\mid$ 2.77 \\
+DROP & 87.57 & 88.32 & 87.90 $\mid$ 2.26 & 87.55 $\mid$ 5.40  & 87.86 $\mid$ 2.53 \\
+SQuAD 2.0 & 89.51 & 81.32 & 90.00 $\mid$ 3.10 & 90.65 $\mid$ 5.01  & 90.80 $\mid$ 3.90 \\
+\midrule
+\multicolumn{6}{c}{\textbf{Coding}} \\
+\midrule
+LiveCodeBench & 46.42 & 52.48 & 42.51 $\mid$ 4.23 & 44.05 $\mid$ 6.48  & 45.37 $\mid$ 3.80 \\
+CRUXEval-O & 86.75 & 82.75 & 85.12 $\mid$ 3.21 & 85.25 $\mid$ 6.54  & 87.50 $\mid$ 3.80 \\
+MBPP+ & 78.21 & 80.89 & 79.37 $\mid$ 4.02 & 76.72 $\mid$ 10.43  & 77.25 $\mid$ 5.96 \\
+HumanEval+ & 87.88 & 87.58 & 88.41 $\mid$ 6.45 & 89.63 $\mid$ 13.81  & 89.63 $\mid$ 9.18 \\
+MultiPL-E & 70.67 & 65.76 & 74.87 $\mid$ 3.14 & 70.89 $\mid$ 7.77  & 73.34 $\mid$ 4.33 \\
+BigCodeBench-Full & 41.49 & 40.70 & 41.58 $\mid$ 3.33 & 37.11 $\mid$ 8.51 & 39.21 $\mid$ 4.70 \\
+BIRD-SQL & 47.75 & 47.49 & 45.76 $\mid$ 2.16 & 42.18 $\mid$ 5.09 &  44.04 $\mid$ 2.95 \\
+Spider & 81.79 & 80.58 & 82.49 $\mid$ 4.42 & 79.18 $\mid$ 8.74 &  81.04 $\mid$ 5.70 \\
+\midrule
+\multicolumn{6}{c}{\textbf{Math}} \\
+\midrule
+AIME 2025 & 61.88 & 55.89 & 60.00 $\mid$ 4.57 & 63.33 $\mid$ 5.36 &  63.33 $\mid$ 3.46 \\
+OlympiadBench & 77.59 & 76.19 & 74.07 $\mid$ 3.70 & 75.85 $\mid$ 6.46 &  76.59 $\mid$ 3.81 \\
+GSM-Plus & 89.41 & 89.71 & 89.74 $\mid$ 2.68 & 89.23 $\mid$ 7.14 &  89.69 $\mid$ 3.83 \\
+CMATH & 96.58 & 96.52 & 96.90 $\mid$ 2.17 & 96.54 $\mid$ 4.84 &  96.63 $\mid$ 2.65 \\
+Omni-MATH & 54.00 & 53.00 & 50.30 $\mid$ 3.39 & 52.30 $\mid$ 6.01 &  54.10 $\mid$ 3.50 \\
+\midrule
+\multicolumn{6}{c}{\textbf{Agent \& Alignment}} \\
+\midrule
+IFEval-strict-prompt & 83.73 & 81.15 & 82.62 $\mid$ 1.47 & 83.36 $\mid$ 2.24 & 83.55 $\mid$ 1.41 \\
+BFCL v3 & 73.41 & 67.69 & 74.94 $\mid$ 4.87 & 74.86 $\mid$ 9.24 &  75.61 $\mid$ 6.76 \\
+Nexus FC & 49.93 & 36.25 & 50.45 $\mid$ 5.53 & 44.83 $\mid$ 11.29 &  47.65 $\mid$ 7.38 \\
+\bottomrule
+\end{tabular}
+
+}
+\end{table}

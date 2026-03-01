@@ -1,0 +1,13 @@
+
+\section{Conclusion}
+\vspace{-3mm}
+% In this work, we explore different recipes for scaling reasoning capabilities in diffusion large language models. 
+% We first explore the application of SFT on reasoning datasets, which yields improved reasoning performance and reveals the emergence of "Aha moments" as generation length increases. Furthermore, we introduce \grpo, an efficient policy gradient method specifically designed for dLLMs, which consistently outperforms SFT across multiple benchmarks. Finally, we consolidate these findings into the d1 recipe, a two-stage training pipeline that combines SFT and \grpo. d1 delivers the most significant improvements over the baseline model, compared to SFT and \grpo alone. Several promising research directions remain underexplored though, including developing efficient decoding strategies that can scale generation length to facilitate more efficient and effective RL training.
+
+In this work, we explore scaling reasoning in diffusion LLMs through different recipes. SFT on reasoning datasets improves performance and reveals ``Aha moments". We introduce \grpo, an efficient policy gradient method for dLLMs that consistently outperforms SFT across benchmarks. Combining these approaches, our d1 recipe—a two-stage SFT and \grpo pipeline—delivers the most significant improvements over the baseline. Future work should focus on developing efficient decoding strategies to scale generation length for more effective RL training.
+
+% We propose an inpainting-based budget forcing approach that effectively controls generation length and elicits reasoning behaviors. However, we find that current dLLMs like LLaDA do not inherently scale well with this budget forcing technique. 
+% We explore SFT on reasoning datasets, which shows improved reasoning. Furthermore, we introduce diffu-GRPO, an efficient policy gradient method specifically designed for dLLMs. Our results demonstrate that diffu-GRPO delivers the most significant improvements compared to both baseline models, budget forcing and SFT.
+\section*{Acknowledgments}
+This research was supported by NSF CAREER Grant \#2341040, a Schmidt AI 2050 Fellowship
+and a gift from Toyota.

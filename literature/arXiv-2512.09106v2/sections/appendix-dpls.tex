@@ -1,0 +1,33 @@
+\section{Dynamic Plackett-Luce Sampling}
+\label{sec:appendix-dpls}
+
+We detail here the dynamic Plackett-Luce sampling (DPLS) strategy as an alternative to the Bernoulli sampling (cf. \Cref{sec:methods_policy}) used in the main experiments of this paper. The name reflects the connection the Plackett-Luce (PL) model proposed by \cite{luce1959individual} and \cite{plackett1975analysis}, with one key difference: the number of selected items is not fixed but can vary freely between $1$ and $L$.
+
+
+Formally, the Plackett-Luce model operates as follows. Let $\vb_t = (b_t^1, \ldots, b_t^L)$ denote the unmasking logits (corresponding to the output of policy network $f_\phi$, same as in \Cref{sec:methods_policy}).
+Interpreting these scores as unnormalized utilities associated with choosing each token for unmasking, under the PL model the likelihood of any particular \emph{permutation} $\boldsymbol{\sigma} := (\sigma_1, \ldots,  \sigma_L)$ of the tokens is given by
+\begin{align*}
+P(\boldsymbol{\sigma} \mid \vb_t) = \prod_{l \in [L]}\frac{\exp({b^{\sigma_l}_t})}{\sum_{j \ge l}^L \exp({b_t^{\sigma_j}})} \: .
+\end{align*}
+Informally, this corresponds to sampling all indices without replacement, where at each step the probability of choosing an item is proportional to its (exponentiated) utility.
+
+The Plackett-Luce model can be easily adapted to model sampling of a fixed-length \emph{ordered} set $\gU_t \subseteq [L]$ where $|\gU_t| = K$. This is because the probability of any particular partial permutation is equal to the marginalization over all permutations which complete it. %
+Conretely, let $\Sigma(\gU_t)$ be the set of permutations which begin with the sequence $\gU_t$, then it follows that
+\begin{align*}
+P(\gU_t \mid \vb_t) &= \sum_{\boldsymbol{\sigma} \in \Sigma(\gU_t)}\underbrace{\prod_{l \in [L]}\frac{\exp({b^{\sigma_l}_t})}{\sum_{j \ge l}^L \exp({b_t^{\sigma_j}})}}_{P(\boldsymbol{\sigma} | \vb_t)} = \prod_{l \in \gU_t} \frac{\exp{(b_t^{\sigma_i})}}{\sum_{j \in \gU_t^C \cup \: \gU_t^{\geq l}} \exp{(b_t^{\sigma_j})}}
+\end{align*}
+where $\gU_t^C$ denotes the complement of $\gU_t$, and $\gU_t^{\geq l}$ denotes the indices which are in $\gU_t$ at or after position $l$.
+
+
+To extend the PL model to a \emph{variable-length} unmasking sequence, we introduce a special \emph{STOP} token with fixed utility $b_\text{STOP} = 0$, and proceed as follows:
+\begin{enumerate}
+    \item Sample a single token $l \in [L]$ to unmask $$l \sim \text{softmax}(\vb_t / \tau_{\pi})$$ and initialize $\gU_t^\pi = \{l\}$.
+    \item Sample another token $l'$ from the \emph{renormalized distribution} $$l' \sim \text{softmax}([\vb_t^{\backslash \gU} ; b_\text{STOP}] / \tau_{\pi})$$ where $[\vb_t^{\backslash \gU} ; b_\text{STOP}]$ denotes $\vb_t$ concatenated with $b_\text{STOP}$ and with the logits of all previously selected indices $l \in \gU_t^\pi$ set to $-\infty$.
+    \item Add $l'$ to $\gU_t^\pi$.
+    \item If $l'$ was not \emph{STOP}, repeat from 2.
+\end{enumerate}
+
+As written above, this algorithm is not GPU-friendly due to the dynamic computation graph it implies.
+However, it can be implemented in an efficient manner by treating the loop in steps 2-4 as a Gumbel-argsort and simply masking out all actions which get sampled after \emph{STOP}.
+Once the samples have been obtained, their likelihoods can be efficiently computed in the same manner as in the fixed-length case above by marginalizing over all actions which occur after \emph{STOP}.
+

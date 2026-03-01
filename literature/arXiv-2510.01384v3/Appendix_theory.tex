@@ -1,0 +1,107 @@
+\section{Training algorithms and guarantees of PRISM}
+
+\subsection{PRISM fine-tuning algorithm}
+\label{app:prism-algorithm}
+
+\subsection{Marginal Equivalence of the Masking Process}
+\label{appendix: marginal equality}
+We formalize that the two masking procedures stated in Section~\ref{sec:prelim_mdm} induce the same conditional distribution of $\rvz$ given $\rvx$, hence the same joint distributions $(\rvx,\rvz)$. It suffices to show they generate the same distribution over masked index sets.
+
+Consider (b): draw $t\sim\mathrm{Unif}[0,1]$ and for each $i$, replace $\rvx^i \in\mathcal{V}$ with $\mask$ with probability $t$. The probability of $n$ tokens to be masked is:
+\begin{align*}
+\int_{0}^{1} \binom{L}{n} t^{n} (1-t)^{L-n}dt = \binom{L}{n} \mathrm{B}(n+1,\, L-n+1)= 
+\frac{1}{L+1},
+\end{align*}
+where $\mathrm{B}$ denotes Beta function. This coincides with procedure (a), where $n$ is uniformly sampled from  $\{0,1,\dots,L\}$.
+
+\subsection{PRISM provably learns the per-token quality}
+\label{proposition_proof}
+In this section, we restate Proposition~\ref{prop:prism_main} and detail its proof. The proof essentially follows Section~\ref{sec:prism_theory}, but we provide the detailed calculations here.
+
+\noindent\textbf{Proposition~\ref{prop:prism_main} (restated).}
+Let the PRISM loss be
+\[
+\mathcal{L}(\phi)=\mathbb{E}_{\rvx,\rvz,(\rvy,i)}\!\left[\mathrm{BCE}\big(\mathbf{1}[\rvx^i=\rvy^i],\, g_\phi^i(\rvy)\big)\right],
+\quad
+\mathrm{BCE}(b,p)=-\,b\log p-(1-b)\log(1-p).
+\]
+Then the unique minimizer satisfies, for every $i$ and $\rvy$,
+\[
+g_{\phi^\star}^i(\rvy)\;=\;p\!\left(\rvx^i=\rvy^i\,\middle|\,\rvy\oplus\mask_i\right).
+\]
+
+\begin{proof}
+First, the expectation over the joint distribution $(\rvx,\rvz,(\rvy,i))$ can be written by first sampling $(\rvy,i)$ and then $(\rvz,\rvx)$ from the induced posterior. We observe that this induced posterior admits a handy expression:
+\begin{equation*}
+    \rvz=\rvy\oplus\mask_i,\quad v \sim p(\rvx^i=\cdot\,|\,\rvz).
+\end{equation*}
+Here $p(\rvx^i=\cdot\,|\,\cdot)$ is the unmasking posterior given by the MDM's masking process (Section~\ref{sec:prism_theory}), and to avoid notational confusion, we introduce a dummy variable $v$. Next, we expand the expectation term.
+\begin{align*}
+    \mathcal{L}(\phi) = &\mathbb{E}_{(\rvy,i)}\left[\mathbb{E}_{v\sim p(\rvx^i=\cdot\,|\,\rvz),z=\rvy\oplus\mask_i}\left[\mathrm{BCE}\big(\mathbf{1}[v=\rvy^i],\, \xxgreen{g_\phi^i(\rvy)}\big) \right]\right] \\
+    =& \mathbb{E}_{(\rvy,i)}\left[-\xxpurple{q}\log(\xxgreen{g_\phi^i(\rvy)}) -(\xxpurple{1-q})\log(\xxgreen{1-g_\phi^i(\rvy)}) \right],
+\end{align*}
+where
+\begin{equation*}
+    \xxpurple{q}\coloneqq\mathbb{E}_{v\sim p(\rvx^i=\cdot \mid \rvy\oplus\mask_i)}\left[\mathbf{1}[v=\rvy^i]\right]= p(\rvx^i=\rvy^i\,|\,\rvy\oplus\mask_i).
+\end{equation*}
+Finally, we conclude that $g_{\phi^\star}^i(\rvy)=q=p(\rvx^i=\rvy^i\,|\,\rvy\oplus\mask_i)$ since $f_q(x)=-q\log x - (1-q)\log(1-x)$ is minimized at $x=q \in (0,1)$.
+\end{proof}
+
+\subsection{Extension on PRISM's provable guarantee}
+In this section, we provide the pseudocode of the practically used PRISM fine-tuning pipeline and then state its theoretical guarantee.
+
+We note that the choice of index set $\mathcal{S}$ at line~5 of Algorithm~\ref{alg: adapter fine-tuning} is flexible; it can either be random or confidence-based. To clarify, at line~6, although we use $f_\theta$ to obtain $\rvy$, we use the stop-gradient operation. 
+
+
+Note that the process of obtaining $\rvy$ and $\mathcal{S}$ can be interpreted as a process of obtaining multiple $(\rvy,i)$ pairs for each $i\in\mathcal{S}$. Under this, the expectation over $(\rvx,\rvz,(\rvy,\mathcal{S}))$ is equivalent to the expectation over $(\rvx,\rvz,(\rvy,i))$. Therefore, both formulations of the loss function are valid and equivalent.
+\begin{equation*}
+    \mathcal{L}(\theta) = \mathbb{E}_{\rvx,\rvz,(\rvy,\mathcal{S})}\left[\frac{1}{|\mathcal{S}|}\sum_{i \in \mathcal{S}}{\mathrm{BCE}(\,\mathbf{1}[\rvx^i=\rvy^i]\, , \,{\xxgreen{g_\theta^i(\rvy)}}\,)}\right]=\mathbb{E}_{\rvx,\rvz,(\rvy,i)}\left[{\mathrm{BCE}(\,\mathbf{1}[\rvx^i=\rvy^i]\, , \,{\xxgreen{g_\theta^i(\rvy)}}\,)}\right].
+\end{equation*}
+Now we provide the theoretical guarantee on our PRISM loss.
+
+\begin{proposition}[Provable guarantee of PRISM-extension]
+\label{prop:prism_kmask_hiddenS}
+For a fixed $1 \le k \le L $, the PRISM loss
+\begin{equation*}
+    \mathcal{L}(\phi) = \mathbb{E}_{\rvx,\rvz,(\rvy,i)}\left[{\mathrm{BCE}(\,\mathbf{1}[\rvx^i=\rvy^i]\, , \,{\xxgreen{g_\phi^i(\rvy)}}\,)}\right]
+\end{equation*}
+has the unique minimizer
+\begin{equation*}
+  \xxgreen{g_{\phi^\star}^i(\rvy)}
+=\mathbb{E}_{\mathcal{S} \sim \Pi(\cdot\mid \rvy,i)}\left[p(\rvx^i=\rvy^i\mid \rvy\oplus\mask_\mathcal{S})\right],  
+\end{equation*}
+where the expectation is taken over the posterior distribution over $\mathcal{S}$ given $\rvy$ and $i$, induced by the joint distribution above. Here $\rvy\oplus\mask_\mathcal{S}$ is a sequence obtained from $\rvy$ by replacing its $i$-th token with $\mask$ for every $i\in\mathcal{S}$, aligning the notation in Section~\ref{sec:prism_theory}.
+\end{proposition}
+\begin{proof}
+Before proving this, we clarify some notations. The notation $\rvy\oplus\mask_\mathcal{S}$ extends the notation $\rvy\oplus\mask_i$ from Section~\ref{sec:prism_theory} into the case where we mask multiple tokens, more precisely, $\rvy\oplus\mask_{\{i\}}$.
+
+Also, note that the posterior distribution $\mathcal{S} \sim \Pi(\cdot\mid \rvy,i)$ is naturally induced from the defined joint distribution. To clarify, this posterior inherits a dependence on the rule that we choose the index set $\mathcal{S}$ during the fine-tuning (and also $f_\theta$). This also satisfies the following property: for a fixed $(\rvy,i)$, sample $\mathcal{S}$ from this posterior distribution $\Pi(\cdot\mid \rvy,i)$, and then the desired $\rvx$'s per-position posterior follows $v\sim p(x^i=\cdot\,|\,y\oplus\mask_\mathcal{S})$. This nice property holds since the sampling process of $(\rvx,\rvz,(\rvy,i))$ forms a Markov chain--$\rvz$ is conditioned on $\rvx$ and $(\rvy,i)$ is conditioned on $\rvx$.
+
+By using this property, we now complete the proof; the remaining parts are the same as Proposition~\ref{prop:prism_main}.
+\begin{align*}
+     \mathcal{L}(\phi) = &\mathbb{E}_{\rvx,\rvz,(\rvy,i)}\left[{\mathrm{BCE}(\,\mathbf{1}[\rvx^i=\rvy^i]\, , \,{\xxgreen{g_\phi^i(\rvy)}}\,)}\right] \\
+     =& \mathbb{E}_{y,i}\mathbb{E}_{\mathcal{S}\sim\Pi(\cdot\mid \rvy,i)}\mathbb{E}_{v\sim p(\rvx^i=\cdot \,|\,\rvz),\rvz=\rvy\oplus\mask_\mathcal{S}}\left[\mathrm{BCE}(\,\mathbf{1}[v=\rvy^i]\, , \,{\xxgreen{g_\theta^i(\rvy)}}) \right] \\
+     = & \mathbb{E}_{y,i}\mathbb{E}_{\mathcal{S}\sim\Pi(\cdot\mid \rvy,i)}\left[-\xxpurple{q}\log(\xxgreen{g_\phi^i(\rvy)}) -(\xxpurple{1-q})\log(\xxgreen{1-g_\phi^i(\rvy)}) \right],
+\end{align*}
+where $\xxpurple{q}=p(\rvx^i=\rvy^i\mid \rvy\oplus\mask_\mathcal{S})$. Therefore, the expectation over $\mathcal{S}\sim\Pi(\cdot\mid \rvy,i)$ \emph{absorbs} into $\xxpurple{q}$, finally derived to our desired form;
+\begin{align*}
+    \mathcal{L}(\phi)&= \mathbb{E}_{\rvx,\rvz,(\rvy,i)}\left[{\mathrm{BCE}(\,\mathbf{1}[\rvx^i=\rvy^i]\, , \,{\xxgreen{g_\phi^i(\rvy)}}\,)}\right]= \mathbb{E}_{y,i}\left[-\xxpurple{q'}\log(\xxgreen{g_\phi^i(\rvy)}) -(\xxpurple{1-q'})\log(\xxgreen{1-g_\phi^i(\rvy)}) \right],\\
+     \xxpurple{q'}&=\mathbb{E}_{\mathcal{S} \sim \Pi(\cdot\mid \rvy,i)}\left[p(\rvx^i=\rvy^i\mid \rvy\oplus\mask_\mathcal{S})\right].
+    \end{align*}
+\end{proof}
+
+\textbf{Discussion on a new notion of per-token quality.}
+Proposition~\ref{prop:prism_kmask_hiddenS} guarantees that the minimizer of the extended PRISM loss satisfies
+\begin{equation*}
+  \xxgreen{g_{\phi^\star}^i(\rvy)}
+=\mathbb{E}_{\mathcal{S} \sim \Pi(\cdot\mid \rvy,i)}\left[p(\rvx^i=\rvy^i\mid \rvy\oplus\mask_\mathcal{S})\right].
+\end{equation*}
+Note that by construction, we always have $i\in\mathcal{S}$. This encompasses the $k=1$ case in Section~\ref{sec:prism_theory}; When $k=1$, the posterior distribution $\Pi(\cdot\,|\,\rvy,i)$ collapses to a point mass at $\mathcal{S}=\{i\}$, recovering Proposition~\ref{prop:prism_main}. 
+
+However, we emphasize that this extended definition still captures our \emph{intended} notion of per-token quality—namely, the (posterior) likelihood of $\rvy^i$ given the rest of the context, here defined under a certain distribution over $\rvy\oplus\mask_\mathcal{S}$. (note that always $i\in\mathcal{S}$). Consequently, a model fine-tuned with the (extended) PRISM loss retains the capacity to identify low-quality tokens, while allowing $k>1$ to average over multiple plausible masked-context views of $\rvy$.
+
+\textbf{$f_\theta$'s effect on PRISM.} We show in Proposition~\ref{prop:prism_main} and Proposition~\ref{prop:prism_kmask_hiddenS} that, as intended, the design of (b), in which we use $f_\theta$ to obtain $\rvy$, does not directly influence our theoretical results. To clarify, when $k=1$, the minimizer $g_{\phi^\star}^i(\rvy)\;=\;p\!\left(\rvx^i=\rvy^i\,\middle|\,\rvy\oplus\mask_i\right)$ remains fully independent from $f_\theta$ (or the rule for choosing $i$), and when $k>1$, the only change is indirect: $f_\theta$ (and the rule for choosing index set $\mathcal{S}$ during PRISM fine-tuning) affects the posterior over masked sets $ \Pi(\cdot\mid \rvy,i)$.
+
+Practically, $f_\theta$ \emph{shapes} the training distribution of samples $(\rvy,i)$ 
+observed during PRISM fine-tuning, potentially aligning it with those encountered at inference. Since the PRISM loss supervises $\rvy^i$, which is sampled from $f_\theta$, it is likely to be seen at the inference time (since we also use $f_\theta$ during inference to sample clean tokens). We hypothesize that this alignment improves PRISM fine-tuning, and we revisit this point with an ablation on OpenWebText (Appendix~\ref{appendix:f_theta_discussion}).
+

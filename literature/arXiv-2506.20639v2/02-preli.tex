@@ -1,0 +1,37 @@
+\section{Preliminaries and Notations}
+
+\subsection{Mask Diffusion Models}
+In diffusion models~\citep{ho2020denoising,song2021scorebased}, the forward process $q(\bm{x}_{1:T}|\bm{x}_0)=\prod_{t=1}^{T}q(\bm{x}_t|\bm{x}_{t-1})$ gradually corrupts data $\bm{x}_0\sim p_{data}(\bm{x}_0)$ into noisy variables $\bm{x}_{1:T}$. The backward process models the joint probability as $p_{\theta}(\bm{x}_{0:T})=p_{\theta}(\bm{x}_T)\prod_{t=1}^Tp_{\theta}(\bm{x}_{t-1}|\bm{x}_t)$, denoising $\bm{x}_t$ to reconstruct $\bm{x}_0$. 
+Discrete diffusion models~\citep{hoogeboom2021argmax, Zheng2023ARD} define the forward process with a categorical distribution $q(\bm{x}_{t} \vert \bm{x}_{t-1})=\text{Cat}(\bm{x}_t;\bm{Q}_t^\top\bm{x}_{t-1})$, where $\bm{x}_t \in \{0, 1\}^K$ is a one-hot vector with vocabulary size $K$, and $\bm{Q}_t\in[0,1]^{K\times K}$ is the transition matrix where $[\bm{Q}_t]_{ij}$ represents the probability of transition from state $i$ to $j$. For absorbing discrete diffusion~\citep{austin2021structured}, $\bm{Q}_t=(1-\beta_t)I+\beta_t\mathbf{1}\bm{m}^\top$, where $\mathbf{1}$ is an all-one vector of size $K$ and $\bm{m}$ is the one-hot encoding of a special \mask token.
+The parameters $\theta$ are learned by minimizing the negative log-likelihood of $\bm{x}_0$ through the evidence lower bound (ELBO). For continuous time modeling~\citep{shi2024simplified,sahoo2024simple}, the discrete timesteps $t=\{1\dots T\}$ are scaled to a mask ratio within $[0,1]$, yielding the final ELBO at a sampled time $t$ as a weighted cross-entropy loss:
+\begin{equation}
+    \label{eq:dm-loss}
+        \mathcal{L}_{t}^{1:N} = \frac{1}{t}\mathbb{E}_{q(\bm{x}_t|\bm{x}_0)}\left[-\sum_{n=1}^N\delta_{\bm{x}_t^n,\bm{m}}(\bm{x}_0^{n})^\top\log f_{\theta}(\bm{x}_t^{1:N})_n\right],
+\end{equation}
+where $\delta_{\bm{x}_t^n,\bm{m}}$ is the indicator function, and $f_{\theta}(\bm{x}_t^{1:N})_n$ represents the logits for the $n$-th token given the $N$-length input sequence.
+
+\subsection{Markov Decision Process}
+DDPO~\citep{black2023training} and DPPO~\citep{ren2024diffusion} reinterpret the denoising diffusion process as a Markov Decision Process (MDP). An MDP is a tuple $\mathcal M_{env} = (\mathcal S,\mathcal A,P_0,P,R)$ with a state space $\mathcal S$, an action space $\mathcal A$, an initial state distribution $P_0$, transition probabilities $P$, and a reward function $R$. The probability of transitioning to state $s_{t+1}$ is $P(s_{t+1}\mid s_t,a_t)$ after taking an action $a_t \sim \pi_\theta(a_t\mid s_t)$ and receiving a reward $R(s_t,a_t)$. The goal is to maximize the expected return $\mathcal J(\pi_\theta)=\mathbb{E}_{\pi_\theta}\Bigl[\sum_{t=0}^T \gamma(t)\,R(s_t,a_t)\Bigr]$ by using the policy gradient method~\citep{williams1992simple}:
+\begin{equation}
+    \label{eq:ddpo-loss}
+    \nabla_\theta \mathcal J(\pi_\theta)
+    =\mathbb{E}_{\pi_\theta}\bigl[\sum_{t=0}^T\nabla_\theta\log\pi_\theta(a_t| s_t)\,r_t(s_t,a_t)\bigr]; \quad r_t(s_t,a_t)=\sum_{\tau\ge t}\gamma(\tau)\,R(s_\tau,a_\tau).
+\end{equation}
+
+In a masked diffusion model for conditional generation, we set the state to $s_t=(c,t,\bm{x}_t)$ (where $c$ is the condition) and the action to $a_t=\bm{x}_{t-1}$, so that $\pi_\theta(a_t| s_t)=p_\theta(\bm{x}_{t-1}| \bm{x}_t,c)$. We sample $c\in \mathcal C$ and trajectories of $\bm{x}_{t}$. The reward is defined as $R(s_0,a_0)=r(\bm{x}_0,c)$ at the final denoising step because a fine-grained progressive reward is usually hard to quantify, especially in intermediate diffusion steps. Under this setting, the policy gradient becomes:
+$\nabla_\theta \mathcal J
+=\mathbb{E}\bigl[\sum_{t=0}^T\nabla_\theta\log p_\theta(\bm{x}_{t-1}|\bm{x}_t,c)\,r(\bm{x}_0,c)\bigr]$.
+
+\subsection{Group Relative Policy Optimization}
+\label{sec:pre-grpo}
+GRPO~\citep{shao2024deepseekmath} simplifies PPO~\citep{schulman2017proximal}. It samples a group of outputs \(\{o_i\}_{i=1}^G\) from the old policy \(\pi_{\theta_\text{old}}\) under a given condition $c$, estimates the value baseline by averaging rewards within the group, and defines the relative advantage for each output as $A_i=r(o_i)-\frac1G\sum_{j=1}^G r(o_j)$. For token $1\leq k\leq |o_i|$, we denote $\rho_i^k =\frac{\pi_\theta(o_i^k\mid c,o_i^{<k})}{\pi_{\text{old}}(o_i^k\mid c,o_i^{<k})}$ as the token-level importance ratio.
+The GRPO loss applies a PPO-style clipping to $\rho_i^k$, incorporating a KL-penalty to keep $\pi_\theta$ close to a reference policy $\pi_{\text{ref}}$, and maximizes the following surrogate objective:
+\begin{equation}
+\label{eq:grpo-loss}
+\mathcal J_{\text{GRPO}}(\theta)
+= 
+\mathbb E_{o_i\sim \pi_{\theta_{\text{old}}}} \Bigl[\sum_{i=1}^G\sum_{k=1}^{|o_i|}
+  \min\bigl(\rho_i^k A_i,\mathrm{clip}(\rho_i^k,1-\varepsilon,1+\varepsilon)A_i\bigr)
+  -\beta\,D_{\mathrm{KL}}\bigl(\pi_\theta\|\pi_{\text{ref}}\bigr)\Bigr].
+\end{equation}
+By estimating the group mean via Monte Carlo estimation, GRPO avoids training a separate value function while fitting neatly into the MDP framework. As the diffusion process can be viewed as an MDP, the GRPO loss can be applied to MDMs by combining Eq.~(\ref{eq:ddpo-loss}) and Eq.~(\ref{eq:grpo-loss}).

@@ -1,0 +1,26 @@
+\section{Extended Background}
+\label{sec:appendix_extended_background}
+\subsection{Discrete diffusion variants and continuous relaxations}
+\label{sec:appendix_variants}
+\paragraph{Masked vs.\ uniform discrete diffusion.}
+The D3PM framework \citep{austin2021structured} characterizes forward corruption via a Markov kernel $Q_t$. Two canonical choices are (i) \emph{masked} (absorbing-state) diffusion, which maps every token toward a distinguished mask state $\mask$,
+\begin{align*}
+Q_t^{\text{mask}} \;=\; (1-\alpha_t)I \;+\; \alpha_t\,\mathbf{1}\ve_m^\top,
+\end{align*}
+with $\alpha_t \in [0, 1]$, $\ve_m$ denotes a one-hot vector for $\mask$ token, and $\mathbf{1}$ represents a vector of all 1s of size $V$, and (ii) \emph{uniform-state} diffusion, which replaces tokens uniformly at random,
+\begin{align*}
+Q_t^{\text{uni}} \;=\; (1-\alpha_t)I \;+\; \alpha\,\tfrac{\mathbf{1}\mathbf{1}^\top}{V}.    
+\end{align*}
+These differ in their limiting behavior and reverse constraints: $Q_t^{\text{mask}}$ has a point-mass stationary distribution at $\mask$ and induces a monotonic forward trajectory in the mask count (reverse steps deterministically move from $\mask\!\to$ token), whereas $Q_t^{\text{uni}}$ has a uniform stationary distribution and permits token $\!\leftrightarrow$ token substitutions in both directions. The absorbing choice recovers the familiar MDM objective (cf. \Cref{eq:mdm}) under a particular reweighting \citep{ou2024your} and thus ties masked LMs to discrete diffusion \citep{austin2021structured}.
+\paragraph{Continuous-time discrete diffusion.}
+Recent work derives continuous-time limits (CTMC) for discrete diffusion with absorbing corruption and shows that the training objective is a \emph{weighted time integral of token-wise cross-entropy}, with weight proportional to a signal-to-noise ratio term (e.g., $\alpha_t/(1-\alpha_t)$). This yields a simple, schedule-invariant objective, clarifies forward–reverse consistency, and improves optimization and sampling without changing the prediction target \citep{DBLP:conf/nips/ShiHWDT24,sahoo2024simple}. Conceptually, this places masked diffusion on the same ODE/SDE footing as continuous-state diffusion \citep{DBLP:conf/nips/KingmaG23} while retaining native discrete token inference.
+\paragraph{Continuous-input diffusion for categorical data.}
+A complementary approach to discrete-state diffusion is to keep the diffusion process continuous in both time and input by operating on token embeddings. For example in \cite{DBLP:journals/corr/abs-2211-15089}, an orthogonal line embeds tokens into $\mathbb{R}^d$ and applies fully continuous diffusion in \emph{both} time and input space. Training can be done with cross-entropy via score interpolation, and sampling uses ODE/SDE solvers with tools like classifier-free guidance. This preserves the continuous machinery but introduces an embedding decoding interface and relaxes exact discreteness during the trajectory.
+\paragraph{Summary of differences.}
+\begin{itemize}
+\item \textbf{Masked (absorbing)}: monotonic reverse dynamics ($\mask\!\to$ token only); objective reduces to weighted MDM; pairs naturally with unmask-only sampling policies used in this work.
+\item \textbf{Uniform-state}: non-monotone reverse dynamics (token $\!\leftrightarrow$ token); encourages broader exploration but typically requires remasking/substitution moves and would thus complicate policy design.
+\item \textbf{Continuous-input}: inherits continuous samplers and guidance; trades exact discreteness for an embedding path and decoding step.
+\end{itemize}
+We adopt the absorbing formulation in this work.
+

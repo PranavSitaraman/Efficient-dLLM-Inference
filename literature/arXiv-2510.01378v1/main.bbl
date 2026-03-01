@@ -1,0 +1,346 @@
+\begin{thebibliography}{67}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Bartlett et~al.(2020)Bartlett, Long, Lugosi, and Tsigler]{bartlett2020benign}
+Peter~L Bartlett, Philip~M Long, G{\'a}bor Lugosi, and Alexander Tsigler.
+\newblock Benign overfitting in linear regression.
+\newblock \emph{Proceedings of the National Academy of Sciences}, 117\penalty0 (48):\penalty0 30063--30070, 2020.
+
+\bibitem[Bertrand et~al.(2025)Bertrand, Gagneux, Massias, and Emonet]{bertrand2025closed}
+Quentin Bertrand, Anne Gagneux, Mathurin Massias, and R{\'e}mi Emonet.
+\newblock On the closed-form of flow matching: Generalization does not arise from target stochasticity.
+\newblock \emph{arXiv preprint arXiv:2506.03719}, 2025.
+
+\bibitem[Bhattacharyya(1943)]{bhattacharyya1943divergence}
+A.~Bhattacharyya.
+\newblock On a measure of divergence between two statistical populations defined by their probability distributions.
+\newblock \emph{Bulletin of the Calcutta Mathematical Society}, 35:\penalty0 99--110, 1943.
+\newblock ISSN 0008-0659.
+\newblock URL \url{https://archive.org/details/dli.calcutta.11603}.
+
+\bibitem[Carlini et~al.(2023)Carlini, Hayes, Nasr, Jagielski, Sehwag, Tramer, Balle, Ippolito, and Wallace]{carlini2023extracting}
+Nicolas Carlini, Jamie Hayes, Milad Nasr, Matthew Jagielski, Vikash Sehwag, Florian Tramer, Borja Balle, Daphne Ippolito, and Eric Wallace.
+\newblock Extracting training data from diffusion models.
+\newblock In \emph{32nd USENIX security symposium (USENIX Security 23)}, pp.\  5253--5270, 2023.
+
+\bibitem[Chen et~al.(2025)Chen, Zhou, Wang, and Lyu]{chen2025geometric}
+Defang Chen, Zhenyu Zhou, Can Wang, and Siwei Lyu.
+\newblock Geometric regularity in deterministic sampling of diffusion-based generative models.
+\newblock \emph{arXiv preprint arXiv:2506.10177}, 2025.
+
+\bibitem[Chen(2025)]{chen2025interpolation}
+Zhengdao Chen.
+\newblock On the interpolation effect of score smoothing.
+\newblock \emph{arXiv preprint arXiv:2502.19499}, 2025.
+
+\bibitem[Deng et~al.(2009)Deng, Dong, Socher, Li, Li, and Fei-Fei]{deng2009imagenet}
+Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li, and Li~Fei-Fei.
+\newblock Imagenet: A large-scale hierarchical image database.
+\newblock In \emph{2009 IEEE conference on computer vision and pattern recognition}, pp.\  248--255. Ieee, 2009.
+
+\bibitem[Dhariwal \& Nichol(2021)Dhariwal and Nichol]{dhariwal2021diffusion}
+Prafulla Dhariwal and Alexander Nichol.
+\newblock Diffusion models beat gans on image synthesis.
+\newblock \emph{Advances in neural information processing systems}, 34:\penalty0 8780--8794, 2021.
+
+\bibitem[Douze et~al.(2024)Douze, Guzhva, Deng, Johnson, Szilvasy, Mazaré, Lomeli, Hosseini, and Jégou]{douze2024faiss}
+Matthijs Douze, Alexandr Guzhva, Chengqi Deng, Jeff Johnson, Gergely Szilvasy, Pierre-Emmanuel Mazaré, Maria Lomeli, Lucas Hosseini, and Hervé Jégou.
+\newblock The faiss library.
+\newblock 2024.
+
+\bibitem[Farghly et~al.(2025)Farghly, Rebeschini, Deligiannidis, and Doucet]{farghly2025implicit}
+Tyler Farghly, Patrick Rebeschini, George Deligiannidis, and Arnaud Doucet.
+\newblock Implicit regularisation in diffusion models: An algorithm-dependent generalisation analysis.
+\newblock \emph{arXiv preprint arXiv:2507.03756}, 2025.
+
+\bibitem[Frei et~al.(2023)Frei, Vardi, Bartlett, and Srebro]{frei2023benign}
+Spencer Frei, Gal Vardi, Peter Bartlett, and Nathan Srebro.
+\newblock Benign overfitting in linear classifiers and leaky relu networks from kkt conditions for margin maximization.
+\newblock In \emph{The Thirty Sixth Annual Conference on Learning Theory}, pp.\  3173--3228. PMLR, 2023.
+
+\bibitem[Gao et~al.(2025)Gao, Hoogeboom, Heek, De~Bortoli, Murphy, and Salimans]{gao2025diffusion}
+Ruiqi Gao, Emiel Hoogeboom, Jonathan Heek, Valentin De~Bortoli, Kevin~Patrick Murphy, and Tim Salimans.
+\newblock Diffusion models and gaussian flow matching: Two sides of the same coin.
+\newblock In \emph{The Fourth Blogpost Track at ICLR 2025}, 2025.
+
+\bibitem[Gao et~al.(2023)Gao, Zhou, Cheng, and Yan]{gao2023masked}
+Shanghua Gao, Pan Zhou, Ming-Ming Cheng, and Shuicheng Yan.
+\newblock Masked diffusion transformer is a strong image synthesizer.
+\newblock In \emph{Proceedings of the IEEE/CVF international conference on computer vision}, pp.\  23164--23173, 2023.
+
+\bibitem[Georgiev et~al.(2023)Georgiev, Vendrow, Salman, Park, and Madry]{georgiev2023journey}
+Kristian Georgiev, Joshua Vendrow, Hadi Salman, Sung~Min Park, and Aleksander Madry.
+\newblock The journey, not the destination: How data guides diffusion models.
+\newblock \emph{arXiv preprint arXiv:2312.06205}, 2023.
+
+\bibitem[Gu et~al.(2023)Gu, Du, Pang, Li, Lin, and Wang]{gu2023memorization}
+Xiangming Gu, Chao Du, Tianyu Pang, Chongxuan Li, Min Lin, and Ye~Wang.
+\newblock On memorization in diffusion models.
+\newblock \emph{arXiv preprint arXiv:2310.02664}, 2023.
+
+\bibitem[Heusel et~al.(2017)Heusel, Ramsauer, Unterthiner, Nessler, and Hochreiter]{heusel2017gans}
+Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter.
+\newblock Gans trained by a two time-scale update rule converge to a local nash equilibrium.
+\newblock \emph{Advances in neural information processing systems}, 30, 2017.
+
+\bibitem[Ho \& Salimans(2022)Ho and Salimans]{ho2022classifier}
+Jonathan Ho and Tim Salimans.
+\newblock Classifier-free diffusion guidance.
+\newblock \emph{arXiv preprint arXiv:2207.12598}, 2022.
+
+\bibitem[Ho et~al.(2020)Ho, Jain, and Abbeel]{ho2020denoising}
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+\newblock Denoising diffusion probabilistic models.
+\newblock \emph{Advances in neural information processing systems}, 33:\penalty0 6840--6851, 2020.
+
+\bibitem[Jiang et~al.(2025)Jiang, Wang, Li, Zhang, Wang, Wei, Dai, Zhang, and Wang]{jiang2025no}
+Dengyang Jiang, Mengmeng Wang, Liuzhuozheng Li, Lei Zhang, Haoyu Wang, Wei Wei, Guang Dai, Yanning Zhang, and Jingdong Wang.
+\newblock No other representation component is needed: Diffusion transformers can provide representation guidance by themselves.
+\newblock \emph{arXiv preprint arXiv:2505.02831}, 2025.
+
+\bibitem[Johnson et~al.(2019)Johnson, Douze, and J{\'e}gou]{johnson2019billion}
+Jeff Johnson, Matthijs Douze, and Herv{\'e} J{\'e}gou.
+\newblock Billion-scale similarity search with {GPUs}.
+\newblock \emph{IEEE Transactions on Big Data}, 7\penalty0 (3):\penalty0 535--547, 2019.
+
+\bibitem[Kadkhodaie et~al.(2023)Kadkhodaie, Guth, Simoncelli, and Mallat]{kadkhodaie2023generalization}
+Zahra Kadkhodaie, Florentin Guth, Eero~P Simoncelli, and St{\'e}phane Mallat.
+\newblock Generalization in diffusion models arises from geometry-adaptive harmonic representations.
+\newblock \emph{arXiv preprint arXiv:2310.02557}, 2023.
+
+\bibitem[Kamb \& Ganguli(2024)Kamb and Ganguli]{kamb2024analytic}
+Mason Kamb and Surya Ganguli.
+\newblock An analytic theory of creativity in convolutional diffusion models.
+\newblock \emph{arXiv preprint arXiv:2412.20292}, 2024.
+
+\bibitem[Karras et~al.(2024)Karras, Aittala, Lehtinen, Hellsten, Aila, and Laine]{karras2024analyzing}
+Tero Karras, Miika Aittala, Jaakko Lehtinen, Janne Hellsten, Timo Aila, and Samuli Laine.
+\newblock Analyzing and improving the training dynamics of diffusion models.
+\newblock In \emph{Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition}, pp.\  24174--24184, 2024.
+
+\bibitem[Kingma \& Ba(2014)Kingma and Ba]{kingma2014adam}
+Diederik~P Kingma and Jimmy Ba.
+\newblock Adam: A method for stochastic optimization.
+\newblock \emph{arXiv preprint arXiv:1412.6980}, 2014.
+
+\bibitem[Kouzelis et~al.(2025{\natexlab{a}})Kouzelis, Kakogeorgiou, Gidaris, and Komodakis]{kouzelis2025eq}
+Theodoros Kouzelis, Ioannis Kakogeorgiou, Spyros Gidaris, and Nikos Komodakis.
+\newblock Eq-vae: Equivariance regularized latent space for improved generative image modeling.
+\newblock \emph{arXiv preprint arXiv:2502.09509}, 2025{\natexlab{a}}.
+
+\bibitem[Kouzelis et~al.(2025{\natexlab{b}})Kouzelis, Karypidis, Kakogeorgiou, Gidaris, and Komodakis]{kouzelis2025boosting}
+Theodoros Kouzelis, Efstathios Karypidis, Ioannis Kakogeorgiou, Spyros Gidaris, and Nikos Komodakis.
+\newblock Boosting generative image modeling via joint image-feature synthesis.
+\newblock \emph{arXiv preprint arXiv:2504.16064}, 2025{\natexlab{b}}.
+
+\bibitem[Leng et~al.(2025)Leng, Singh, Hou, Xing, Xie, and Zheng]{leng2025repa}
+Xingjian Leng, Jaskirat Singh, Yunzhong Hou, Zhenchang Xing, Saining Xie, and Liang Zheng.
+\newblock Repa-e: Unlocking vae for end-to-end tuning with latent diffusion transformers.
+\newblock \emph{arXiv preprint arXiv:2504.10483}, 2025.
+
+\bibitem[Li \& Chen(2024)Li and Chen]{li2024critical}
+Marvin Li and Sitan Chen.
+\newblock Critical windows: non-asymptotic theory for feature emergence in diffusion models.
+\newblock \emph{arXiv preprint arXiv:2403.01633}, 2024.
+
+\bibitem[Li et~al.(2024)Li, Dai, and Qu]{li2024understanding}
+Xiang Li, Yixiang Dai, and Qing Qu.
+\newblock Understanding generalizability of diffusion models requires rethinking the hidden gaussian structure.
+\newblock \emph{Advances in neural information processing systems}, 37:\penalty0 57499--57538, 2024.
+
+\bibitem[Lipman et~al.(2022)Lipman, Chen, Ben-Hamu, Nickel, and Le]{lipman2022flow}
+Yaron Lipman, Ricky~TQ Chen, Heli Ben-Hamu, Maximilian Nickel, and Matt Le.
+\newblock Flow matching for generative modeling.
+\newblock \emph{arXiv preprint arXiv:2210.02747}, 2022.
+
+\bibitem[Liu et~al.(2022)Liu, Gong, and Liu]{liu2022flow}
+Xingchao Liu, Chengyue Gong, and Qiang Liu.
+\newblock Flow straight and fast: Learning to generate and transfer data with rectified flow.
+\newblock \emph{arXiv preprint arXiv:2209.03003}, 2022.
+
+\bibitem[Loshchilov \& Hutter(2017)Loshchilov and Hutter]{loshchilov2017decoupled}
+Ilya Loshchilov and Frank Hutter.
+\newblock Decoupled weight decay regularization.
+\newblock \emph{arXiv preprint arXiv:1711.05101}, 2017.
+
+\bibitem[Lukoianov et~al.(2025)Lukoianov, Yuan, Solomon, and Sitzmann]{lukoianov2025locality}
+Artem Lukoianov, Chenyang Yuan, Justin Solomon, and Vincent Sitzmann.
+\newblock Locality in image diffusion models emerges from data statistics.
+\newblock \emph{arXiv preprint arXiv:2509.09672}, 2025.
+
+\bibitem[Ma et~al.(2024)Ma, Goldstein, Albergo, Boffi, Vanden-Eijnden, and Xie]{ma2024sit}
+Nanye Ma, Mark Goldstein, Michael~S Albergo, Nicholas~M Boffi, Eric Vanden-Eijnden, and Saining Xie.
+\newblock Sit: Exploring flow and diffusion-based generative models with scalable interpolant transformers.
+\newblock In \emph{European Conference on Computer Vision}, pp.\  23--40. Springer, 2024.
+
+\bibitem[Niedoba et~al.(2024{\natexlab{a}})Niedoba, Green, Naderiparizi, Lioutas, Lavington, Liang, Liu, Zhang, Dabiri, {\'S}cibior, et~al.]{niedoba2024nearest}
+Matthew Niedoba, Dylan Green, Saeid Naderiparizi, Vasileios Lioutas, Jonathan~Wilder Lavington, Xiaoxuan Liang, Yunpeng Liu, Ke~Zhang, Setareh Dabiri, Adam {\'S}cibior, et~al.
+\newblock Nearest neighbour score estimators for diffusion generative models.
+\newblock \emph{arXiv preprint arXiv:2402.08018}, 2024{\natexlab{a}}.
+
+\bibitem[Niedoba et~al.(2024{\natexlab{b}})Niedoba, Zwartsenberg, Murphy, and Wood]{niedoba2024towards}
+Matthew Niedoba, Berend Zwartsenberg, Kevin Murphy, and Frank Wood.
+\newblock Towards a mechanistic explanation of diffusion model generalization.
+\newblock \emph{arXiv preprint arXiv:2411.19339}, 2024{\natexlab{b}}.
+
+\bibitem[Oquab et~al.(2023)Oquab, Darcet, Moutakanni, Vo, Szafraniec, Khalidov, Fernandez, Haziza, Massa, El-Nouby, et~al.]{oquab2023dinov2}
+Maxime Oquab, Timoth{\'e}e Darcet, Th{\'e}o Moutakanni, Huy Vo, Marc Szafraniec, Vasil Khalidov, Pierre Fernandez, Daniel Haziza, Francisco Massa, Alaaeldin El-Nouby, et~al.
+\newblock Dinov2: Learning robust visual features without supervision.
+\newblock \emph{arXiv preprint arXiv:2304.07193}, 2023.
+
+\bibitem[Peebles \& Xie(2023)Peebles and Xie]{peebles2023scalable}
+William Peebles and Saining Xie.
+\newblock Scalable diffusion models with transformers.
+\newblock In \emph{Proceedings of the IEEE/CVF international conference on computer vision}, pp.\  4195--4205, 2023.
+
+\bibitem[Pidstrigach(2022)]{pidstrigach2022score}
+Jakiw Pidstrigach.
+\newblock Score-based generative models detect manifolds.
+\newblock \emph{Advances in Neural Information Processing Systems}, 35:\penalty0 35852--35865, 2022.
+
+\bibitem[Rombach et~al.(2022)Rombach, Blattmann, Lorenz, Esser, and Ommer]{rombach2022high}
+Robin Rombach, Andreas Blattmann, Dominik Lorenz, Patrick Esser, and Bj{\"o}rn Ommer.
+\newblock High-resolution image synthesis with latent diffusion models.
+\newblock In \emph{Proceedings of the IEEE/CVF conference on computer vision and pattern recognition}, pp.\  10684--10695, 2022.
+
+\bibitem[Ronneberger et~al.(2015)Ronneberger, Fischer, and Brox]{ronneberger2015u}
+Olaf Ronneberger, Philipp Fischer, and Thomas Brox.
+\newblock U-net: Convolutional networks for biomedical image segmentation.
+\newblock In \emph{Medical image computing and computer-assisted intervention--MICCAI 2015: 18th international conference, Munich, Germany, October 5-9, 2015, proceedings, part III 18}, pp.\  234--241. Springer, 2015.
+
+\bibitem[Scarvelis et~al.(2023)Scarvelis, Borde, and Solomon]{scarvelis2023closed}
+Christopher Scarvelis, Haitz S{\'a}ez de~Oc{\'a}riz Borde, and Justin Solomon.
+\newblock Closed-form diffusion models.
+\newblock \emph{arXiv preprint arXiv:2310.12395}, 2023.
+
+\bibitem[Shah et~al.(2025)Shah, Kalavasis, Klivans, and Daras]{shah2025does}
+Kulin Shah, Alkis Kalavasis, Adam~R Klivans, and Giannis Daras.
+\newblock Does generation require memorization? creative diffusion models using ambient diffusion.
+\newblock \emph{arXiv preprint arXiv:2502.21278}, 2025.
+
+\bibitem[Skorokhodov et~al.(2025)Skorokhodov, Girish, Hu, Menapace, Li, Abdal, Tulyakov, and Siarohin]{skorokhodov2025improving}
+Ivan Skorokhodov, Sharath Girish, Benran Hu, Willi Menapace, Yanyu Li, Rameen Abdal, Sergey Tulyakov, and Aliaksandr Siarohin.
+\newblock Improving the diffusability of autoencoders.
+\newblock \emph{arXiv preprint arXiv:2502.14831}, 2025.
+
+\bibitem[Sohl-Dickstein et~al.(2015)Sohl-Dickstein, Weiss, Maheswaranathan, and Ganguli]{sohl2015deep}
+Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli.
+\newblock Deep unsupervised learning using nonequilibrium thermodynamics.
+\newblock In \emph{International conference on machine learning}, pp.\  2256--2265. pmlr, 2015.
+
+\bibitem[Song et~al.(2020)Song, Sohl-Dickstein, Kingma, Kumar, Ermon, and Poole]{song2020score}
+Yang Song, Jascha Sohl-Dickstein, Diederik~P Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+\newblock Score-based generative modeling through stochastic differential equations.
+\newblock \emph{arXiv preprint arXiv:2011.13456}, 2020.
+
+\bibitem[Sovrasov(2018)]{ptflops}
+Vladislav Sovrasov.
+\newblock ptflops: a flops counting tool for neural networks in pytorch framework, 2018.
+\newblock URL \url{https://github.com/sovrasov/flops-counter.pytorch}.
+
+\bibitem[Tian et~al.(2024)Tian, Tu, Chen, Hu, Xu, and Wang]{tian2024u}
+Yuchuan Tian, Zhijun Tu, Hanting Chen, Jie Hu, Chao Xu, and Yunhe Wang.
+\newblock U-dits: Downsample tokens in u-shaped diffusion transformers.
+\newblock \emph{arXiv preprint arXiv:2405.02730}, 2024.
+
+\bibitem[Tian et~al.(2025)Tian, Han, Wang, Liang, Xu, and Chen]{tian2025dic}
+Yuchuan Tian, Jing Han, Chengcheng Wang, Yuchen Liang, Chao Xu, and Hanting Chen.
+\newblock Dic: Rethinking conv3x3 designs in diffusion models.
+\newblock In \emph{Proceedings of the Computer Vision and Pattern Recognition Conference}, pp.\  2469--2478, 2025.
+
+\bibitem[Vastola(2025)]{vastola2025generalization}
+John~J Vastola.
+\newblock Generalization through variance: how noise shapes inductive biases in diffusion models.
+\newblock \emph{arXiv preprint arXiv:2504.12532}, 2025.
+
+\bibitem[Vincent(2011)]{vincent2011connection}
+Pascal Vincent.
+\newblock A connection between score matching and denoising autoencoders.
+\newblock \emph{Neural computation}, 23\penalty0 (7):\penalty0 1661--1674, 2011.
+
+\bibitem[Wan et~al.(2024)Wan, Wang, Mishne, and Wang]{wan2024elucidating}
+Zhengchao Wan, Qingsong Wang, Gal Mishne, and Yusu Wang.
+\newblock Elucidating flow matching ode dynamics with respect to data geometries.
+\newblock \emph{arXiv e-prints}, pp.\  arXiv--2412, 2024.
+
+\bibitem[Wang \& Vastola(2024)Wang and Vastola]{wang2024unreasonable}
+Binxu Wang and John~J Vastola.
+\newblock The unreasonable effectiveness of gaussian score approximation for diffusion models and its applications.
+\newblock \emph{arXiv preprint arXiv:2412.09726}, 2024.
+
+\bibitem[Wang et~al.(2024{\natexlab{a}})Wang, Han, and Zou]{wang2024on}
+Hanyu Wang, Yujin Han, and Difan Zou.
+\newblock On the discrepancy and connection between memorization and generation in diffusion models.
+\newblock In \emph{ICML 2024 Workshop on Foundation Models in the Wild}, 2024{\natexlab{a}}.
+\newblock URL \url{https://openreview.net/forum?id=ZqG5lo18tq}.
+
+\bibitem[Wang \& He(2025)Wang and He]{wang2025diffuse}
+Runqian Wang and Kaiming He.
+\newblock Diffuse and disperse: Image generation with representation regularization.
+\newblock \emph{arXiv preprint arXiv:2506.09027}, 2025.
+
+\bibitem[Wang et~al.(2024{\natexlab{b}})Wang, Li, Song, Li, Ge, Zheng, and Wang]{wang2024flowdcn}
+Shuai Wang, Zexian Li, Tianhui Song, Xubin Li, Tiezheng Ge, Bo~Zheng, and Limin Wang.
+\newblock Flowdcn: Exploring dcn-like architectures for fast image generation with arbitrary resolution.
+\newblock In \emph{Proceedings of the 38th International Conference on Neural Information Processing Systems}, pp.\  87959--87977, 2024{\natexlab{b}}.
+
+\bibitem[Wu et~al.(2025{\natexlab{a}})Wu, Wang, Li, Peng, Cao, Wang, and Zhang]{wu2025swin}
+Jiafu Wu, Yabiao Wang, Jian Li, Jinlong Peng, Yun Cao, Chengjie Wang, and Jiangning Zhang.
+\newblock Swin dit: Diffusion transformer using pseudo shifted windows.
+\newblock \emph{arXiv preprint arXiv:2505.13219}, 2025{\natexlab{a}}.
+
+\bibitem[Wu et~al.(2025{\natexlab{b}})Wu, Marion, Biau, and Boyer]{wu2025taking}
+Yu-Han Wu, Pierre Marion, G{\~A}{\v{S}}rard Biau, and Claire Boyer.
+\newblock Taking a big step: Large learning rates in denoising score matching prevent memorization.
+\newblock \emph{arXiv preprint arXiv:2502.03435}, 2025{\natexlab{b}}.
+
+\bibitem[Xu et~al.(2023)Xu, Tong, and Jaakkola]{xu2023stable}
+Yilun Xu, Shangyuan Tong, and Tommi Jaakkola.
+\newblock Stable target field for reduced variance score estimation in diffusion models.
+\newblock \emph{arXiv preprint arXiv:2302.00670}, 2023.
+
+\bibitem[Xu et~al.(2025)Xu, Luo, Wang, He, and Liu]{xu2025diagnosing}
+Yixian Xu, Shengjie Luo, Liwei Wang, Di~He, and Chang Liu.
+\newblock Diagnosing and improving diffusion models by estimating the optimal loss value.
+\newblock \emph{arXiv preprint arXiv:2506.13763}, 2025.
+
+\bibitem[Yao et~al.(2025)Yao, Yang, and Wang]{yao2025reconstruction}
+Jingfeng Yao, Bin Yang, and Xinggang Wang.
+\newblock Reconstruction vs. generation: Taming optimization dilemma in latent diffusion models.
+\newblock In \emph{Proceedings of the Computer Vision and Pattern Recognition Conference}, pp.\  15703--15712, 2025.
+
+\bibitem[Yi et~al.(2023)Yi, Sun, and Li]{yi2023generalization}
+Mingyang Yi, Jiacheng Sun, and Zhenguo Li.
+\newblock On the generalization of diffusion model.
+\newblock \emph{arXiv preprint arXiv:2305.14712}, 2023.
+
+\bibitem[Yoon et~al.(2023)Yoon, Choi, Kwon, and Ryu]{yoon2023diffusion}
+TaeHo Yoon, Joo~Young Choi, Sehyun Kwon, and Ernest~K Ryu.
+\newblock Diffusion probabilistic models generalize when they fail to memorize.
+\newblock In \emph{ICML 2023 workshop on structured probabilistic inference $\{$$\backslash$\&$\}$ generative modeling}, 2023.
+
+\bibitem[Yu et~al.(2024)Yu, Kwak, Jang, Jeong, Huang, Shin, and Xie]{yu2024representation}
+Sihyun Yu, Sangkyung Kwak, Huiwon Jang, Jongheon Jeong, Jonathan Huang, Jinwoo Shin, and Saining Xie.
+\newblock Representation alignment for generation: Training diffusion transformers is easier than you think.
+\newblock \emph{arXiv preprint arXiv:2410.06940}, 2024.
+
+\bibitem[Zhang et~al.(2025)Zhang, Huang, Chen, Zhou, Zhang, Wang, and Qu]{zhang2025understanding}
+Huijie Zhang, Zijian Huang, Siyi Chen, Jinfan Zhou, Zekai Zhang, Peng Wang, and Qing Qu.
+\newblock Understanding generalization in diffusion models via probability flow distance.
+\newblock \emph{arXiv preprint arXiv:2505.20123}, 2025.
+
+\bibitem[Zheng et~al.(2023)Zheng, Nie, Vahdat, and Anandkumar]{zheng2023fast}
+Hongkai Zheng, Weili Nie, Arash Vahdat, and Anima Anandkumar.
+\newblock Fast training of diffusion models with masked transformers.
+\newblock \emph{arXiv preprint arXiv:2306.09305}, 2023.
+
+\bibitem[Zou et~al.(2021)Zou, Wu, Braverman, Gu, and Kakade]{zou2021benign}
+Difan Zou, Jingfeng Wu, Vladimir Braverman, Quanquan Gu, and Sham Kakade.
+\newblock Benign overfitting of constant-stepsize sgd for linear regression.
+\newblock In \emph{Conference on learning theory}, pp.\  4633--4635. PMLR, 2021.
+
+\end{thebibliography}

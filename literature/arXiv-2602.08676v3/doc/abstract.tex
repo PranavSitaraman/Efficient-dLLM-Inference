@@ -1,0 +1,17 @@
+\begin{abstract}
+While \textbf{LLaDA2.0} showcased the scaling potential of 100B-level block-diffusion models and their inherent parallelization, the delicate equilibrium between decoding speed and generation quality has remained an elusive frontier.
+%
+Today, we unveil \textbf{LLaDA2.1}, a paradigm shift designed to transcend this trade-off. By seamlessly weaving \textbf{Token-to-Token (T2T)} editing into the conventional \textbf{Mask-to-Token (M2T)} scheme, we introduce a joint, configurable threshold-decoding scheme. This structural innovation gives rise to two distinct personas: the \textit{\textbf{Speedy Mode (S Mode)}}, which audaciously lowers the M2T threshold to bypass traditional constraints while relying on T2T to refine the output; and the \textit{\textbf{Quality Mode (Q Mode)}}, which leans into conservative thresholds to secure superior benchmark performances with manageable efficiency degrade. 
+%
+Furthering this evolution, underpinned by an expansive context window, we implement the first large-scale \textbf{Reinforcement Learning (RL)} framework specifically tailored for dLLMs, anchored by specialized techniques for stable gradient estimation. This alignment not only sharpens reasoning precision but also elevates instruction-following fidelity, bridging the chasm between diffusion dynamics and complex human intent. 
+%
+We culminate this work by releasing \textbf{LLaDA2.1-Mini (16B)} and \textbf{LLaDA2.1-Flash (100B)}. Across 33 rigorous benchmarks, LLaDA2.1 delivers strong task performance and lightning-fast decoding speed. Despite its 100B volume, on coding tasks it attains an astounding \textbf{892 TPS} on HumanEval+, \textbf{801 TPS} on BigCodeBench, and \textbf{663 TPS} on LiveCodeBench.
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\linewidth]{images/motivation.pdf}
+    \caption{\textbf{Aggressive parallel drafting}, backed by retroactive correction, accelerates inference.}
+    \label{fig:motivation}
+\end{figure}
+
+\end{abstract}
+

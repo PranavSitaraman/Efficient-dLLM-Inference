@@ -1,0 +1,36 @@
+\section{Evaluation}
+
+To comprehensively evaluate the quality of instruction-tuned models, we employ a diverse suite of benchmarks categorized into five dimensions:
+
+\begin{itemize}
+    \item \textbf{Knowledge}: MMLU-Pro \citep{wang2024mmlupro}, GPQA-Diamond \citep{rein2024gpqa}, C-Eval \citep{huang2023ceval}, PHYBench \citep{qiu2025phybench}, TriviaQA \citep{joshi2017triviaqa}
+    \item \textbf{Reasoning}: SQuAD 2.0 \citep{rajpurkar2018know}, DROP \citep{dua2019drop}, KOR-Bench \citep{ma2024kor}, HellaSwag \citep{zellers2019hellaswag}, BIG-Bench Hard \citep{suzgun2023challenging}, BIG-Bench Extra Hard \citep{kazemi2025big}, MuSR \citep{sprague2023musr}, ZebraLogic \citep{lin2025zebralogic}, PrOntoQA \citep{saparov2022language}, PIQA \citep{bisk2020piqa}, OCNLI \citep{hu2020ocnli}, BIG-Bench Hard-CN \citep{opencompass}
+    \item \textbf{Coding}: CRUXEval \citep{gu2024cruxeval}, MultiPL-E \citep{cassano2023multiple}, BigCodeBench \citep{zhuo2024bigcodebench}, LiveCodeBench \citep{jain2024livecodebench}, Spider \citep{yu2018spider}, BIRD \citep{li2023can}, HumanEval+ \citep{liu2023your}, MBPP+ \citep{liu2023your}
+    \item \textbf{Math}: OlympiadBench \citep{he2024olympiadbench}, AIME 2025 \citep{aime2025aime}, Omni-MATH \citep{gao2024omni}, GSM-Plus \citep{li2024gsm}, CMATH \citep{wei2023cmath}
+    \item \textbf{Agent \& Alignment}: BFCL \citep{patil2025bfcl}, IFEval \citep{zhou2023ifeval}, Nexus Function Calling Benchmark \citep{nexusraven}
+\end{itemize}
+
+%
+We report the comparative scores and TPF (tokens per forward) of LLaDA2.1-flash and LLaDA2.1-mini against other models in Tables ~\ref{tab:flash_benchmark} and ~\ref{tab:mini_benchmark}, respectively. From the results, we observe that LLaDA2.1’s scores under \textit{S Mode} decrease compared to LLaDA2.0, but a substantial improvement in TPF is achieved.  While under \textit{Q Mode}, LLaDA2.1 surpasses the results of LLaDA2.0 on both mini and flash model.
+
+
+
+In Table~\ref{tab:flash_mini_quant}, we focus on showcasing the speed performance of LLaDA2.1 in \textit{S Mode}. It can be observed that LLaDA2.1 exhibits significant speed variations across different domains, being highest in the code domain and lowest in instruction following. Specifically, after quantization, LLaDA2.1-flash achieves a peak TPS of 891.74 on HumanEval+, while LLaDA2.1-mini reaches 1586.93 in peak TPS, demonstrating significant speed advantages.
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.9\linewidth]{images/llada2_1-tps.pdf}
+    \caption{Throughput (TPS) comparison on nine benchmarks, consistent with the evaluation settings in Table \ref{tab:flash_mini_quant}, for LLaDA2.1 variants against LLaDA2.0, Ling, and Qwen3 across the mini (left) and flash (right) series.}
+    \label{fig:tps}
+\end{figure}
+
+As shown in Table~\ref{tab:flash_mini_mbe}, under the same \textit{S Mode} setting, Multi-Block Editing (MBE) yields consistent performance improvements across benchmarks for both Flash and Mini variants, at the cost of a modest reduction in throughput. The gains are particularly evident on reasoning and coding tasks, indicating that iterative cross-block refinement effectively corrects local errors and improves global consistency without substantially compromising decoding efficiency.
+
+Figure~\ref{fig:tps} further illustrates the throughput (in terms of token per sec) comparison  of LLaDA 2.1 variants against LLaDA 2.0, Ling, and Qwen-3 across 5 different benchmark domains as shown in Table~\ref{tab:flash_mini_quant}. 
+This comparison spotlights LLaDA-2.1 (S Mode)’s striking speed advantage: it achieves dramatically faster inference while sacrificing only a negligible sliver of output quality.
+
+\input{tables/main_llada2_flash_results}
+\input{tables/main_llada2_mini_results}
+\input{tables/main_llada2_flash_TPS}
+
+\input{tables/main_llada2_MBE}

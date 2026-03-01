@@ -1,0 +1,53 @@
+{
+   "sources" : [
+      {
+         "usage" : "toplevel",
+         "filename" : "main.tex"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "store/SF-Pro-Display-Bold.ttf"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "store/SF-Pro-Italic.ttf"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "store/SF-Pro.ttf"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "store/SFPro-Bold.tfm"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "store/SFPro-Italic.tfm"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "store/SFPro-Regular.tfm"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "store/a_bimro2.enc"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "store/a_kio5jv.enc"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "store/a_oua5ll.enc"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "store/natbib.sty"
+      }
+   ],
+   "spec_version" : 1,
+   "texlive_version" : "2025",
+   "process" : {
+      "compiler" : "pdflatex"
+   }
+}

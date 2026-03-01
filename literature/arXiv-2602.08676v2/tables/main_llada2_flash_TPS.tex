@@ -1,0 +1,88 @@
+\newcommand{\tpsdelta}[2]{%
+  \makecell{%
+    \begin{tabular}{@{}p{3em}|p{3em}@{}}
+    #1 & #2
+    \end{tabular}}}
+
+\begin{table}[t]
+\caption{Throughput (TPS) and relative score changes of Flash and Mini variants across benchmarks.
+For each model family, the w/o Quant setting serves as the baseline.
+Cells under w/ Quant are vertically split into \textit{TPS $\mid$ $\Delta$Score}.}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l l cc cc}
+\toprule
+\textbf{Category}
+& \textbf{Benchmark}
+& \multicolumn{2}{c}{\textbf{LLaDA2.1-flash}}
+& \multicolumn{2}{c}{\textbf{LLaDA2.1-mini}} \\
+\cmidrule(lr){3-4}
+\cmidrule(lr){5-6}
+& & \makecell{\textbf{w/o Quant}\\TPS} & \makecell{\textbf{w/ Quant}\\TPS $\mid$ $\Delta$Score}
+& \makecell{\textbf{w/o Quant}\\TPS} & \makecell{\textbf{w/ Quant}\\TPS $\mid$ $\Delta$Score}\\
+\midrule
+
+\multirow{5}{*}{Coding}
+& HumanEval+ &
+746.66 &
+\tpsdelta{891.74}{-3.04} &
+1496.67 &
+\tpsdelta{1586.93}{-0.61} \\
+
+& MBPP+ &
+639.47 & \tpsdelta{761.38}{-1.85} &
+1286.96 &
+\tpsdelta{1303.96}{+1.85} \\
+
+& CRUXEval-O &
+550.09 &\tpsdelta{645.72}{-0.24} &
+980.82 & \tpsdelta{1063.94}{-1.00} \\
+
+& BigCodeBench-Full &
+691.14 &
+\tpsdelta{801.48}{+1.06} &
+1220.40 &
+\tpsdelta{1307.45}{-0.09} \\
+
+& LiveCodeBench &
+571.60 &
+\tpsdelta{663.39}{-1.76} &
+1015.82 &
+\tpsdelta{1102.92}{+1.98} \\
+\midrule
+
+Math
+& GSM-Plus &
+574.65 &
+\tpsdelta{667.07}{-0.03} &
+1080.51 &
+\tpsdelta{1186.18}{-0.30} \\
+\midrule
+
+Knowledge
+& GPQA-Diamond &
+416.92 &
+\tpsdelta{477.79}{-0.64} &
+724.30 &
+\tpsdelta{784.62}{-1.64} \\
+\midrule
+
+\makecell[l]{Instruction\\Following}
+& IFEval &
+219.37 &
+\tpsdelta{248.25}{+1.48} &
+338.58 &
+\tpsdelta{365.52}{-1.29} \\
+\midrule
+
+Reasoning
+& PrOntoQA &
+770.88 &
+\tpsdelta{912.16}{-1.00} &
+880.19 &
+\tpsdelta{938.93}{-1.50} \\
+\bottomrule
+\end{tabular}
+\label{tab:flash_mini_quant}
+\end{table}

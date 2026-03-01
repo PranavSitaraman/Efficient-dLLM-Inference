@@ -1,0 +1,26 @@
+\section{Background: What And Where Do Diffusion Models Learn?} \label{sec:background}
+In this section, we review the formulation of diffusion models along with the commonly held interpretation, which we refer to as \emph{global underfitting}. This sets the stage for our contrasting viewpoint--\emph{selective underfitting}--introduced in the following sections.
+
+Diffusion models\footnote{Throughout this work, we use ``diffusion'' as an umbrella term for both diffusion and flow matching~\citep{lipman2022flow,liu2022flow}, as they are equivalent~\citep{gao2025diffusion}. All discussions apply to both.} define a stochastic forward process that transforms a data distribution into a Gaussian distribution over timesteps $t \in [0, 1]$: $\rvz_t = \alpha_t \rvx + \sigma_t \rveps$ where $\rvx$ is a clean data and $\rvepsilon \sim \gN(\vzero, \mI)$ for schedules $\alpha_t,\sigma_t \colon [0,1] \to \mathbb{R}$. The models are trained through denoising score matching \venueifelse{(DSM, ~\citet{vincent2011connection})}{(DSM)~\citep{vincent2011connection}} to learn the score function--the gradient of the log density--which is then used at inference to iteratively denoise Gaussian noise into a sample from the data distribution.
+
+\input{figures/extrapolation/extrapolation_tex}
+
+\textbf{Learning Problem.} Given training data $\train = \left\{\rvx^{(i)}\right\}_{i=1}^N$, the DSM objective at timestep $t$ is:
+\begin{equation}\label{eq:dsm}
+\Ls_{\text{DSM}} (t) := \E_{\rvx^{(i)} \sim \mathrm{Unif}(\train), \rveps \sim \gN(\vzero, \mI)} \left\| \rvs_\rvtheta (\rvz_t, t) + \rveps / \sigma_t \right\|^2
+\end{equation}
+The DSM nature of diffusion model training can be decomposed into two components: \xxgreen{(i) \emph{what function}} does the model aim to learn? (i.e., what is the minimizer of $\Ls_{\text{DSM}}$?), and \xblue{(ii) \emph{where in the data space}} does the model learn during training? (i.e., what is the distribution of $\rvz_t$?). For (i), there exists an analytic optimal solution for \Cref{eq:dsm}:
+\begin{equation} \label{eq;empirical_score}
+\rvs_\star (\rvz_t, t) = \frac{1}{\sigma_t^2} \left[ -\rvz_t + \alpha_t \sum_{i=1}^{N} \operatorname{softmax}\left(-\frac{\|\rvz_t - \alpha_t \rvx^{(i)}\|^2}{2 \sigma_t^2}\right) \rvx^{(i)} \right].
+\end{equation}
+Since this is the score function of the empirical training data, we refer to $\rvs_\star$ as the \emph{empirical score function}, often also called the analytic score function. For (ii), a model is trained on noisy versions of the training data, which can be written as a mixture of Gaussians: $\hat{p}_t(\rvz_t) = \frac{1}{N}\sum_{i=1}^{N}\gN(\rvz_t;\alpha_t \rvx^{(i)}, \sigma_t^2 \mI)$. Given (i) and (ii), \Cref{eq:dsm} is equivalent to:
+\begin{equation} \label{eq:dsm-rewritten}
+\Ls_{\text{DSM}} (t) = \E_{\xblue{\rvz_t \sim \hat{p}_t}} \left\|\rvs_\rvtheta (\rvz_t, t) - \xxgreen{\rvs_\star (\rvz_t, t)}\right\|^2 + (\text{constant}).
+\end{equation}
+In principle, \emph{$\hat{p}_t$ has support over the entire data space} for any $t>0$, since it is Gaussian. This leads to the following common understanding of the learning problem:
+\begin{perspective}[Common] \label{perspective:common}
+    Diffusion models are supervised to \xxgreen{(i) approximate the empirical score function $\rvs_\star$,} \xblue{(ii) over the entire data space.}
+\end{perspective}
+\newcommand{\common}{\Cref{perspective:common}\xspace}
+
+\common, which we call \textbf{global underfitting}, has been widely adopted to study diffusion models, for example, in the context of their generalization~\citep{kamb2024analytic,kadkhodaie2023generalization,scarvelis2023closed,yi2023generalization,wang2024on} and memorization~\citep{niedoba2024towards}. These works primarily focus on (i), analyzing \emph{how} a neural network globally underfits the empirical score function. In contrast, we argue that (ii)--\emph{where} learning occurs--is the critical component, as underfitting occurs \emph{selectively} on certain regions of the data space.

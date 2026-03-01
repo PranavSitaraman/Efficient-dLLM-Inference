@@ -1,0 +1,58 @@
+\begin{figure}[!t]
+\captionsetup{type=algorithm}
+\centering
+\begin{minipage}[t]{0.55\textwidth}
+\vspace{-0.575in}
+\begin{algorithm}[H]
+\caption*{\textbf{Subroutine 1:} VLMDM inference}
+\begin{algorithmic}[1]
+\Require Learned functions $(f_\theta, g_\theta)$
+\Require Discretization $0 = t_1 < \dots < t_N = 1$
+\Require Insertion, Unmasking schedule $\alpha_t,\beta_t$
+\State Initialize \(X_{t_1} \gets \varepsilon\)
+\For{$k=1$ to $N-1$}
+    \State \(\tau \gets t_{k+1} - t_k\)
+    \State \xxpurple{\textbf{Invoke Subroutine 2 for unmasking}}
+    \For{\xxgreen{\textbf{\(i\) in $[\mathrm{len}(X_{t_k})]$}}}
+        \State Set rate $r\gets\tfrac{\dot{\alpha}_{t_k}}{1-\alpha_{t_k}}\cdot\tau$
+        \State Sample $\ell\sim\mathrm{Poi}\left(r \cdot g_\theta(X_{t_k}, t_k)[i] \right)$
+        \State \xxgreen{\textbf{Insert $\ell$ masks between $X_{t_k}^{i-1}$ and $X_{t_k}^i$}}
+    \EndFor
+\EndFor
+\State \Return $X_{t_N}$
+\end{algorithmic}
+\end{algorithm}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.43\textwidth}
+\vspace{-0.58in}
+\begin{algorithm}[H]
+\caption*{\textbf{Subroutine 2: }Unmasking Step}
+\begin{algorithmic}[1]
+% \Require $X_{t_k},f_\theta,\tau$
+\If{\xxpurple{\textbf{vanilla inference}}}:
+    \For{$i \in \{i|X_{t_k}^i=\mask\}$ and $v\in\Sigma$}
+    \State Set rate $r\gets\frac{\dot{\beta}_{t_k}}{1-\beta_{t_k}}\cdot\tau$
+    \State $k_v\sim\mathrm{Poi}(r\cdot f_\theta(X_{t_k}, t_k)[i,v])$
+    \If{$^{\exists!}v$ such that $k_v=1$}
+    \State Set $X_{t_k}^i \leftarrow v$
+    \vspace{-0.02in}
+    \EndIf
+    \EndFor
+\EndIf
+\If{\xxpurple{\textbf{adaptive inference}}}:
+\State Select $\mathrm{K}$ (the size of $|S|$)
+\For{$i \in \{i|X_{t_k}^i=\mask\}$} 
+\State Compute confidence $\mathcal{C}^i$
+\vspace{-0.025in}
+\EndFor
+\vspace{-0.03in}
+\For{\(i\) in $\mathrm{argmaxK}({C})$}
+\State  $X_{t_k}^i \sim \mathrm{Cat}(f_\theta(X_{t_k},t_k)[i])$
+\EndFor
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+\end{minipage}
+\caption{\textbf{VLMDM inference.} At each step we perform \xblue{\textbf{unmasking}} and \xxgreen{\textbf{insertion}}. For \xblue{\textbf{unmasking}}, unmask by $\tau$-leaping (\xxpurple{\textbf{vanilla}}) or by confidence-based selection (\xxpurple{\textbf{adaptive}}). The number of mask tokens to \xxgreen{\textbf{insert}} is drawn from a Poisson distribution. \textbf{Notation}: $\mathrm{Cat}$, $\mathrm{Poi}$ imply the categorical and Poisson distribution, respectively. $\mathrm{argmaxK}(\mathcal{C})$ is the indices set of the $K$ largest components of $\mathcal{C}$. We provide more details in Appendix~\ref{sec:appendix_theory_inference}.} \label{alg:inference}
+\vspace{-0.2in}
+\end{figure}

@@ -1,0 +1,8 @@
+\section{Conclusion}
+
+In this work, we present DiffuCoder, a 7B-scale open-source diffusion model for code with strong performance, and its complete training recipe. We also present a comprehensive analysis of dLLMs for code generation. 
+Our investigation into their decoding patterns reveals fundamental differences from AR models; notably, sampling temperature affects not only token selection but also the generation order, creating rich sample diversity for optimization. 
+Capitalizing on this, we introduce coupled-GRPO, a reinforcement learning algorithm that respects the non-autoregressive nature of dLLMs. 
+By using a novel coupled-sampling strategy, our method provides a more accurate likelihood estimation. 
+Coupled-GRPO significantly boosts DiffuCoder's performance, demonstrating the effectiveness of RL methods aligned with diffusion principles. 
+Our work provides the community with a deeper understanding of dLLMs and lays a strong foundation for future explorations of dLLMs in complex reasoning and generation tasks.

@@ -1,0 +1,23 @@
+\section{Expert Steering}
+\label{sec:appendix-es}
+
+As mentioned in \Cref{sec:exp-bl256},
+we find that na\"ively training confidence policies directly on the full-length generation ($BL = L$) task yields policies which beat out the heuristic methods, but underperform the ones trained in the semi-AR setting (cf. \Cref{fig:combined-results}).
+
+Since semi-AR decoding lies within the function class representable by the policy $\pi_\phi$---that is, there is some $\phi$ such that $\pi_\phi$ approximates the semi-AR setting---we hypothesize that our failure to obtain similar policies is due to the vanishingly small probability of encountering autoregressive-like rollouts by chance. More concretely, image trying to train a policy on a task for which purely AR generation is substantially more effective than any other decoding strategy. In such a scenario, starting from a randomly initialized policy, the probability of observing a rollout resembling a purely AR sequence is approximately $1/L! \approx 0$ (where $L$ is the generation length), making it extremely unlikely to sample such rollouts during RL training. %
+
+To try to eschew this problem, we devise the \emph{Expert Steering} (ES) training strategy as follows.
+Formally, letting $\pi_\phi$ denote the sampling policy to be learned, we simply replace it \emph{at train time only} with the mixture
+$$
+\pi_\phi^{ES}(\cdot \mid \vy_t) = \frac{G}{G+E}\pi_\phi(\cdot \mid \vy_t)  + \frac{E}{G+E}\sum_{e = 1}^E \delta_e(\cdot \mid \vy_t) 
+$$
+where $G$ is the GRPO group size, $E$ is the number of experts to mimic, and each Dirac distribution $\delta_e$ represents a chosen deterministic "expert policy" (e.g., a heuristic method). %
+Then in the outer loop of GRPO, instead of sampling a group $\vg \sim \pi_\phi$ of size $G$ from $\pi_\phi$, we simply sample an augmented group $\vg' \sim \pi_\phi^{ES}$ of size $G+E$.
+In the inner loop of GRPO we proceed as normal, making sure to use $\pi_\phi^{ES}$ when calculating the likelihood ratios to avoid the training instabilities that would otherwise arise (as samples from the Diracs may have likelihood $\approx 0$ under $\pi_\phi$)
+
+In practice, for our experiments in \Cref{sec:exp-bl256} we use a single deterministic expert $\delta_e$ corresponding to Fast-dLLM with $\lambda=0.9$ and  $BL=32$,
+and force exactly one draw ($E=1$) from this heuristic per group.
+The effect is that if the policy is \emph{worse} than this heuristic, that single sample will tend to have positive advantage, causing the policy to be biased toward it.
+On the other hand, if the policy is \emph{better} than the heuristic%
+, it will have negative advantage, causing it to be made \emph{less} likely.
+Thus, expert steering encourages exploration towards the expert---in this case, Fast-dLLM---while still allowing the policy to go beyond it, thanks to the group relative loss in GRPO.

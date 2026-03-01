@@ -1,0 +1,23 @@
+\begin{table}[t]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\caption{Needle-in-a-Haystack accuracy (\%). Bold = best sparse method.}
+\label{tab:niah}
+\begin{tabular}{l|ccccc|ccccc}
+\toprule
+ & \multicolumn{5}{c|}{8K Context} & \multicolumn{5}{c}{32K Context} \\
+ & 256 & 512 & 1K & 2K & 4K & 256 & 512 & 1K & 2K & 4K \\
+\midrule
+\multicolumn{11}{l}{\textit{Fast-dLLM 7B} (Exact: 100 / 88)} \\
+Quest & \textbf{88} & 91 & 100 & 100 & 100 & 27 & 45 & \textbf{73} & \textbf{73} & \textbf{76} \\
+Tidal & 85 & 67 & 76 & 82 & \textbf{100} & 12 & 27 & 27 & 27 & 61 \\
+MAGE & 85 & \textbf{94} & \textbf{100} & \textbf{100} & \textbf{100} & \textbf{39} & \textbf{45} & 61 & 64 & 70 \\
+\midrule
+\multicolumn{11}{l}{\textit{Fast-dLLM 1.5B} (Exact: 100 / 91)} \\
+Quest & 33 & \textbf{64} & 70 & 85 & 97 & 18 & 18 & 24 & 36 & \textbf{55} \\
+Tidal & 21 & 42 & 67 & 82 & 97 & 12 & 15 & 18 & 24 & 33 \\
+MAGE & \textbf{48} & 55 & \textbf{70} & \textbf{91} & \textbf{100} & \textbf{21} & \textbf{30} & \textbf{39} & \textbf{42} & 42 \\
+\bottomrule
+\end{tabular}
+\end{table}

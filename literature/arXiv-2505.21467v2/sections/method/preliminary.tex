@@ -1,0 +1,20 @@
+\subsection{Preliminary of Diffusion Language Model}\label{sec:preliminary}
+
+Diffusion language models (DLMs) generate sequences by iteratively unmasking an initially masked token sequence over \(T\) denoising steps. Mathematically, let \(\mathbf{x}_T\in\mathbb{N}^L\) be the fully masked input (all positions set to $\texttt{[MASK]}$), where the still masked position $M_t$ is represented as:
+\begin{equation}
+M_t = \bigl\{\,i : x_t[i] = \texttt{[MASK]}\bigr\}
+\end{equation}
+At each iteration \(t=T,\dots,1\), the model \(f_\theta\) produces logits
+\begin{equation}
+z_t = f_\theta(\mathbf{x}_t)\quad\text{for }i\in M_t,
+\end{equation}
+
+from which a subset \(U_t\subseteq M_t\) of positions is selected (e.g.\ by confidence scoring) and filled via: 
+\begin{equation}
+\mathbf{x}_{t-1}[i]
+= \arg\max_{v\in\mathcal V}\bigl[\mathrm{Softmax}(z_t[i])\bigr],\quad i\in U_t,
+\end{equation}
+
+yielding the next mask set \(M_{t-1}=M_t\setminus U_t\).  By repeating this denoising and unmasking process until \(M_0=\emptyset\), the model produces the final fully unmasked sequence \(\mathbf{x}_0\).
+
+% While this parallel unmasking with bidirectional attention allows all positions to be updated simultaneously, it incurs an additional factor of \(O(L)\) cost per step from recomputing full‐sequence forward passes. In addition, quality drops significantly as the size of the unmasked set $U_t$ increases. In this work, we address this inefficiency with two complementary training-free techniques, KV approximation caching \zhanqiu{Rename} and AR-guided unmasking, which accelerate inference without compromising quality.  

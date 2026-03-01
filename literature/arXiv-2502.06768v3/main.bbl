@@ -1,0 +1,292 @@
+\begin{thebibliography}{57}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Alaoui \& Gamarnik(2024)Alaoui and Gamarnik]{alaoui2024hardness}
+Alaoui, A.~E. and Gamarnik, D.
+\newblock Hardness of sampling solutions from the symmetric binary perceptron.
+\newblock \emph{arXiv preprint arXiv:2407.16627}, 2024.
+
+\bibitem[Alekhnovich(2003)]{alekhnovich2003more}
+Alekhnovich, M.
+\newblock More on average case vs approximation complexity.
+\newblock In \emph{44th Annual IEEE Symposium on Foundations of Computer Science, 2003. Proceedings.}, pp.\  298--307. IEEE, 2003.
+
+\bibitem[Aubin et~al.(2019)Aubin, Perkins, and Zdeborov{\'a}]{aubin2019storage}
+Aubin, B., Perkins, W., and Zdeborov{\'a}, L.
+\newblock Storage capacity in symmetric binary perceptrons.
+\newblock \emph{Journal of Physics A: Mathematical and Theoretical}, 52\penalty0 (29):\penalty0 294003, 2019.
+
+\bibitem[Austin et~al.(2021)Austin, Johnson, Ho, Tarlow, and van~den Berg]{austin2023structured}
+Austin, J., Johnson, D.~D., Ho, J., Tarlow, D., and van~den Berg, R.
+\newblock Structured denoising diffusion models in discrete state-spaces.
+\newblock \emph{NeruIPS}, 2021.
+
+\bibitem[Bavarian et~al.(2022)Bavarian, Jun, Tezak, Schulman, McLeavey, Tworek, and Chen]{bavarian2022efficienttraininglanguagemodels}
+Bavarian, M., Jun, H., Tezak, N., Schulman, J., McLeavey, C., Tworek, J., and Chen, M.
+\newblock Efficient training of language models to fill in the middle, 2022.
+\newblock URL \url{https://arxiv.org/abs/2207.14255}.
+
+\bibitem[Bormashenko(2011)]{bormashenko2011coupling}
+Bormashenko, O.
+\newblock A coupling argument for the random transposition walk.
+\newblock \emph{arXiv preprint arXiv: 1109.3915}, 2011.
+
+\bibitem[Chang et~al.(2022)Chang, Zhang, Jiang, Liu, and Freeman]{chang2022maskgit}
+Chang, H., Zhang, H., Jiang, L., Liu, C., and Freeman, W.~T.
+\newblock Maskgit: Masked generative image transformer.
+\newblock \emph{CVPR}, 2022.
+
+\bibitem[Chen \& Ying(2024)Chen and Ying]{chen2024convergence}
+Chen, H. and Ying, L.
+\newblock Convergence analysis of discrete diffusion model: Exact implementation through uniformization.
+\newblock \emph{arXiv preprint arXiv: 2402.08095}, 2024.
+
+\bibitem[Chen et~al.(2024)Chen, Chi, Wang, and Zhou]{chen2024premise}
+Chen, X., Chi, R.~A., Wang, X., and Zhou, D.
+\newblock Premise order matters in reasoning with large language models.
+\newblock \emph{arXiv preprint arXiv:2402.08939}, 2024.
+
+\bibitem[Decelle et~al.(2011)Decelle, Krzakala, Moore, and Zdeborov\'a]{PhysRevE.84.066106}
+Decelle, A., Krzakala, F., Moore, C., and Zdeborov\'a, L.
+\newblock Asymptotic analysis of the stochastic block model for modular networks and its algorithmic applications.
+\newblock \emph{Phys. Rev. E}, 84:\penalty0 066106, Dec 2011.
+
+\bibitem[Devlin et~al.(2019)Devlin, Chang, Lee, and Toutanova]{devlin-etal-2019-bert}
+Devlin, J., Chang, M.-W., Lee, K., and Toutanova, K.
+\newblock {BERT}: Pre-training of deep bidirectional transformers for language understanding.
+\newblock In \emph{Proceedings of the 2019 Conference of the North {A}merican Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers)}, pp.\  4171--4186, 2019.
+
+\bibitem[Gamarnik(2021)]{gamarnik2021overlap}
+Gamarnik, D.
+\newblock The overlap gap property: A topological barrier to optimizing over random structures.
+\newblock \emph{Proceedings of the National Academy of Sciences}, 118\penalty0 (41):\penalty0 e2108492118, 2021.
+
+\bibitem[Golovneva et~al.(2024)Golovneva, Allen-Zhu, Weston, and Sukhbaatar]{golovneva2024reverse}
+Golovneva, O., Allen-Zhu, Z., Weston, J., and Sukhbaatar, S.
+\newblock Reverse training to nurse the reversal curse.
+\newblock \emph{arXiv preprint arXiv:2403.13799}, 2024.
+
+\bibitem[Gong et~al.(2024)Gong, Agarwal, Zhang, Ye, Zheng, Li, An, Zhao, Bi, Han, et~al.]{gong2024scaling}
+Gong, S., Agarwal, S., Zhang, Y., Ye, J., Zheng, L., Li, M., An, C., Zhao, P., Bi, W., Han, J., et~al.
+\newblock Scaling diffusion language models via adaptation from autoregressive models.
+\newblock \emph{arXiv preprint arXiv:2410.17891}, 2024.
+
+\bibitem[Ho et~al.(2020)Ho, Jain, and Abbeel]{ho2020denoising}
+Ho, J., Jain, A., and Abbeel, P.
+\newblock Denoising diffusion probabilistic models.
+\newblock \emph{Advances in neural information processing systems}, 33:\penalty0 6840--6851, 2020.
+
+\bibitem[Hoffmann et~al.(2022)Hoffmann, Borgeaud, Mensch, Buchatskaya, Cai, Rutherford, Casas, Hendricks, Welbl, Clark, et~al.]{hoffmann2022trainingcomputeoptimallargelanguage}
+Hoffmann, J., Borgeaud, S., Mensch, A., Buchatskaya, E., Cai, T., Rutherford, E., Casas, D. d.~L., Hendricks, L.~A., Welbl, J., Clark, A., et~al.
+\newblock Training compute-optimal large language models.
+\newblock \emph{arXiv preprint arXiv:2203.15556}, 2022.
+
+\bibitem[Holtzman et~al.(2019)Holtzman, Buys, Du, Forbes, and Choi]{holtzman2019curious}
+Holtzman, A., Buys, J., Du, L., Forbes, M., and Choi, Y.
+\newblock The curious case of neural text degeneration.
+\newblock \emph{arXiv preprint arXiv:1904.09751}, 2019.
+
+\bibitem[Hoogeboom et~al.(2021{\natexlab{a}})Hoogeboom, Gritsenko, Bastings, Poole, Berg, and Salimans]{hoogeboom2022autoregressive}
+Hoogeboom, E., Gritsenko, A.~A., Bastings, J., Poole, B., Berg, R. v.~d., and Salimans, T.
+\newblock Autoregressive diffusion models.
+\newblock \emph{arXiv preprint arXiv:2110.02037}, 2021{\natexlab{a}}.
+
+\bibitem[Hoogeboom et~al.(2021{\natexlab{b}})Hoogeboom, Nielsen, Jaini, Forré, and Welling]{hoogeboom2021argmax}
+Hoogeboom, E., Nielsen, D., Jaini, P., Forré, P., and Welling, M.
+\newblock Argmax flows and multinomial diffusion: Learning categorical distributions.
+\newblock \emph{NeurIPS}, 2021{\natexlab{b}}.
+
+\bibitem[Kaplan et~al.(2020)Kaplan, McCandlish, Henighan, Brown, Chess, Child, Gray, Radford, Wu, and Amodei]{kaplan2020scaling}
+Kaplan, J., McCandlish, S., Henighan, T., Brown, T.~B., Chess, B., Child, R., Gray, S., Radford, A., Wu, J., and Amodei, D.
+\newblock Scaling laws for neural language models.
+\newblock \emph{arXiv preprint arXiv:2001.08361}, 2020.
+
+\bibitem[Kim et~al.(2024)Kim, Kwon, Choi, Park, Cho, Lee, and Ryu]{kim2024task}
+Kim, J., Kwon, S., Choi, J.~Y., Park, J., Cho, J., Lee, J.~D., and Ryu, E.~K.
+\newblock Task diversity shortens the icl plateau.
+\newblock \emph{arXiv preprint arXiv:2410.05448}, 2024.
+
+\bibitem[Kitouni et~al.(2025)Kitouni, Nolte, Williams, Rabbat, Bouchacourt, and Ibrahim]{kitouni2024factorization}
+Kitouni, O., Nolte, N.~S., Williams, A., Rabbat, M., Bouchacourt, D., and Ibrahim, M.
+\newblock The factorization curse: Which tokens you predict underlie the reversal curse and more.
+\newblock \emph{Advances in Neural Information Processing Systems}, 37:\penalty0 112329--112355, 2025.
+
+\bibitem[Krzakala \& Zdeborov{\'a}(2009)Krzakala and Zdeborov{\'a}]{krzakala2009hiding}
+Krzakala, F. and Zdeborov{\'a}, L.
+\newblock Hiding quiet solutions in random constraint satisfaction problems.
+\newblock \emph{Physical review letters}, 102\penalty0 (23):\penalty0 238701, 2009.
+
+\bibitem[Lehnert et~al.(2024)Lehnert, Sukhbaatar, Su, Zheng, McVay, Rabbat, and Tian]{lehnert2024beyond}
+Lehnert, L., Sukhbaatar, S., Su, D., Zheng, Q., McVay, P., Rabbat, M., and Tian, Y.
+\newblock Beyond a*: Better planning with transformers via search dynamics bootstrapping.
+\newblock 2024.
+
+\bibitem[Liao et~al.(2020)Liao, Jiang, and Liu]{liao-etal-2020-probabilistically}
+Liao, Y., Jiang, X., and Liu, Q.
+\newblock Probabilistically masked language model capable of autoregressive generation in arbitrary word order.
+\newblock In \emph{Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics}, pp.\  263--274. Association for Computational Linguistics, 2020.
+
+\bibitem[Liu et~al.(2024{\natexlab{a}})Liu, Broadrick, Niepert, and Broeck]{liu2024copula}
+Liu, A., Broadrick, O., Niepert, M., and Broeck, G. V.~d.
+\newblock Discrete copula diffusion.
+\newblock \emph{arXiv preprint arXiv:2410.01949}, 2024{\natexlab{a}}.
+
+\bibitem[Liu et~al.(2022)Liu, Mohanty, and Raghavendra]{liu2022statistical}
+Liu, S., Mohanty, S., and Raghavendra, P.
+\newblock { On statistical inference when fixed points of belief propagation are unstable }.
+\newblock In \emph{2021 IEEE 62nd Annual Symposium on Foundations of Computer Science (FOCS)}, pp.\  395--405. IEEE Computer Society, 2022.
+
+\bibitem[Liu et~al.(2024{\natexlab{b}})Liu, Nam, Campbell, St{\"a}rk, Xu, Jaakkola, and G{\'o}mez-Bombarelli]{liu2024think}
+Liu, S., Nam, J., Campbell, A., St{\"a}rk, H., Xu, Y., Jaakkola, T., and G{\'o}mez-Bombarelli, R.
+\newblock Think while you generate: Discrete diffusion with planned denoising.
+\newblock \emph{arXiv preprint arXiv:2410.06264}, 2024{\natexlab{b}}.
+
+\bibitem[Loshchilov \& Hutter(2017)Loshchilov and Hutter]{loshchilov2019decoupled}
+Loshchilov, I. and Hutter, F.
+\newblock Decoupled weight decay regularization.
+\newblock \emph{arXiv preprint arXiv:1711.05101}, 2017.
+
+\bibitem[Lou et~al.(2024)Lou, Meng, and Ermon]{lou2024discrete}
+Lou, A., Meng, C., and Ermon, S.
+\newblock Discrete diffusion modeling by estimating the ratios of the data distribution.
+\newblock \emph{ICML}, 2024.
+
+\bibitem[Maurer et~al.(2016)Maurer, Pontil, and Romera-Paredes]{andreas2016benefit}
+Maurer, A., Pontil, M., and Romera-Paredes, B.
+\newblock The benefit of multitask representation learning.
+\newblock \emph{JMLR}, 17\penalty0 (81):\penalty0 1--32, 2016.
+
+\bibitem[Montanari(2008)]{montanari2008estimating}
+Montanari, A.
+\newblock Estimating random variables from random sparse observations.
+\newblock \emph{European Transactions on Telecommunications}, 19\penalty0 (4):\penalty0 385--403, 2008.
+
+\bibitem[Nie et~al.(2024)Nie, Zhu, Du, Pang, Liu, Zeng, Lin, and Li]{nie2024scaling}
+Nie, S., Zhu, F., Du, C., Pang, T., Liu, Q., Zeng, G., Lin, M., and Li, C.
+\newblock Scaling up masked diffusion models on text.
+\newblock \emph{arXiv preprint arXiv:2410.18514}, 2024.
+
+\bibitem[Nie et~al.(2025)Nie, Zhu, You, Zhang, Ou, Hu, Zhou, Lin, Wen, and Li]{nie2025large}
+Nie, S., Zhu, F., You, Z., Zhang, X., Ou, J., Hu, J., Zhou, J., Lin, Y., Wen, J.-R., and Li, C.
+\newblock Large language diffusion models.
+\newblock \emph{arXiv preprint arXiv:2502.09992}, 2025.
+
+\bibitem[Ou et~al.(2024)Ou, Nie, Xue, Zhu, Sun, Li, and Li]{ou2024absorbing}
+Ou, J., Nie, S., Xue, K., Zhu, F., Sun, J., Li, Z., and Li, C.
+\newblock Your absorbing discrete diffusion secretly models the conditional distributions of clean data.
+\newblock \emph{arXiv preprint arXiv:2406.03736}, 2024.
+
+\bibitem[Papadopoulos et~al.(2024)Papadopoulos, Wenger, and Hongler]{papadopoulos2024arrows}
+Papadopoulos, V., Wenger, J., and Hongler, C.
+\newblock Arrows of time for large language models.
+\newblock \emph{arXiv preprint arXiv:2401.17505}, 2024.
+
+\bibitem[Peng et~al.(2025)Peng, Bezemek, Patel, Yao, Rector-Brooks, Tong, and Chatterjee]{peng2025path}
+Peng, F.~Z., Bezemek, Z., Patel, S., Yao, S., Rector-Brooks, J., Tong, A., and Chatterjee, P.
+\newblock Path planning for masked diffusion model sampling.
+\newblock \emph{arXiv preprint arXiv:2502.03540}, 2025.
+
+\bibitem[Radcliffe(2020)]{david_g__radcliffe_2020}
+Radcliffe, D.~G.
+\newblock 3 million sudoku puzzles with ratings, 2020.
+\newblock URL \url{https://www.kaggle.com/dsv/1495975}.
+
+\bibitem[Rector-Brooks et~al.(2024)Rector-Brooks, Hasan, Peng, Quinn, Liu, Mittal, Dziri, Bronstein, Bengio, Chatterjee, et~al.]{rectorbrooks2024steering}
+Rector-Brooks, J., Hasan, M., Peng, Z., Quinn, Z., Liu, C., Mittal, S., Dziri, N., Bronstein, M., Bengio, Y., Chatterjee, P., et~al.
+\newblock Steering masked discrete diffusion models via discrete denoising posterior prediction.
+\newblock \emph{arXiv preprint arXiv:2410.08134}, 2024.
+
+\bibitem[Ruder(2017)]{ruder2017overview}
+Ruder, S.
+\newblock An overview of multi-task learning in deep neural networks.
+\newblock \emph{arXiv 1706.05098}, 2017.
+
+\bibitem[Sahoo et~al.(2025)Sahoo, Arriola, Schiff, Gokaslan, Marroquin, Chiu, Rush, and Kuleshov]{sahoo2024simple}
+Sahoo, S., Arriola, M., Schiff, Y., Gokaslan, A., Marroquin, E., Chiu, J., Rush, A., and Kuleshov, V.
+\newblock Simple and effective masked diffusion language models.
+\newblock \emph{Advances in Neural Information Processing Systems}, 37:\penalty0 130136--130184, 2025.
+
+\bibitem[Schiff et~al.(2024)Schiff, Sahoo, Phung, Wang, Boshar, Dalla-torre, de~Almeida, Rush, Pierrot, and Kuleshov]{schiff2024simple}
+Schiff, Y., Sahoo, S.~S., Phung, H., Wang, G., Boshar, S., Dalla-torre, H., de~Almeida, B.~P., Rush, A., Pierrot, T., and Kuleshov, V.
+\newblock Simple guidance mechanisms for discrete diffusion models.
+\newblock \emph{arXiv preprint arXiv:2412.10193}, 2024.
+
+\bibitem[Shah et~al.(2024)Shah, Dikkala, Wang, and Panigrahy]{shah2024causal}
+Shah, K., Dikkala, N., Wang, X., and Panigrahy, R.
+\newblock Causal language modeling can elicit search and reasoning capabilities on logic puzzles.
+\newblock \emph{arXiv preprint arXiv:2409.10502}, 2024.
+
+\bibitem[Shi et~al.(2024)Shi, Han, Wang, Doucet, and Titsias]{shi2025simplified}
+Shi, J., Han, K., Wang, Z., Doucet, A., and Titsias, M.~K.
+\newblock Simplified and generalized masked diffusion for discrete data.
+\newblock \emph{NeurIPS}, 2024.
+
+\bibitem[Shih et~al.(2022)Shih, Sadigh, and Ermon]{shih2022training}
+Shih, A., Sadigh, D., and Ermon, S.
+\newblock Training and inference on any-order autoregressive models the right way.
+\newblock \emph{NeurIPS}, 2022.
+
+\bibitem[Soboleva et~al.(2023)Soboleva, Al-Khateeb, Myers, Steeves, Hestness, and Dey]{soboleva2023slimpajama}
+Soboleva, D., Al-Khateeb, F., Myers, R., Steeves, J.~R., Hestness, J., and Dey, N.
+\newblock Slimpajama: A 627b token cleaned and deduplicated version of redpajama, June 2023.
+
+\bibitem[Sohl-Dickstein et~al.(2015)Sohl-Dickstein, Weiss, Maheswaranathan, and Ganguli]{sohldickstein2015deep}
+Sohl-Dickstein, J., Weiss, E.~A., Maheswaranathan, N., and Ganguli, S.
+\newblock Deep unsupervised learning using nonequilibrium thermodynamics.
+\newblock \emph{ICML}, 2015.
+
+\bibitem[Song et~al.(2021)Song, Sohl-Dickstein, Kingma, Kumar, Ermon, and Poole]{song2021score}
+Song, Y., Sohl-Dickstein, J., Kingma, D.~P., Kumar, A., Ermon, S., and Poole, B.
+\newblock Score-based generative modeling through stochastic differential equations.
+\newblock \emph{ICLR}, 2021.
+
+\bibitem[Touvron et~al.(2023)Touvron, Martin, Stone, Albert, Almahairi, Babaei, Bashlykov, Batra, Bhargava, Bhosale, Bikel, Blecher, Ferrer, Chen, Cucurull, Esiobu, Fernandes, Fu, Fu, Fuller, Gao, Goswami, Goyal, Hartshorn, Hosseini, Hou, Inan, Kardas, Kerkez, Khabsa, Kloumann, Korenev, Koura, Lachaux, Lavril, Lee, Liskovich, Lu, Mao, Martinet, Mihaylov, Mishra, Molybog, Nie, Poulton, Reizenstein, Rungta, Saladi, Schelten, Silva, Smith, Subramanian, Tan, Tang, Taylor, Williams, Kuan, Xu, Yan, Zarov, Zhang, Fan, Kambadur, Narang, Rodriguez, Stojnic, Edunov, and Scialom]{touvron2023llama2}
+Touvron, H., Martin, L., Stone, K., Albert, P., Almahairi, A., Babaei, Y., Bashlykov, N., Batra, S., Bhargava, P., Bhosale, S., Bikel, D., Blecher, L., Ferrer, C.~C., Chen, M., Cucurull, G., Esiobu, D., Fernandes, J., Fu, J., Fu, W., Fuller, B., Gao, C., Goswami, V., Goyal, N., Hartshorn, A., Hosseini, S., Hou, R., Inan, H., Kardas, M., Kerkez, V., Khabsa, M., Kloumann, I., Korenev, A., Koura, P.~S., Lachaux, M.-A., Lavril, T., Lee, J., Liskovich, D., Lu, Y., Mao, Y., Martinet, X., Mihaylov, T., Mishra, P., Molybog, I., Nie, Y., Poulton, A., Reizenstein, J., Rungta, R., Saladi, K., Schelten, A., Silva, R., Smith, E.~M., Subramanian, R., Tan, X.~E., Tang, B., Taylor, R., Williams, A., Kuan, J.~X., Xu, P., Yan, Z., Zarov, I., Zhang, Y., Fan, A., Kambadur, M., Narang, S., Rodriguez, A., Stojnic, R., Edunov, S., and Scialom, T.
+\newblock Llama 2: Open foundation and fine-tuned chat models.
+\newblock \emph{arXiv preprint arXiv: 2307.09288}, 2023.
+
+\bibitem[Tripuraneni et~al.(2021)Tripuraneni, Jin, and Jordan]{tripuraneni2022provablem}
+Tripuraneni, N., Jin, C., and Jordan, M.~I.
+\newblock Provable meta-learning of linear representations.
+\newblock \emph{ICML}, 2021.
+
+\bibitem[Varma et~al.(2024)Varma, Nagaraj, and Shanmugam]{varma2024glauber}
+Varma, H., Nagaraj, D., and Shanmugam, K.
+\newblock Glauber generative model: Discrete diffusion models via binary classification.
+\newblock \emph{arXiv preprint arXiv: 2405.17035}, 2024.
+
+\bibitem[Wang et~al.(2024)Wang, Zheng, Ye, Xue, Huang, and Gu]{wang2024diffusion}
+Wang, X., Zheng, Z., Ye, F., Xue, D., Huang, S., and Gu, Q.
+\newblock Diffusion language models are versatile protein learners.
+\newblock \emph{ICML}, 2024.
+
+\bibitem[Xu et~al.(2024)Xu, Geffner, Kreis, Nie, Xu, Leskovec, Ermon, and Vahdat]{xu2024energy}
+Xu, M., Geffner, T., Kreis, K., Nie, W., Xu, Y., Leskovec, J., Ermon, S., and Vahdat, A.
+\newblock Energy-based diffusion language models for text generation.
+\newblock \emph{arxiv preprint arXiv: 2410.21357}, 2024.
+
+\bibitem[Ye et~al.(2024)Ye, Gao, Gong, Zheng, Jiang, Li, and Kong]{ye2024beyond}
+Ye, J., Gao, J., Gong, S., Zheng, L., Jiang, X., Li, Z., and Kong, L.
+\newblock Beyond autoregression: Discrete diffusion for complex reasoning and planning.
+\newblock \emph{arXiv preprint arXiv: 2410.14157}, 2024.
+
+\bibitem[Zhang et~al.(2024)Zhang, Zeng, Wang, and Lu]{zhang2024tinyllama}
+Zhang, P., Zeng, G., Wang, T., and Lu, W.
+\newblock Tinyllama: An open-source small language model.
+\newblock \emph{arXiv preprint arXiv: 2401.02385}, 2024.
+
+\bibitem[Zheng et~al.(2024)Zheng, Chen, Mao, Liu, Zhu, and Zhang]{zheng2024maskeddiffusionmodelssecretly}
+Zheng, K., Chen, Y., Mao, H., Liu, M.-Y., Zhu, J., and Zhang, Q.
+\newblock Masked diffusion models are secretly time-agnostic masked models and exploit inaccurate categorical sampling.
+\newblock \emph{arXiv preprint arXiv:2409.02908}, 2024.
+
+\bibitem[Zheng et~al.(2023)Zheng, Yuan, Yu, and Kong]{zheng2024reparameterized}
+Zheng, L., Yuan, J., Yu, L., and Kong, L.
+\newblock A reparameterized discrete diffusion model for text generation.
+\newblock \emph{arXiv preprint arXiv:2302.05737}, 2023.
+
+\end{thebibliography}

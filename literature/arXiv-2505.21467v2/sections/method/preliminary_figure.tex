@@ -1,0 +1,28 @@
+% \begin{figure}[t]
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}[t]{0.5\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{sections/method/figures/algorithm_comparison.pdf}
+    \caption{
+      \textbf{Quality degradation from aggressive unmasking.}
+      Heuristic methods suffer from significant accuracy loss with decreasing denoising steps.
+    }
+    \label{fig:bars}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{sections/method/figures/overlay_baseline_vs_optimized_cached_log_latency_v2.png}
+    \caption{
+      \textbf{Latency–accuracy tradeoff.}
+      Pareto front comparing the standard autoregressive baseline with our KV‐cache optimized method, highlighting substantial latency reductions at equivalent accuracy levels.
+    }
+    \label{fig:kvcache}
+  \end{subfigure}
+  \caption{
+    {\bf (a)} Quality degradation under aggressive unmasking. 
+    {\bf (b)} Pareto front of accuracy vs.\ latency (log‐scale) for baseline and optimized cached methods.
+  }
+  \label{fig:combined_pareto}
+\end{figure}

@@ -1,0 +1,21 @@
+\subsection{Additional Experimental Results on Dream-v0-Instruct-7B}
+
+In addition to the benchmarks reported in Table~\ref{tbl:res_vs_vanilla}, Table~\ref{tab:hellaswag-dream-speedup} shows HellaSwag (5-shot) results for Dream-v0-Instruct-7B with FreeCache and guided diffusion, highlighting substantial speedup and accuracy gains over the baseline.
+
+\begin{table}[H]
+\centering
+\caption{HellaSwag accuracy, latency, and speedup relative to the Dream-v0-Instruct-7B Baseline.}
+\vspace{0.2em}
+\resizebox{\linewidth}{!}{\begin{tabular}{cccc}
+\toprule
+\textbf{Model / Variant} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Speedup} \\
+\midrule
+Baseline & 73.30 & 21.99 & \textbf{1.00$\times$} \\
+% FreeCache~(This work) & 63.53 & 7.73 & \textbf{2.84$\times$} \\
+FreeCache + Qwen2.5-1.5B-Instruct Guided~(This work) & \textbf{76.63} & 2.46 & \textbf{8.94$\times$} \\
+FreeCache + Qwen2.5-7B-Instruct Guided~(This work) & \textbf{76.84} & 3.31 & \textbf{6.64$\times$} \\ %×
+\bottomrule
+\end{tabular}}
+\label{tab:hellaswag-dream-speedup}
+\end{table}
+

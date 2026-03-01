@@ -1,0 +1,94 @@
+\begin{table}[t]
+    \centering
+    \small
+    \setlength{\tabcolsep}{8pt} 
+    \caption{Raw results on coding tasks for LLMs and dLLMs in 7/8B scale. $^*$ denotes that the results are collocated from public reports instead of evaluating by ourselves. BigCodeBench has completion (C) and instruction (I) version of template during evaluation. +SFT means we conduct the same instruction tuning with DiffuCoder-Instruct.}
+    \begin{tabular}{@{} l cc cc cc cc @{}}
+        \toprule
+        \multirow{2}{*}{\textbf{Model}}
+            & \multicolumn{2}{c}{HumanEval}
+            & \multicolumn{2}{c}{MBPP}
+            & \multicolumn{2}{c}{BigCodeBench (C)} 
+            & \multicolumn{2}{c}{BigCodeBench (I)} \\
+        \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
+            & -   & Plus
+            & -   & Plus
+            & \multicolumn{1}{c}{Full} & \multicolumn{1}{c}{Hard}
+            & \multicolumn{1}{c}{Full} & \multicolumn{1}{c}{Hard}\\
+        \midrule
+        \multicolumn{9}{c}{\textbf{Base Models}} \\
+        \midrule
+        \cellcolor{lightRed!12}Qwen2.5-Coder      & 61.6  & 51.8  & 75.9  & 61.4  & 46.1  & 16.2  & 40.2 & 14.2 \\
+        \cellcolor{lightRed!12}OpenCoder$^*$      & 66.5  & 63.4  & 79.9  & 70.4  & 40.5  & 9.5  & – & – \\
+        \cellcolor{lightYellow!12}LLaDA         & 35.4  & 30.5  & 50.1  & 42.1   & 18.9  & 4.1  & – & – \\
+        \cellcolor{lightYellow!12}Dream         & 56.7  & 50.0  & 68.7  & 57.4    & 23.6  & 4.1  & – & –\\
+        \cellcolor{lightYellow!12}DiffuCoder (Stage 2 65B)            & 67.1  & 60.4  & 74.2  & 60.9  & 40.2  & 12.8  & 1.8 & 0.7 \\
+        \quad \cellcolor{lightYellow!5}- Stage 1 65B            & 39.0	& 31.7&	48.4&	38.3  & –  & –  & –  & – \\
+        \quad \cellcolor{lightYellow!5}- Stage 1 720B            & 31.1	&23.3&	38.8&	31.3  & –  & –  & –  & – \\
+        \quad \cellcolor{lightYellow!5}- Stage 2 16B            & 66.5	& 61.0	&71.9	&57.1&	36.7	&8.8  & –  & – \\
+        \midrule
+        \multicolumn{9}{c}{\textbf{Instruct Models}} \\
+        \midrule
+        \cellcolor{lightRed!12}Qwen2.5-Coder-Instruct & 90.2  & 85.4  & 83.9  & 72.0  & 50.7  & 21.6  & 42.2 & 18.2 \\
+        \cellcolor{lightRed!12}Qwen2.5-Coder+SFT      
+        & 82.9  
+        & 75.6 
+        & 80.1  
+        & 66.1  
+        & 46.9  
+        & 16.2  
+        & 39.5 & 14.9 \\
+        \cellcolor{lightRed!12}OpenCoder-Instruct$^*$      
+        & 83.5
+        & 78.7
+        & 79.1
+        & 69.0
+        & 40.3
+        & 16.9
+        & – & – \\
+        \cellcolor{lightYellow!12}LLaDA-Instruct        
+        & 35.4 
+        & 31.7 
+        & 31.5  
+        & 28.6  
+        & 16.5  
+        & 2.7  
+        & 14.1 & 1.4 \\
+    \cellcolor{lightYellow!12}Dream-Instruct        
+        & 57.9  
+        & 53.7  
+        & 68.3  
+        & 56.1 
+        & 10.6
+        & 0.7 
+        & 11.4 & 2.7 \\
+    \cellcolor{lightYellow!12}Dream+SFT
+        & 56.7  
+        & 50.6  
+        & 71.7  
+        & 58.7 
+        & 27.4
+        & 6.1 
+        & 25.9 & 5.4 \\
+    \cellcolor{lightYellow!12}DiffuCoder-Instruct (5 ep)  
+        & 72.0
+        & 65.2
+        & 75.1 
+        & 61.9  
+        & 35.7 
+        & 12.2  
+        & 34.0 & 8.8 \\
+        \quad \cellcolor{lightYellow!5}- 1 epoch            & 67.1	& 60.4	& 75.7&	61.9	&31.1	&8.1&	32.0&	6.1 \\
+        \quad \cellcolor{lightYellow!5}- 1 ep flexible padding            & 65.2&	58.5&	71.2&	59.5	&35.4	&11.5&	32.4	&10.1 \\
+        \cellcolor{lightYellow!12}\quad + coupledGRPO (1ep)&73.2	&68.3	&78.6&	67.5	&40.4&	10.8	&37.5&	10.8\\
+        \cellcolor{lightYellow!5}\quad + coupledGRPO (2ep)&70.1	&65.2	&79.1&	65.3&	42.8&	14.9&39.4	&13.5\\
+        \midrule
+        \multicolumn{9}{c}{\textbf{Commercial Models}} \\
+        \midrule
+        \cellcolor{lightRed!12}GPT 4o$^*$             & 90.2  & –     & 82.2  & –     & 49.9  & –   & –  &–\\
+        \cellcolor{lightYellow!12}Mercury$^*$             & 90.0    & –     & 77.1  & –      & 45.5  & –   &– &– \\
+        \cellcolor{lightYellow!12}Gemini Diffusion$^*$            & 89.6    & –     & 76.0  & –       & 45.4  & –   & – & –\\
+        \bottomrule
+    \end{tabular}
+    \label{tab:fulltab}
+\end{table}

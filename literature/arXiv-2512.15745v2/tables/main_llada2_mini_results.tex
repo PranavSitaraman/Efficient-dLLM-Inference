@@ -1,0 +1,77 @@
+\begin{table}[htbp]
+\centering
+\caption{Benchmark Performance of LLaDA2.0-mini}
+\label{tab:mini_benchmark}
+% 如果表格太宽，可以使用 \resizebox 来缩放到页面宽度
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Benchmark} & \textbf{Qwen3-8B (no\_think)} & \textbf{Ling-mini-2.0} & \textbf{LLaDA2.0-mini-preview} & \textbf{LLaDA2.0-mini} \\
+\midrule
+\textbf{Average} & 63.42 & 65.77 & 54.67 & 64.34 \\
+\midrule
+\multicolumn{5}{c}{\textbf{Knowledge}} \\
+\midrule
+MMLU & 80.94 & 82.15 & 72.49 & 80.53 \\
+MMLU-Pro & 65.48 & 63.72 & 49.22 & 63.22 \\
+CMMLU & 79.17 & 80.84 & 67.53 & 79.50 \\
+C-EVAL & 81.36 & 82.10 & 66.54 & 81.38 \\
+GAOKAO-Bench & 84.94 & 87.23 & 74.46 & 84.30 \\
+ARC-c & 93.35 & 93.09 & 89.15 & 93.56 \\
+GPQA & 46.59 & 56.80 & 23.74 & 47.98 \\
+SciBench & 2.85 & 5.28 & 4.10 & 3.53 \\
+PHYBench & 9.76 & 14.59 & 5.08 & 11.70 \\
+TriviaQA & 52.51 & 55.63 & 50.49 & 51.33 \\
+\midrule
+\multicolumn{5}{c}{\textbf{Reasoning}} \\
+\midrule
+BIG-Bench Hard & 79.48 & 83.70 & 70.64 & 78.21 \\
+BIG-Bench Extra Hard & 18.27 & 14.81 & 12.36 & 16.47 \\
+bbh-zh & 80.09 & 66.11 & 66.62 & 75.75 \\
+MuSR & 70.02 & 71.36 & 56.77 & 71.48 \\
+ZebraLogic & 37.48 & 79.85 & 14.80 & 64.20 \\
+PrOntoQA & 93.12 & 96.06 & 70.00 & 86.00 \\
+PIQA & 88.30 & 87.54 & 84.33 & 86.51 \\
+OCNLI & 61.49 & 60.17 & 58.68 & 64.51 \\
+HellaSwag & 79.56 & 69.02 & 74.01 & 79.01 \\
+KOR-Bench & 54.48 & 62.72 & 37.26 & 50.40 \\
+DROP & 84.56 & 78.80 & 79.49 & 81.91 \\
+SQuAD 2.0 & 85.21 & 75.56 & 85.61 & 86.50 \\
+\midrule
+\multicolumn{5}{c}{\textbf{Coding}} \\
+\midrule
+CRUXEval-O & 74.06 & 76.12 & 61.88 & 71.62 \\
+MBPP & 78.92 & 84.07 & 77.75 & 81.50 \\
+MBPP+ & 71.96 & 76.46 & 66.67 & 74.07 \\
+MultiPL-E & 61.70 & 67.09 & 62.43 & 67.46 \\
+HumanEval & 84.76 & 85.98 & 80.49 & 86.59 \\
+HumanEval+ & 78.66 & 81.71 & 71.95 & 79.88 \\
+HumanEvalFix & 76.02 & 82.83 & 60.16 & 74.90 \\
+HumanEval-cn & 74.39 & 71.34 & 73.17 & 78.66 \\
+BigCodeBench-Full & 36.05 & 35.00 & 30.44 & 32.89 \\
+LiveCodeBench & 26.38 & 34.97 & 19.82 & 31.50 \\
+Aider & 55.64 & 49.62 & 28.57 & 39.85 \\
+BIRD-SQL & 36.11 & 39.67 & 27.71 & 39.34 \\
+Spider & 72.80 & 76.43 & 75.64 & 76.76 \\
+\midrule
+\multicolumn{5}{c}{\textbf{Math}} \\
+\midrule
+GSM8K & 93.63 & 94.62 & 89.01 & 94.24 \\
+MATH & 86.28 & 94.66 & 73.50 & 93.22 \\
+OlympiadBench & 55.33 & 72.30 & 36.30 & 67.70 \\
+AIME 2025 & 22.08 & 47.66 & 10.00 & 36.67 \\
+HARDMath2 & 7.58 & 9.95 & 0.95 & 0.47 \\
+Omni-MATH & 33.20 & 48.80 & 19.20 & 41.70 \\
+GSM-Plus & 86.09 & 87.82 & 81.44 & 86.24 \\
+CMATH & 95.42 & 96.40 & 90.53 & 95.72 \\
+\midrule
+\multicolumn{5}{c}{\textbf{Agent \& Alignment}} \\
+\midrule
+IFEval-strict-prompt & 86.90 & 76.16 & 62.50 & 80.78 \\
+BFCL v3 & 70.08 & 53.98 & 74.11 & 70.90 \\
+CodeIF-Bench & 50.00 & 46.00 & 48.00 & 48.00 \\
+Nexus FC & 37.71 & 34.38 & 33.68 & 35.18 \\
+\bottomrule
+\end{tabular}%
+} % 如果使用了 \resizebox，在这里结束
+\end{table}

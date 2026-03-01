@@ -1,0 +1,83 @@
+\documentclass{article} %
+\usepackage[authoryear,sort]{natbib}
+\usepackage[bitstream-charter]{mathdesign}
+\usepackage[
+  paper  = letterpaper,
+  left   = 1.2in,
+  right  = 1.2in,
+  top    = 1.0in,
+  bottom = 1.0in,
+  ]{geometry}
+
+
+
+\input{preamble/packages}
+\input{preamble/acronyms}
+\input{preamble/math_commands}
+
+\usepackage{nicefrac}
+\usepackage{subcaption}
+\usepackage{wrapfig}
+\usepackage{titlesec}
+
+
+\usepackage[utf8]{inputenc} 
+\usepackage[T1]{fontenc}    
+\usepackage{hyperref}       
+\usepackage{url}            
+\usepackage{booktabs}       
+\usepackage{nicefrac}       
+\usepackage{xcolor}        
+\usepackage{soul}
+\usepackage{float}
+
+
+\newcommand{\kmnote}[1]{{\color{red}KM:[#1]}}
+\newcommand{\zynote}[1]{{\color{green}ZY:[#1]}}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{enumitem}
+\usepackage{natbib}
+
+
+\title{No Compute Left Behind: Rethinking Reasoning and Sampling with Masked Diffusion Models}
+
+\author{
+ Zachary Horvitz$^{*,1}$, Raghav Singhal$^{*,2}$, Hao Zou$^{1}$, Carles Domingo-Enrich$^{3}$, \\ 
+ Zhou Yu$^{1}$, Rajesh Ranganath$^{2, 4}$, Kathleen McKeown$^{1}$
+     \\\\
+     \hspace{-10pt} 
+     \textsuperscript{1}Columbia University \\
+     \hspace{-10pt}           \textsuperscript{2}Department of Computer Science, New York University  \\
+     \hspace{-10pt} 
+     \hspace{-10pt} 
+    \textsuperscript{3}Microsoft Research \\
+     \hspace{-10pt}      
+     \textsuperscript{4}Center for Data Science, New York University \\     
+}
+\date{}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\begin{document}
+
+\maketitle
+
+\input{sections/abstract}
+\input{sections/intro}
+\input{sections/methods}
+\input{sections/experiments}
+\input{sections/conclusion}
+
+
+\bibliography{text_diffusion_reasoning}
+\bibliographystyle{unsrtnat}
+
+\appendix 
+
+\input{sections/notes}
+\input{sections/proofs}
+\input{sections/appendix_finetuning}
+
+\end{document}

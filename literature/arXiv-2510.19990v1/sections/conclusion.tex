@@ -1,0 +1,54 @@
+\section{Discussion}
+Much of the current tooling around pre-training, post-training, and inference for text generation has been built around a key modeling choice: next-token prediction training. \glspl{mdlm} are an expressive class of models trained to in-fill masked sequences, requiring additional training and inference compute. In our work, we find that this additional compute has many uses beyond just accelerating inference and warrants \textit{rethinking} how these models are utilized. For instance, the ability to in-fill unlocks new prompting techniques, like the proposed reasoning-as-infilling framework, along with new data generation and post-training methods. Large-scale language models trained on next-token prediction have revolutionized text generation. Our work provides evidence that models such \glspl{mdlm}, trained on alternative objectives, unlock new capabilities not readily available to \gls{ntp} approaches.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+\subsection{Limitations}
+State-of-the-art \gls{ntp} language models achieve significant benefits from long reasoning chains \citep{guo2025deepseek, openai2025o3}. While the \gls{mdlm} framework introduces new possibilities, \glspl{mdlm} come with computational costs that make the current available models impractical for long-context tasks. Most notably, for a sequence of length $\ell$, an \gls{ntp} model needs to make $\ell$ predictions, while an \gls{mdlm} model makes $\mathcal{O}(\ell^2)$ predictions. Moreover, current \glspl{mdlm} do not naturally support inference-optimizations, such as caching, for any-order decoding. We are hopeful that our findings, which highlight the benefits and sampling behavior of current models, can help guide architectural decisions for future models that address these limitations. 
+
+\section{Acknowledgments}
+The authors would like to thank Subham Sahoo, Rico Angell, Chandhru Karthick, Mark Goldstein, Shenglong Wang, and Dinghuai Zhang for their valuable feedback. 
+
+This work was partly supported by the NIH/NHLBI Award R01HL148248, NSF Award 1922658 NRT-HDR:
+FUTURE Foundations, Translation, and Responsibility for Data Science, NSF CAREER Award 2145542,
+ONR N00014-23-1-2634, and Apple. Additional support was provided by a Fellowship from the Columbia
+Center of AI Technology. This work was also supported by IITP with a grant funded by the MSIT of the Republic of Korea in connection with the Global AI Frontier Lab International Collaborative Research.
+
+
+
+
+
+
+
+
+
+

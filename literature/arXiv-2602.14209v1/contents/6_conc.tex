@@ -1,0 +1,6 @@
+\section{Conclusion}
+\label{sec:conclusion}
+We present \name, a \mask-guided dynamic sparse attention method for block diffusion LLMs, motivated by the observation that attention computed at the first All-\mask block reliably predicts both the important top-$K$ KV entries and stable layer-wise budget needs throughout block denoising.
+Across LongBench and Needle-in-a-Haystack, \name achieves near-lossless accuracy at substantially smaller KV budgets than AR-oriented baselines (Quest, Tidal) adapted to block diffusion, while delivering end-to-end speedups that grow with context length.
+Finally, a lightweight fine-tuning scheme aligned with \name’s inference further strengthens \mask-guided patterns with only a few hundred steps on a single H100, often matching or surpassing exact attention at moderate budgets.
+\clearpage

@@ -1,0 +1,38 @@
+\section{Configurable Decoding Scheme}
+
+
+\vspace{5pt}
+\begin{mdframed}[
+    linecolor=gray!40,
+    linewidth=1.5pt,
+    roundcorner=5pt,
+    innertopmargin=5pt,
+    innerbottommargin=5pt,
+    innerleftmargin=10pt,
+    innerrightmargin=10pt,
+    backgroundcolor=gray!5
+]
+During LLM decoding, \textbf{Exposure Bias}—where errors compound as the model conditions on its own imperfect predictions—is inevitable. This phenomenon is particularly severe in dLLMs due to their parallel generation nature. We observe that once such decoding errors occur, dLLMs tend to become increasingly conservative in subsequent steps, significantly slowing down the generation process. In contrast, autoregressive models exhibit lower exposure bias and can self-correct through extended chain-of-thought reasoning. To address this challenge, we introduce an \textbf{editing} operation into the decoding process, enabling the model to retrospectively correct errors introduced during parallel generation, thereby achieving a much better balance between generation speed and quality.
+\end{mdframed}
+
+
+Specifically, we extend standard discrete diffusion to support it. Unlike conventional absorbing-state models that enforce a rigid monotonic transition from $\text{[MASK]}$ to fixed tokens, our framework introduces a dynamic ``Draft-and-Edit" paradigm controlled by dual probability thresholds.
+We formalize the state evolution by defining two active update sets at timestep $t$: the \textit{Unmasking Set} $\Gamma_t$ and the \textit{Editing Set} $\Delta_t$.
+
+
+
+We formalize the state evolution by defining two active update sets at timestep $t$: the \textit{Unmasking Set} $\Gamma_t$ and the \textit{Editing Set} $\Delta_t$.
+Let $v_t^i = \arg\max_{v} p_\theta(v | \bm{x}_t)$ be the top-candidate. The update indices are identified as:
+\begin{align}
+    \Gamma_t &= \left\{ i \mid x_t^i = \text{[MASK]} \text{ and } p_\theta(v_t^i|\bm{x}_t) > \tau_{\text{mask}} \right\}, \\
+    \Delta_t &= \left\{ i \mid x_t^i \neq v_t^i \text{ and } p_\theta(v_t^i|\bm{x}_t) > \tau_{\text{edit}} \right\},
+\end{align}
+with $\tau_{\text{mask}}, \tau_{\text{edit}} \in [0, 1]$ being the confidence thresholds configuring the decoding dynamics. The transition operator then applies the updates strictly on the union of these sets:
+\begin{equation}
+    x_{t-1}^i = 
+    \begin{cases} 
+        v_t^i & \text{if } i \in \Gamma_t \cup \Delta_t, \\
+        x_t^i & \text{otherwise}.
+    \end{cases}
+    \label{eq:set_transition}
+\end{equation}

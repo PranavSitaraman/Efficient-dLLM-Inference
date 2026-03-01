@@ -1,0 +1,129 @@
+\subsection{Model GPU Memory Usage}\label{sec:memory}
+
+Table~\ref{tab:memory-llada} and Table~\ref{tab:memory-dream} show the GPU memory usage (in gigabytes) of the proposed method with LLaDA-8B-Instruct and Dream-v0-Instruct-7B as diffusion models, respectively.
+The GPU memory is recorded directly via \texttt{torch.cuda.max\_memory\_allocated()}. As shown in the tables, the proposed guided unmasking scheme introduces minimal memory overhead compared to the combined memory consumption of the single auto-regressive and baseline diffusion models. 
+
+
+% ================ Table V1 =================
+% \begin{minipage}{.48\linewidth}
+% \centering
+% \begin{tabular}{lccc}
+% \toprule
+% \textbf{AR Guider} & \textbf{Diff.} & \textbf{Guide} & \textbf{Total} \\
+%                    & \textbf{(GB)}  & \textbf{(GB)}  & \textbf{(GB)} \\
+% \midrule
+% None          & 20.7 & --   & 20.7 \\
+% Qwen2.5-0.5B  & 20.7 & 1.9  & 22.6 \\
+% Qwen2.5-1.5B  & 20.7 & 4.1  & 24.8 \\
+% Qwen2.5-3B    & 20.7 & 6.7  & 27.4 \\
+% Qwen2.5-7B    & 20.7 & 17.3 & 38.0 \\
+% \bottomrule
+% \end{tabular}
+% \captionof{table}{LLaDA-8B Memory (GB)}
+% \label{tab:memory-llada}
+% \end{minipage}
+% \hfill
+% \begin{minipage}{.48\linewidth}
+% \centering
+% \begin{tabular}{lccc}
+% \toprule
+% \textbf{AR Guider} & \textbf{Diff.} & \textbf{Guide} & \textbf{Total} \\
+%                    & \textbf{(GB)}  & \textbf{(GB)}  & \textbf{(GB)} \\
+% \midrule
+% None          & 14.6 & --   & 14.6 \\
+% Qwen2.5-0.5B  & 14.6 & 1.9  & 16.5 \\
+% Qwen2.5-1.5B  & 14.6 & 4.1  & 18.7 \\
+% Qwen2.5-3B    & 14.6 & 6.7  & 21.3 \\
+% Qwen2.5-7B    & 14.6 & 17.3 & 31.9 \\
+% \bottomrule
+% \end{tabular}
+% \captionof{table}{Dream-7B Memory (GB)}
+% \label{tab:memory-dream}
+% \end{minipage}
+\begin{minipage}{.48\linewidth}
+\captionof{table}{LLaDA-8B-Instruct Guided Diffusion Memory Usage (GB)}
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{AR Guider} & \textbf{Diff.} & \textbf{Guide} & \textbf{Total} \\
+                   & \textbf{(GB)}  & \textbf{(GB)}  & \textbf{(GB)} \\
+\midrule
+% None          & \multirow{5}{*}{20.7} & --   & 20.7 \\
+Qwen2.5-0.5B  &  \multirow{4}{*}{20.7} & 1.9  & 22.6 \\
+Qwen2.5-1.5B  &                        & 4.1  & 24.8 \\
+Qwen2.5-3B    &                        & 6.7  & 27.4 \\
+Qwen2.5-7B    &                        & 17.3 & 38.0 \\
+\bottomrule
+\end{tabular}
+\label{tab:memory-llada}
+\end{minipage}
+\hfill
+\begin{minipage}{.48\linewidth}
+\captionof{table}{Dream-v0-Instruct-7B Guided Diffusion Memory Usage (GB)}
+\centering
+\begin{tabular}{lccc}
+\toprule
+\textbf{AR Guider} & \textbf{Diff.} & \textbf{Guide} & \textbf{Total} \\
+                   & \textbf{(GB)}  & \textbf{(GB)}  & \textbf{(GB)} \\
+\midrule
+% None          & \multirow{5}{*}{14.6} & --   & 14.6 \\
+Qwen2.5-0.5B  &   \multirow{4}{*}{14.6} & 1.9  & 16.5 \\
+Qwen2.5-1.5B  &                        & 4.1  & 18.7 \\
+Qwen2.5-3B    &                        & 6.7  & 21.3 \\
+Qwen2.5-7B    &                        & 17.3 & 31.9 \\
+\bottomrule
+\end{tabular}
+\label{tab:memory-dream}
+\end{minipage}
+
+
+
+
+
+
+
+% % ============= Table V2 ================
+% \begin{table}[h!]
+% \caption{GPU memory usage for each model during inference (in gigabytes).}
+% \centering
+% \begin{tabular}{lc}
+% \toprule
+% \textbf{Model} & \textbf{Total GPU Memory (GB)} \\
+% \midrule
+% Dream-7B & 14.6 \\
+% LLaDA-8B & 18.8 \\
+% Qwen2.5-0.5B-Instruct & 1.9 \\
+% Qwen2.5-1.5B-Instruct & 4.1 \\
+% Qwen2.5-3B-Instruct   & 6.7 \\
+% Qwen2.5-7B-Instruct   & 17.3 \\
+% \midrule
+% \multicolumn{2}{c}{\textit{Guided Diffusion + FreeCache (This Work)}} \\
+% \midrule
+% Dream-7B~\cite{dream2025} + Qwen2.5-1.5B-Instruct & 20.26 \\
+% Dream-7B~\cite{dream2025} + Qwen2.5-7B-Instruct & 34.44 \\
+
+% \midrule
+% \bottomrule
+% \end{tabular}
+% \label{tab:model-memory}
+% \end{table}
+
+% \begin{table}[h!]
+% \centering
+% \caption{Diffusion configuration of the Dream-7B~\cite{dream2025} and LLada-8B~\cite{nie2025large} employed this work.}
+% \resizebox{0.7\linewidth}{!}{\begin{tabular}{ccc}
+% \toprule
+% \multicolumn{1}{c}{\textbf{Setting}}                               & \multicolumn{1}{c}{\textbf{Dream-7B-Instruct}~\cite{dream2025}} & \textbf{Llada-8B}~\cite{nie2025large} \\ \midrule\midrule
+% \multicolumn{3}{c}{\textbf{Configuration of FreeCache (This work)}}                                                     \\ \midrule\midrule
+% \multicolumn{1}{c}{Block Cache Size}                      & \multicolumn{1}{c}{256}               & 256      \\ \midrule
+% \multicolumn{1}{c}{Max Output Tokens}                     & \multicolumn{1}{c}{256}               & 256      \\ \midrule
+% \multicolumn{1}{c}{Block Length~\cite{nie2025large}} & \multicolumn{1}{c}{-}                 & 64       \\ \midrule\midrule
+% \multicolumn{3}{c}{\textbf{Configuration of FreeCache + Guided Unmasking (This work)}}                                             \\ \midrule\midrule
+% \multicolumn{1}{c}{Max Output Tokens}                     & \multicolumn{1}{c}{1024}              & 1024     \\ \midrule
+% \multicolumn{1}{c}{Speculation Block Size}                & \multicolumn{1}{c}{32}                & 32       \\ \midrule
+% \multicolumn{1}{c}{Top-K Assisted Tokens Selection}       & \multicolumn{1}{c}{2}                 & 2        \\ \midrule
+% \multicolumn{1}{c}{Guidance Confidence Threshold~$\tau$}       & \multicolumn{1}{c}{0.5}               & 0.5      \\ \bottomrule
+% \end{tabular}}
+% \label{tbl:config}
+% \end{table}
+

@@ -1,0 +1,102 @@
+
+\newcommand{\tpfdelta}[2]{%
+  \makecell{%
+    \begin{tabular}{@{}p{2.5em}|p{3em}@{}}
+    #1 & #2
+    \end{tabular}}}
+\begin{table}[t]
+\caption{
+Performance comparison of LLaDA2.1-flash and Mini variants with and without Multi-Block Editing (MBE) across benchmarks.
+Each cell reports \textit{Score $\mid$ TPF}.
+}
+\centering
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l l cc cc}
+\toprule
+\textbf{Category} & \textbf{Benchmark}
+& \multicolumn{2}{c}{\textbf{LLaDA2.1-flash}}
+& \multicolumn{2}{c}{\textbf{LLaDA2.1-mini}} \\
+\cmidrule(lr){3-4} \cmidrule(lr){5-6}
+& 
+& \makecell{\textbf{w/o MBE}\\\tpfdelta{Score}{TPF}}
+& \makecell{\textbf{w/ MBE}\\\tpfdelta{Score}{TPF}}
+& \makecell{\textbf{w/o MBE}\\\tpfdelta{Score}{TPF}}
+& \makecell{\textbf{w/ MBE}\\\tpfdelta{Score}{TPF}} \\
+\midrule
+
+\multirow{2}{*}{Knowledge}
+& MMLU-Pro
+& \tpfdelta{75.31}{4.43}
+& \tpfdelta{75.90}{3.88}
+& \tpfdelta{63.42}{4.22}
+& \tpfdelta{63.10}{3.66} \\
+& TriviaQA
+& \tpfdelta{72.55}{4.30}
+& \tpfdelta{72.45}{4.28}
+& \tpfdelta{53.33}{3.21}
+& \tpfdelta{53.41}{3.14} \\
+
+\midrule
+\multirow{2}{*}{Reasoning}
+& bbh-zh
+& \tpfdelta{82.55}{5.78}
+& \tpfdelta{83.21}{4.85}
+& \tpfdelta{67.65}{3.89}
+& \tpfdelta{67.94}{3.41} \\
+& ZebraLogic
+& \tpfdelta{84.20}{5.80}
+& \tpfdelta{88.20}{5.03}
+& \tpfdelta{68.50}{5.38}
+& \tpfdelta{70.00}{4.62} \\
+
+\midrule
+\multirow{4}{*}{Coding}
+& LiveCodeBench
+& \tpfdelta{44.05}{6.48}
+& \tpfdelta{46.48}{5.62}
+& \tpfdelta{28.85}{6.42}
+& \tpfdelta{29.74}{5.44} \\
+& CRUXEval-O
+& \tpfdelta{85.25}{6.54}
+& \tpfdelta{87.00}{5.62}
+& \tpfdelta{70.62}{5.85}
+& \tpfdelta{70.62}{5.02} \\
+& BigCodeBench-Full
+& \tpfdelta{37.11}{8.51}
+& \tpfdelta{39.30}{7.00}
+& \tpfdelta{30.18}{7.33}
+& \tpfdelta{30.70}{6.05} \\
+& Spider
+& \tpfdelta{79.18}{8.74}
+& \tpfdelta{80.58}{8.33}
+& \tpfdelta{75.78}{7.98}
+& \tpfdelta{76.67}{7.59} \\
+
+\midrule
+Math
+& AIME 2025
+& \tpfdelta{63.33}{5.36}
+& \tpfdelta{70.00}{4.71}
+& \tpfdelta{36.67}{6.34}
+& \tpfdelta{36.67}{5.25} \\
+
+\midrule
+Agent \& Alignment
+& IFEval-strict-prompt
+& \tpfdelta{83.36}{2.24}
+& \tpfdelta{83.55}{2.11}
+& \tpfdelta{81.33}{1.83}
+& \tpfdelta{83.55}{1.70} \\
+
+\midrule
+\textbf{Average} & --
+& \tpfdelta{70.69}{5.82}
+& \tpfdelta{72.67}{5.14}
+& \tpfdelta{57.63}{5.25}
+& \tpfdelta{58.24}{4.59} \\
+
+\bottomrule
+\end{tabular}
+\label{tab:flash_mini_mbe}
+\end{table}

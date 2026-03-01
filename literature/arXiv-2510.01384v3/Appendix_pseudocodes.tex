@@ -1,0 +1,80 @@
+\newpage
+\section{Employing PRISM at inference}
+In this section, we provide details and pseudocode of inference algorithms that we use for our experiments. We first recall from Section~\ref{sec:prism_inference} how PRISM fine-tuned model ($f_\theta,g_\theta$) is used at inference: At each step $t_\ell$, we obtain $\rvx_{t_{\ell+1}}$ through the following steps.
+\begin{itemize}[leftmargin=17pt, noitemsep, parsep=3pt, topsep=0pt]
+    \item[(a)] Choose a subset of masked tokens $\mathcal{S}$ to \coloredhl{xblue}{unmask}.
+    \item[(b)] Choose a subset of clean tokens $\mathcal{T}$ to \coloredhl{xxgreen}{remask} with the lowest quality scores $g_\theta(\rvx_{t_{\ell}})$.
+    \item[(c)] For each $i\in\mathcal{T}$, \coloredhl{xxgreen}{remask} $\rvx_{t_\ell}^i$ and for each $j\in\mathcal{S}$, \coloredhl{xblue}{unmask} $\rvx_{t_\ell}^j$ to a clean token sampled from $f_\theta^j(\cdot\,|\, \rvx_{t_\ell})\in\Delta(\mathcal{V})$.
+\end{itemize}
+We now provide the pseudocode for two different cases of PRISM implementation, depending on how we choose the sizes of the unmasking and remasking sets $|\mathcal{S}|$ and $|\mathcal{T}|$. We begin with the case where we stochastically assign $|\mathcal{S}|$ and $|\mathcal{T}|$ from binomial distributions (Algorithm ~\ref{alg: fixed ratio remasking}), corresponding to our experiments on OpenWebText (Section~\ref{sec:owt}).
+
+\begin{algorithm}[h]
+\caption{PRISM inference with assignments from binomial distributions}
+\begin{algorithmic}[1]
+\State \textit{Require:} Fine-tuned MDM with unmasking posterior model \xblue{$f_\theta$}, per-token quality head \xxgreen{$g_\theta$}, discretized time steps $\{t_\ell\}_{\ell=0}^N$,
+sampling steps $N$, sequence length $L$, remasking token ratio  $\eta>0$.
+\State Initialize $\rvx_1=\rvx_{t_1}\gets(\mask, \dots, \mask)$
+\For{$\ell = 0$ to $N-1$}
+    % \State \textcolor{red}{\texttt{\# Remasking Schedule}}
+    \State $K \sim \mathrm{Binom}(|\{i \mid \rvx_{t_\ell}^i\neq\mask\}|\,,\, \eta)$ and define $\mathcal{M}\gets\{i \mid \rvx_{t_\ell}^i=\mask\}$
+    % \State Define $\mathcal{M}\gets\{i \mid \rvx_{t_\ell}^i=\mask\}$
+    \If{$K \leq |\mathcal{M}| < L-K$ and $l\geq l_{on}$:}
+        \State $|\mathcal{T}|\gets K$, $|\mathcal{S}|\gets \lceil \frac{L}{N_s}\rceil+K$
+    \Else:
+        \State $|\mathcal{T}|\gets 0$, $|\mathcal{S}|\gets\lceil \frac{L}{N_s}\rceil$
+    \EndIf
+    \State Sample $\mathcal{S}\subset \mathcal{M}$ according to the unmasking rule
+    \State Sample $\mathcal{T} \subset \{i \mid \rvx_{t_\ell}^i\neq\mask\}$ with low-$|\mathcal{T}|$ indices of $\xxgreen{g_\theta^{\cdot}(x_{t_\ell})}$
+    \State \xblue{Unmask} $\rvx^i_{t_{\ell}}$ to $v^i\sim \xblue{f_\theta^i(\cdot\,|\,\rvx_{t_\ell})}$ for each $i\in\mathcal{S}$
+    \State \xxgreen{Remask} $\rvx^j_{t_{\ell}}$ for each $j\in\mathcal{T}$
+    \State $\rvx_{t_{\ell+1}}\gets \rvx_{t_{\ell}}$
+\EndFor
+\State \textbf{return} $\rvx_{t_N}=\rvx_0$
+\end{algorithmic}
+\label{alg: fixed ratio remasking}
+\end{algorithm}
+Now, we state the algorithm where we pre-allocate $|\mathcal{S}|$ and $|\mathcal{T}|$ before inference (Algorithm~\ref{alg: fixed number remasking}) with fixed $K$, corresponding to our experiments on Sudoku~\ref{sec:sudoku} and LLaDA~\ref{sec:llada}.
+% The only difference from Algo.~\ref{alg: fixed ratio remasking} is how we determine $K$.
+\begin{algorithm}[h]
+\caption{PRISM inference with fixed $K$}
+\begin{algorithmic}[1]
+\State \textit{Require:} Fine-tuned MDM with unmasking posterior model \xblue{$f_\theta$}, per-token quality head \xxgreen{$g_\theta$}, sampling steps $N$, sequence length $L$, discretized time steps $\{t_\ell\}_{\ell=0}^N$, number of remasking tokens $K$
+\State Initialize $\rvx_1=\rvx_{t_1}\gets(\mask, \dots, \mask)$
+\For{$l = 0$ to $N-1$}
+    \State Define $\mathcal{M}\gets\{i \mid \rvx_{t_l}=\mask\}$
+    \If{$K \leq |\mathcal{M}| < L-K$ and $l\geq l_{on}$:}
+        \State $|\mathcal{T}|=K$, $|\mathcal{S}|=\lceil \frac{L}{N}\rceil+K$
+    \Else:
+        \State $|\mathcal{T}|=0$, $|\mathcal{S}|=\lceil \frac{L}{N}\rceil$
+    \EndIf
+     \State Sample $\mathcal{S}\subset \mathcal{M}$ according to the unmasking rule
+    \State Sample $\mathcal{T} \subset \{i \mid \rvx_{t_\ell}^i\neq\mask\}$ with low-$|\mathcal{T}|$ indices of $\xxgreen{g_\theta^{\cdot}(x_{t_\ell})}$
+    \State \xblue{Unmask} $\rvx^i_{t_{\ell}}$ to $v^i\sim \xblue{f_\theta^i(\cdot\,|\,\rvx_{t_\ell})}$ for each $i\in\mathcal{S}$
+    \State \xxgreen{Remask} $\rvx^j_{t_{\ell}}$ for each $j\in\mathcal{T}$
+    \State $\rvx_{t_{\ell+1}}\gets \rvx_{t_{\ell}}$
+\EndFor
+\State \textbf{return} $\rvx_{t_N}=\rvx_0$
+\end{algorithmic}
+\label{alg: fixed number remasking}
+\end{algorithm}
+
+\subsection{PRISM-Loop}
+\label{appendix: prism-loop}
+As we mentioned in Section~\ref{sec:owt}, the sentence diversity is crucial for unconditional generation, we observe that the vanilla PRISM inference from Section~\ref{sec:prism_inference} can degrade diversity.
+we therefore employ PRISM-loop, analogous to ReMDM-loop~\citep{wang2025remasking}, where we \emph{extend} the standard generation process with a terminal refinement phase. After the initial generation of a sequence, an additional $N_l$ \emph{looping} steps are performed. In each of these steps, a fixed-size subset of $M$ tokens is randomly selected from the full sequence, remasked, and subsequently unmasked to allow for iterative refinement.
+
+\begin{algorithm}[h]
+\caption{PRISM inference with loop strategy}
+\begin{algorithmic}[1]
+\State \textit{Require:} Fine-tuned MDM with unmasking posterior model \xblue{$f_\theta$}, per-token quality head \xxgreen{$g_\theta$}, sampling steps $N$, sequence length $L$, discretized time steps $\{t_\ell\}_{\ell=0}^N$, remasking token ratio $\eta>0$, loop steps $N_l$, 
+number of remasking tokens at the loop stage $M$
+\State Sample $\rvx_0$ from $\rvx_1$ for $N$ steps with PRISM with $\eta$
+\For{$l=1$ to $N_l$}
+    \State Uniformly sample size $M$ subset $\mathcal{T} \subset \{0, \dots, L-1\}$
+    \State \xxgreen{Remask} $\rvx^i_{0}$ for each $i\in\mathcal{T}$
+    \State \xblue{Unmask} $\rvx^i_0$ to $v^i\sim \xblue{f_\theta^i(\cdot\,|\,\rvx_0)}$ for each $i\in\mathcal{T}$
+\EndFor
+\State \textbf{return} $\rvx_0$
+\end{algorithmic}
+\label{alg: loop remasking}
+\end{algorithm}

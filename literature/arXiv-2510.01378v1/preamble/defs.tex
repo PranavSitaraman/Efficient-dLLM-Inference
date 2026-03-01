@@ -1,0 +1,91 @@
+\definecolor{xblue}{HTML}{4169E1}
+\definecolor{xgreen}{HTML}{036C3A}
+\definecolor{xpurple}{HTML}{9838B1}
+\definecolor{xgray}{HTML}{808080}
+\definecolor{xsienna}{HTML}{8B4512}
+\definecolor{xslategray}{HTML}{70818F}
+\definecolor{xred}{HTML}{FF2121}
+\definecolor{xorange}{HTML}{FF8C00}
+\definecolor{xcyan}{HTML}{06AEEF}
+\definecolor{xlightcyan}{HTML}{CEEFFC}
+\definecolor{xolive}{HTML}{556B2F}
+\definecolor{xxorange}{HTML}{FF8200}
+\definecolor{xxgreen}{HTML}{009F86}
+\definecolor{xxpurple}{HTML}{623E99}
+\newcommand{\xblue}[1]{\textcolor{xblue}{#1}}
+\newcommand{\xgreen}[1]{\textcolor{xgreen}{#1}}
+\newcommand{\xpurple}[1]{\textcolor{xpurple}{#1}}
+\newcommand{\xgray}[1]{\textcolor{xgray}{#1}}
+\newcommand{\xsienna}[1]{\textcolor{xsienna}{#1}}
+\newcommand{\xslategray}[1]{\textcolor{xslategray}{#1}}
+\newcommand{\xred}[1]{\textcolor{xred}{#1}}
+\newcommand{\xorange}[1]{\textcolor{xorange}{#1}}
+\newcommand{\xxorange}[1]{\textcolor{xxorange}{#1}}
+\newcommand{\xxgreen}[1]{\textcolor{xxgreen}{#1}}
+\newcommand{\xxpurple}[1]{\textcolor{xxpurple}{#1}}
+\newcommand{\xcyan}[1]{\textcolor{xcyan}{#1}}
+\newcommand{\xolive}[1]{\textcolor{xolive}{#1}}
+\newcommand{\xblack}[1]{\textcolor{black}{#1}}
+\newcommand{\yilun}[1]{\xsienna{\coloredbox{xsienna}{Yilun}: #1}\xspace}
+
+\newcommand{\coloredhl}[2]{{\textcolor{#1}{\sethlcolor{#1!10}\hl{#2}}}\xspace}
+\newcommand{\coloredbox}[2]{\setlength{\fboxsep}{0pt}\textcolor{#1}{\fbox{\sethlcolor{#1!10}\hl{#2}}}\xspace}
+\newcommand{\coloredtitle}[2]{{\sethlcolor{#1!15}\hl{\textbf{#2}}}\xspace}
+\newcommand{\coloredlabel}[2]{{\sethlcolor{#1!15}\hl{#2}}}
+\newcommand{\coloredul}[2]{\textcolor{#1}{\uline{#2}}\xspace}
+\newcommand{\coloreddashul}[2]{\textcolor{#1}{\dashuline{#2}}\xspace}
+
+\newcommand{\citen}[2]{#1,~\citeauthor{#2},~\citeyear{#2}}
+\newcommand{\citepn}[2]{(\citen{#1}{#2})}
+
+\newtheorem{master}{Master}[section]
+\newtheorem{definition}[master]{Definition}
+\newtheorem{proposition}[master]{Proposition}
+\newtheorem{theorem}[master]{Theorem}
+\newtheorem{corollary}[master]{Corollary}
+\newtheorem{remark}[master]{Remark}
+\newtheorem{property}[master]{Property}
+\theoremstyle{plain}
+\newtheorem{claiminner}{}
+\renewcommand{\theclaiminner}{C\arabic{claiminner}}
+% \newenvironment{claim}
+%   {\begin{claiminner}\begin{center}\itshape}
+%   {\vspace{-0.5\baselineskip}\end{center}\end{claiminner}}
+
+\newenvironment{claim}[1][]
+  {%
+    \begin{claiminner}[#1]%
+    \begin{center}\itshape
+  }%
+  {%
+    \vspace{-0.5\baselineskip}
+    \end{center}\end{claiminner}%
+  }
+% 
+\newtheorem{perspective}{Perspective}
+\renewcommand{\theperspective}{\Alph{perspective}}
+\newmdenv[
+  backgroundcolor=gray!10,
+  linecolor=gray,
+  skipabove=4pt,
+  skipbelow=-4pt,
+  innertopmargin=6.5pt,
+  innerbottommargin=4pt,
+  innerrightmargin=4pt,
+  innerleftmargin=4pt,
+]{perspectivebox}
+\let\oldperspective\perspective
+\let\endoldperspective\endperspective
+\renewenvironment{perspective}[1][]
+  {\begin{perspectivebox}\oldperspective[#1]}
+  {\endoldperspective\end{perspectivebox}}
+\theoremstyle{definition}
+\newtheorem{example}[master]{Example}
+\newtheorem{experiment}[master]{Experiment}
+\definechangesauthor[name={Kiwhan Song},color=xcyan]{kiwhan}
+\definechangesauthor[name={Jaeyeon Kim},color=xpurple]{jay}
+\makeatletter
+\def\xthanks#1{\protected@xdef\@thanks{\@thanks\protect\footnotetext{#1}}}
+\makeatother
+\newcommand{\xsup}[1]{\rlap{\textsuperscript{\normalfont#1}}}
+\newcommand{\papertitle}{Selective Underfitting in Diffusion Models}

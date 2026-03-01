@@ -1,0 +1,23 @@
+\section{Introduction}
+Masked Diffusion Models (MDMs)~\citep{sahoo2024simple,gat2024discrete,shi2024simplified}
+have emerged as a promising approach for generative modeling in discrete domains. At inference time, they start from a fully masked sequence and gradually unmask the masked tokens in arbitrary order to obtain a clean sequence. This flexibility in generation order, combined with recent approaches to deployment at scale~\citep{nie2025large,dream2025,gemini2025diffusion,labs2025mercury,gong2025diffucoder}, has enabled them to surpass their autoregressive counterparts on several downstream tasks, such as reasoning, coding, and planning. 
+
+However, the standard MDM design lacks the ability to self-correct--\emph{a natural desideratum for generative models}--identifying low-quality or incorrect tokens and correcting them at inference. In MDMs, once a mask token is unmasked, it remains fixed for the entire inference (Figure~\ref{fig:main}, left). Consequently, the model cannot revise early mistakes, a limitation several recent methods have tried to overcome~\citep{campbell2022continuous,lezama2022discrete,zhao2024informed,wang2025remasking,von2025generalized,peng2025pathplanningmaskeddiffusion}. Unfortunately, existing approaches come with one of two drawbacks: they either \textbf{(1)} indirectly or inaccurately learn a notion of token quality that lacks theoretical grounding and is potentially inefficient to evaluate or \textbf{(2)} entirely change the MDM framework or architecture, limiting their applicability.
+
+\textbf{Contribution.} In this work, we propose a simple, principled solution addressing these limitations, \xblue{\textbf{PRISM}}: \xblue{\textbf{P}}lug-in \xblue{\textbf{R}}emasking for \xblue{\textbf{I}}nference-time \xblue{\textbf{S}}elf-correction of \xblue{\textbf{M}}asked diffusions, a plug-and-play fine-tuning framework that easily adapts to any pretrained MDM (addressing {\textbf{(1)}}) and directly learns the clean token's quality given a partially masked sequence (addressing {\textbf{(2)}}).
+
+\underline{Theoretically}, PRISM introduces a novel self-correction loss that \emph{provably} learns the per-token quality scores. It attaches a lightweight adapter to any pretrained MDM and fine-tunes with this loss; at inference, the learned scores detect low-quality tokens to \emph{remask} and potentially be revised in subsequent inference steps (Figure~\ref{fig:main}, right). \underline{Practically}, PRISM improves MDM inference across a range of domains and scales: Sudoku, unconditional text generation with a 170M MDM, and code generation with LLaDA~\citep{nie2025large}, an open-source 8B MDM. Notably, on LLaDA, with $<500$ GPU-hours of fine-tuning, it acquires the ability to self-correct, outperforming baselines on MBPP~\cite{austin2021program}.
+
+\rebuttal{
+\textbf{Why self-correction?} 
+Although self-correction is a common challenge in generative models where a token cannot be revised, it plays a more critical role in MDMs. This is because of a unique parallel sampling nature of MDMs, which significantly reduces inference cost. However, this parallel generation with only a few inference steps makes them more susceptible to dependency errors across positions~\citep{liu2024discrete,xu2024energy,kang2025parallelbench}, as MDMs model per-position unmasking posteriors rather than the full joint distribution over positions. This limitation naturally motivates the need for self-correction mechanisms that can detect and rectify erroneous predictions. Indeed, our experiments show that PRISM becomes increasingly effective as more tokens are sampled in parallel, i.e., when MDM inference is performed with fewer sampling steps.}
+
+
+\textbf{Organization.} We begin by reviewing MDMs in Section~\ref{sec:prelim_mdm} and previous work on equipping MDMs with self-correction ability in Section~\ref{sec:prior_work_main}. We introduce PRISM in Section~\ref{sec:prism} with its theoretical foundation and validate its empirical ability in Section~\ref{sec:experiment}.
+
+% \rebuttal{
+% \textbf{Concurrent work.\footnote{This paragraph has been included from version two of this manuscript.}} Although entailed with different details, \citep{meshchaninov2025guided,li2025riv} address the self-correction problem for MDM by training an additional module that takes $\hat{\rvx}_0$ as input, thereby belonging in the class of \emph{proxy-$\hat{\rvx}$ approaches} in Section~\ref{sec:prior_work_main}. 
+% The most relevant work, \citet{huang2025don}, shares the same motivation and experimental setup but differs in several aspects, which we elaborate on in Appendix~\ref{appendix:prior_work}.
+% }
+
+

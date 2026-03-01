@@ -1,0 +1,138 @@
+\subsection{Additional Experimental Results of LLaDA-8B-Instruct}\label{sec:app-llada8b}
+
+Besides the comprehensive evaluation with the SoTA Dream-v0-Instruct-7B diffusion model, we further validate the effectiveness of the proposed method with LLaDA-8B-Instruct~\cite{nie2025large}. 
+As presented in Table~\ref{tab:combined-llada-guided}, the proposed \texttt{FreeCache} and guided unmasking have demonstrated the consistent speedup on the GSM8K dataset with 8-shot chain-of-thought~(CoT).  
+
+The baseline LLaDA-8B-Instruct~\cite{nie2025large} can optionally support semi-autoregressive unmasking by dividing the sequence into several blocks and unmasking them from left to right. The user-defined hyperparameter \texttt{block length} defines the size of the block~\cite{nie2025large}. However, this does not make the generation autoregressive, and the model still processes the full sequence length at each denoising step.
+
+In our proposed guided diffusion method, \texttt{block length} is not used or needed since the diffusion model generates all draft tokens at each step, while the AR model is used to guide the unmasking process. In other words, the ``effective block length'' of the guided unmasking is the length of all the diffused draft tokens at each step of drafting. 
+% because we leverage the AR model to guide the unmasking 
+
+% Since proposed Guided Unmasking diffuse all the tokens with one-time 
+
+% \begin{table}[H]
+% \centering
+% \caption{GSM8K accuracy and latency for LLaDA (block length 32) and guided diffusion with Qwen2.5-Instruct models.}
+% \begin{tabular}{llccc}
+% \toprule
+% \textbf{Model / Setting} & \textbf{Details} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Speedup} \\
+% \midrule
+% \multicolumn{5}{c}{\textit{LLaDA (Block Length = 32)}} \\
+% \midrule
+% Baseline &  & 81.52 & 57.02 & \textbf{1.00~$\times$} \\
+% Baseline + Early Stop &  & 81.65 & 37.17 & 1.53~$\times$ \\
+% Cache + Early Stop &  & 78.24 & 8.27 & 6.89~$\times$ \\
+% \midrule
+% \multicolumn{5}{c}{\textit{Guided Diffusion}} \\
+% \midrule
+% Qwen2.5-1.5B-Instruct & Top-1 Match & 79.91 & 4.29 & -- \\
+% Qwen2.5-3B-Instruct   & Top-1 Match & 79.53 & 5.16 & -- \\
+% Qwen2.5-7B-Instruct   & Top-1 Match & 79.30 & 5.21 & -- \\
+% Qwen2.5-1.5B-Instruct & Top-5 Match          & 79.91 & 3.80 & -- \\
+% Qwen2.5-3B-Instruct   & Top-5 Match          & 80.06 & 4.29 & -- \\
+% Qwen2.5-7B-Instruct   & Top-5 Match          & 79.76 & 4.42 & -- \\
+% \bottomrule
+% \end{tabular}
+% \label{tab:block32-guided}
+% \end{table}
+
+
+% \begin{table}[H]
+% \centering
+% \caption{GSM8K accuracy, latency, and speedup for LLaDA (block length 32) and guided diffusion with Qwen2.5-Instruct models. Speedup is relative to the baseline latency.}
+% \resizebox{0.7\linewidth}{!}{\begin{tabular}{ccccc}
+% \toprule
+% \textbf{Model / Setting} & \textbf{Details} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Speedup} \\
+% \midrule
+% \multicolumn{5}{c}{\textit{LLaDA (Block Length = 32)}} \\
+% \midrule
+% Baseline &  & 81.52 & 57.02 & \textbf{1.00~$\times$} \\
+% Baseline + Early Stop &  & 81.65 & 37.17 & \textbf{1.53~$\times$} \\
+% Cache + Early Stop &  & 78.24 & 8.27 & \textbf{6.89~$\times$} \\
+% \midrule
+% \multicolumn{5}{c}{\textit{Guided Diffusion (Qwen2.5-Instruct)}} \\
+% \midrule
+% Qwen2.5-1.5B-Instruct & Top-1 Match & 79.91 & 4.29 & \textbf{13.29~$\times$} \\
+% Qwen2.5-3B-Instruct   & Top-1 Match & 79.53 & 5.16 & \textbf{11.05~$\times$} \\
+% Qwen2.5-7B-Instruct   & Top-1 Match & 79.30 & 5.21 & \textbf{10.94~$\times$} \\
+% Qwen2.5-1.5B-Instruct & Top-2 Match & 78.85 & 4.40 & \textbf{12.96~$\times$} \\
+% Qwen2.5-3B-Instruct   & Top-2 Match & 79.75 & 4.40 & \textbf{12.96~$\times$} \\
+% Qwen2.5-7B-Instruct   & Top-2 Match & 79.68 & 4.50 & \textbf{12.67~$\times$} \\
+% Qwen2.5-1.5B-Instruct & Top-5 Match & 79.91 & 3.80 & \textbf{15.01~$\times$} \\
+% Qwen2.5-3B-Instruct   & Top-5 Match & 80.06 & 4.29 & \textbf{13.29~$\times$} \\
+% Qwen2.5-7B-Instruct   & Top-5 Match & 79.76 & 4.42 & \textbf{12.90~$\times$} \\
+% \bottomrule
+% \end{tabular}}
+% \label{tab:block32-guided}
+% \end{table}
+
+
+% \begin{table}[h!]
+% \centering
+% \caption{GSM8K accuracy, latency, and speedup for LLaDA (block length 64) and guided diffusion with Qwen2.5-Instruct models. Speedup is relative to the baseline latency.}
+% \resizebox{0.7\linewidth}{!}{\begin{tabular}{ccccc}
+% \toprule
+% \textbf{Model / Setting} & \textbf{Details} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Speedup} \\
+% \midrule
+% \multicolumn{5}{c}{\textit{LLaDA (Block Length = 64)}} \\
+% \midrule
+% Baseline &  & 79.30 & 56.89 & \textbf{1.00~$\times$} \\
+% Baseline + Early Stop &  & 79.53 & 38.54 & \textbf{1.48~$\times$} \\
+% Cache + Early Stop &  & 76.64 & 8.44 & \textbf{6.76~$\times$} \\
+% \midrule
+% \multicolumn{5}{c}{\textit{Guided Diffusion (Qwen2.5-Instruct)}} \\
+% \midrule
+% Qwen2.5-1.5B-Instruct & Top-1 Match & 79.91 & 4.29 & \textbf{13.26~$\times$} \\
+% Qwen2.5-3B-Instruct   & Top-1 Match & 79.53 & 5.16 & \textbf{11.02~$\times$} \\
+% Qwen2.5-7B-Instruct   & Top-1 Match & 79.30 & 5.21 & \textbf{10.92~$\times$} \\
+% Qwen2.5-1.5B-Instruct & Top-2 Match & 78.85 & 4.40 & \textbf{12.93~$\times$} \\
+% Qwen2.5-3B-Instruct   & Top-2 Match & 79.75 & 4.40 & \textbf{12.93~$\times$} \\
+% Qwen2.5-7B-Instruct   & Top-2 Match & 79.68 & 4.50 & \textbf{12.64~$\times$} \\
+% Qwen2.5-1.5B-Instruct & Top-5 Match & 79.91 & 3.80 & \textbf{14.97~$\times$} \\
+% Qwen2.5-3B-Instruct   & Top-5 Match & 80.06 & 4.29 & \textbf{13.26~$\times$} \\
+% Qwen2.5-7B-Instruct   & Top-5 Match & 79.76 & 4.42 & \textbf{12.87~$\times$} \\
+% \bottomrule
+% \end{tabular}}
+% \label{tab:block64-guided}
+% \end{table}
+
+
+
+
+\begin{table}[h!]
+\caption{GSM8K~(8-shot) accuracy, latency, and speedup for LLaDA-8B-Instruct with block sizes 32 and 64 and guided diffusion with Qwen2.5-Instruct models. Speedups are relative to the corresponding LLaDA baseline latency.}
+\vspace{0.2em}
+\centering
+\begin{tabular}{llccc}
+\toprule
+\textbf{Model / Setting} & \textbf{Details} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Speedup} \\
+\midrule
+\multicolumn{5}{c}{\textit{LLaDA Baselines}} \\
+\midrule
+\multicolumn{5}{l}{\textbf{Block Length = 32}} \\
+Baseline &  & 81.52 & 57.02 & \textbf{1.00~$\times$} \\
+% Baseline + Early Stop &  & 81.65 & 37.17 & \textbf{1.53~$\times$} \\
+% \texttt{FreeCache}~(This work) &  & 78.24 & 8.27 & \textbf{6.89~$\times$} \\
+\texttt{FreeCache}~(This work) &  & 79.76 & 9.20 & \textbf{6.20~$\times$} \\
+\midrule
+\multicolumn{5}{l}{\textbf{Block Length = 64}} \\
+Baseline &  & 79.30 & 56.89 & \textbf{1.00~$\times$} \\
+% Baseline + Early Stop &  & 79.53 & 38.54 & \textbf{1.48~$\times$} \\
+% \texttt{FreeCache}~(This work) &  & 76.64 & 8.44 & \textbf{6.76~$\times$} \\
+\texttt{FreeCache}~(This work) &  & 77.18 & 9.02 & \textbf{6.32~$\times$} \\
+\midrule
+\multicolumn{5}{c}{\textit{Guided Diffusion (Qwen2.5-Instruct) with \texttt{FreeCache}}} \\
+\midrule
+Qwen2.5-1.5B-Instruct & Top-1 Match & 79.91 & 4.29 & \textbf{13.29~$\times$} \\
+Qwen2.5-3B-Instruct   & Top-1 Match & 79.53 & 5.16 & \textbf{11.05~$\times$} \\
+Qwen2.5-7B-Instruct   & Top-1 Match & 79.30 & 5.21 & \textbf{10.94~$\times$} \\
+Qwen2.5-1.5B-Instruct & Top-2 Match & 78.85 & 4.40 & \textbf{12.96~$\times$} \\
+Qwen2.5-3B-Instruct   & Top-2 Match & 79.75 & 4.40 & \textbf{12.96~$\times$} \\
+Qwen2.5-7B-Instruct   & Top-2 Match & 79.68 & 4.50 & \textbf{12.67~$\times$} \\
+Qwen2.5-1.5B-Instruct & Top-5 Match & 79.91 & 3.80 & \textbf{15.01~$\times$} \\
+Qwen2.5-3B-Instruct   & Top-5 Match & \textbf{80.06} & 4.29 & \textbf{13.29~$\times$} \\
+Qwen2.5-7B-Instruct   & Top-5 Match & 79.76 & 4.42 & \textbf{12.90~$\times$} \\
+\bottomrule
+\end{tabular}
+\label{tab:combined-llada-guided}
+\end{table}

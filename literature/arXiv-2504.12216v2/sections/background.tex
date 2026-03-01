@@ -1,0 +1,66 @@
+%\begin{figure}[h]
+% \centering
+%  \includegraphics[width=1\textwidth]{figs/d1.pdf}
+%\caption{\textbf{Reasoning Forcing via Inpainting:} masked dLLMs take in unmasked prompts alongside masked tokens during generation. We inpaint \textit{Behavior Inpainting Tokens} at specific positions. Since dLLMs employ bidirectional attention, they can condition on future signals. Combined with their strong prior for coherent text generation, this inpainting encourages the model to produce explicit reasoning traces when answering questions. In contrast, standard denoising approaches may leave tokens unused by generating padding tokens, wasting compute and potential space for reasoning.}
+% \label{fig:inpainting}
+%\end{figure}
+
+\section{Preliminaries}
+\label{sec:background}
+\subsection{Masked Diffusion Large Language Models}
+% \paragraph{Training} 
+Masked dLLMs~\citep{austin2021structured, sahoo2024simple, shi2024simplified, ou2024your, loudiscrete}, involve a forward process that gradually corrupts a sequence of tokens $x_0$ by the $\mask$ token. The process is indexed by time $t \in [0, 1]$. At timestep $t$, the sequence $x_t$ is partially masked, where for each token the probability of remaining unmasked is $\alpha_t$. Particularly, $\alpha_t$ (a.k.a noise schedule) is strictly decreasing in $t$. When $t=1$, all the tokens in $x_1$ are masked. 
+% The exact rate of corruption is prefixed \qq{introduce $\alpha$ here and explain it varies over $t$} \dev{Should we maybe skip talking about MDLM here, and just focus on llada and its weighting term? I feel introducing $\alpha$ might be unnecessary, since we do all expts with the llada weighting term}. 
+To train a masked dLLM, we begin by designing a forward process with a specific form of $\alpha_t$. We parameterize a bidirectional unmasking predictor $f_\theta$. In each iteration, we randomly sample a timestep $t \in [0, 1)$ and mask the tokens based on the designed forward process. Given these corrupted inputs, the learning objective is to predict the original tokens. The standard loss function for this task is the negative evidence lower bound (NELBO), which is an upper bound of the negative log-likelihood (NLL) of the data. For masked dLLMs, NELBO simplifies to a weighted NLL, where the weights are determined by a transformation of $\alpha_t$~\citep[Equation (10)]{sahoo2024simple}.
+In this work, we apply d1 on top of LLaDA~\citep{nie2025largelanguagediffusionmodels}, whose forward process sets $\alpha_t = 1 -t$ and the resulting NELBO is
+\begin{equation}
+-  \mathbb{E}_
+{{t\sim \mathcal{U}[0,1)}, \; x_0 \sim p_{\text{data}}, \; x_t \sim q_{t|0}(x_t | x_0)} \left[ \frac{1}{t} \sum_{k=1}^{|x_t|} \indicator[x_t^k = \mask] \log f_{\theta}(x_0^k \mid x_t) \right],
+\label{eq:llada_loss}
+\end{equation}
+where $|x_t|$ is the sequence length of $x$, and $x^k$ is the $k$-th token.
+Note that the loss is only calculated for tokens that are masked out in timestep $t$. The key difference between masked dLLMs and BERT~\citep{devlin-etal-2019-bert} is that the latter uses a fixed masking ratio and the decoding is a single-step infilling process, whereas masked dLLMs use time-varying masking ratios and the decoding process involves multiple steps starting from pure noise and thus resulting in a generative model. Further details about the formulation of masked dLLMs are deferred to \autoref{appendix:dllm-training}.
+
+
+
+\subsection{Group Relative Policy Optimization for Large Language Models}
+Policy gradient methods have been widely adopted in the post-training stage to enhance the performance of LLMs \citep{ouyang2022training, bai2022training, li2023remax, ahmadian2024back}.
+% , optimizing policies by directly estimating the gradient of expected returns with respect to model parameters. 
+While Proximal Policy Optimization (PPO)~\citep{schulman2017proximal} has been the predominant approach in online RL, it requires jointly training a state value function $V$ to estimate advantages, leading to increased computational demands. Group Relative Policy Optimization (GRPO)~\citep{shao2024deepseekmath} offers a more efficient alternative by using group statistics to derive advantages. 
+For each question $q$, GRPO samples a group of $G$ responses $\{o_1, o_2, \ldots, o_G\}$ from the old 
+ policy $\piold$. It then sets the advantages for all tokens $k = 1, \ldots, |o_i| $ for $o_i$ as the normalized reward
+$
+\frac{r_i - \text{mean}(\{r_j\}_{j=1}^G)}{\text{std}(\{r_j\}_{j=1}^G)}
+$. Here, we can view $\text{mean}(\{r_j\}_{j=1}^G)$ as a $G$-sample Monte Carlo estimation of the value $V(q)$, while the sparse reward $r_i$ serves as the (undiscounted) state-action value $Q(q, o_i)$. However, 
+normalizing the advantage $Q(q, o_i) - V(q)$ by nonzero state function introduces bias into policy gradient estimation. Therefore, similar to~\citet{liu2025understanding}, we use the unnormalized advantage
+\begin{equation}
+    A_i^k(\pi) = r_i(\pi) - \text{mean}(\{r_j(\pi)\}_{j=1}^G), \; 1 \leq k \leq |o_i|.
+    \label{eq:our_adv}
+\end{equation}
+% \begin{equation}
+%     A^{\pi}_i(q) = r_i(\pi, q) - \text{mean}(\{r_j(\pi, q)\}_{j=1}^G).
+%     \label{eq:our_adv}
+% \end{equation}
+% Empirically, we have observed 30\% sample complexity reduction by removing the normalization, see~\qq{add appendix.} 
+The rest of our RL setup follows GRPO. The objective function incorporates a clipping mechanism (similar to PPO) to moderate policy updates, and a reverse KL penalty to prevent excessive deviation from the reference policy:
+\begin{equation}
+\label{eq:grpo_loss}
+\resizebox{0.93\columnwidth}{!}{
+$
+\displaystyle
+\mathcal{L}_{\text{GRPO}}(\theta)
+= \mathbb{E}_{\stackrel{q \sim \D}{o_1, \ldots, o_G \sim \pi_\theta(\cdot | q)}}
+    \left[ \left( \frac{1}{G}\sum_{i=1}^G \frac{1}{|o_i|}\sum_{k=1}^{|o_i|} \min
+    \left(\rho_i^k A_i^k, \text{clip}\left(\rho_i^k, 1-\varepsilon, 1 + \varepsilon \right) A_i^k\right) \right)
+%- \beta D_{\text{KL}}\left(\pi_{\theta}\| \pi_{\text{ref}}\right)
+- \beta D_{\text{KL}}\left[\pi_\theta(\cdot | q)\| \pi_\text{ref}(\cdot | q) \right]
+\right],
+$
+}
+\end{equation}
+where $\pi_{\theta}$ is the current policy being updated, $\piold$ is the policy before the update,  $\rho_i^k = \tfrac{\pi_{\theta}(o_i^k|q,\, o_i^{<k})}{\piold(o_i^k|q,\, o_i^{<k})}$, $A^k_i$ is computed using $\piold$ and \cref{eq:our_adv},
+and $\pi_{\text{ref}}$ is the reference policy (typically the initial model). 
+% The index $k$ refers to the token position within each output $o_i$, as the GRPO objective applies the advantage at each token level. 
+The clipping parameter $\varepsilon$ limits the magnitude of policy updates to ensure stability, while $\beta$ controls the strength of the KL divergence regularization.
+
+

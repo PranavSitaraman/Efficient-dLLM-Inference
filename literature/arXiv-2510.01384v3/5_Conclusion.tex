@@ -1,0 +1,12 @@
+\section{Conclusion}
+\textbf{Discussion on experimental results.} 
+MDMs model per-position unmasking posteriors rather than the joint distribution over positions. Consequently, with few-step inference, they are prone to dependency errors across positions~\citep{liu2024discrete,xu2024energy,kang2025parallelbench}, which creates a natural opportunity for our self-correction mechanism to detect erroneous predictions. We confirm this empirically: methods that incorporate remasking outperform vanilla MDM inference as the number of sampling steps decreases (Figure~\ref{fig:mauve-and-gen-ppl-plot}, Table~\ref{tab:llada}). In particular, PRISM achieves larger gains than baselines by learning per-token quality. However, as the number of sampling steps increases, partially unmasked sequences contain fewer errors, leaving less headroom for the self-correction.
+\rebuttal{
+For the scaling-up experiments in Section~\ref{sec:llada}, although we fine-tune LLaDA-8B-Instruct on only 0.1M dataset pairs, we expect that a more generalized model could be obtained by constructing a richer and more diverse dataset, given sufficient compute.
+}
+
+\textbf{Outlook.} We introduced PRISM, a plug-and-play fine-tuning framework that equips pretrained MDMs with self-correction ability, addressing prevalent limitations of prior work. PRISM operates under a theoretically grounded fine-tuning loss and shows efficiency across multiple domains and scales. 
+
+A unique feature of the PRISM loss is that it provably learns per-token quality without fully generating a clean sequence. This sheds light on PRISM's potential compared to other approaches, such as reinforcement learning, where full sequence generation is necessary to obtain a learning signal. That said, our notion of per-token quality score has limits; as it is based on the per-position posterior marginals, it cannot fully capture global errors, e.g., reasoning. An important direction for future work is to develop frameworks that enable discrete diffusion models to detect global reasoning errors.
+
+Stepping back, this work is part of a broader program to build generative models that compose discrete sequences the way that humans do--through correction and reordering. The flexibility of MDMs at inference time offers a key stepping stone towards this goal.

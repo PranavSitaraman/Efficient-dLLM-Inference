@@ -1,0 +1,74 @@
+\section{Learning Unmasking Policies}
+We now introduce our approach to learn sampling in dLLMs via reinforcement learning (RL). We begin by formulating sampling as a Markov decision process (MDP) (\Cref{sec:methods_mdp}), then propose a sampling policy (\Cref{sec:methods_policy}), and finally provide details on our RL training  (\Cref{sec:methods_grpo}).
+
+\subsection{dLLM Sampling as a Markov Decision Process}
+\label{sec:methods_mdp}
+To facilitate the development of RL-based samplers, we start by describing the Markov decision process (MDP) \citep{sutton1998reinforcement} for sampling in dLLMs in its most general case:
+\footnote{To stay aligned with the MDM notation in \Cref{sec:back_mdm}, we reverse the time in our MDP formulation: $t = T, T-1, \ldots, 0$.}
+\begin{itemize}
+
+    \item The \emph{state} $(\vx, \vy_t)$  consists of a prompt $\vx \in \gV^d$ and the current (partially masked) generation $\vy_t \in \gV^L$. For brevity, we omit $\vx$ from the state notation unless explicitly needed. The initial state contains a fully masked generation: $\vy_T = (\mask, \ldots, \mask)$.
+    
+    \item An \emph{action} $\vu_t \in \{0, 1\}^L$ is a vector of unmasking decisions  indicating which positions have been selected to be unmasked in the next transition step. These actions are chosen according to the policy $\pi_\phi$: $\vu_t \sim \pi_{\phi}(\cdot \mid \vy_t)$ (introduced later in \Cref{sec:methods_policy}).
+    
+    \item The \emph{transition} $\vy_{t-1} \sim P(\vy_{t-1} \mid \vy_t, \vu_t; \tau)$ corresponds to standard sampling in dLLMs (cf. \Cref{eq:mdm_sampling}), with the action $\vu_t$ determining which tokens get unmasked: $\gU_t^{\pi} := \{k \in \gM_t \mid u_t^k = 1 \}$. %
+    
+    \item The \emph{reward} $R(\vy, \vy_t)$ is provided only at the final generation step, which corresponds to the first timestep where all tokens have been unmasked $\hat{T} := \max \{t \in [T] \mid y_t^k \neq M, \forall k \in [L] \}$. To learn useful samplers, the reward should promote both correctness (i.e., the generated answer $\vy_{\hat{T}}$ being `close' to the reference answer $\vy$) and efficiency (i.e., minimizing the number of steps $T - \hat{T}$). Note that the reward depends on action $\vu_t$, and therefore on the policy $\pi_\phi$, implicitly through its influence on the generations $\vy_t$ and the number of steps; we omit it from the input arguments to simplify notation. We defer our concrete choice of the reward function to \Cref{sec:methods_grpo}.
+    
+\end{itemize}
+With the MDP defined above, finding the optimal sampling becomes a standard reinforcement learning problem of finding a policy $\pi_\phi$ parametrized by $\phi$ that maximizes the expected reward:
+
+\begin{align*}
+    \max_{\phi} \mathbb{E}_{(\vx, \vy) \sim p_{\text{data}}, \: \vu_t \sim \pi_{\phi}, \: \vy_t \sim P} \bigg[ \sum_{t=0}^T R(\vy,  \vy_t)\bigg] \: .
+\end{align*}
+
+
+    
+    
+    
+    
+
+
+
+\subsection{Lightweight Confidence Policy Design}
+\label{sec:methods_policy}
+Having outlined the MDP above, we next describe our proposed implementation for the sampling policy $\pi_{\phi}$.
+
+\paragraph{Confidence-based input} Recall that a state consists of a partially masked token sequence $\vy_t$. To avoid constructing policies that operate at the token level, and thereby minimize computational overhead, we rely on the vector of token confidences $\vc_t := (c_t^1, \ldots, c_t^L)$, which are readily available since the token-level predictive distributions $p_t^k$ are computed at each transition step $\vy_{t-1} \sim P$ anyways. Our choice is further motivated by the aforementioned heuristic methods that primarily operate on confidences \citep{fastdllm2025}, and also based on our own ablations (see \Cref{sec:exp-ablate}). Specifically, we observed that alternatively relying on dLLM's hidden states required significantly larger policy models without consistently improving performance. %
+
+
+\paragraph{Lightweight transformer} We introduce a small, learnable neural network $f_{\phi}$ that maps the vector of confidences $\vc_t$ to a vector of unmasking scores (logits) $\vb_t = f_{\phi}(\vc_t, \vm_t, t)$ with $\vb_t \in \mathbb{R}^L$. We additionally include a binary mask vector $\vm_t := (m_t^1, \ldots, m_t^L)$, where $m_t^k := \mathbf{1}[k \in \mathcal{M}_t]$ indicates whether position $k$ is still masked, and inform the policy with the time index $t \in [T]$.  In practice, $f_{\phi}$ is implemented as a lightweight transformer (see \Cref{sec:exp} for more details on the exact policy architecture). Notably, its size is less than $0.01\%$ of the pretrained dLLMs used in our experiments, resulting in negligible computational overhead during sampling.
+
+\paragraph{Bernoulli likelihood} We sample the unmasking actions according to $u_t^k \sim \text{Ber}\big(s_t^k\big)$ with $s_t^k := \sigma(b_t^k)$, where $\text{Ber}(\cdot)$ denotes the Bernoulli distribution and $\sigma(\cdot)$ is the sigmoid function. Conveniently, the policy likelihood $\pi_{\phi}(\vu_t) := \prod_{k=1}^L (s_t^k)^{u_t^k} \cdot (1 - s_t^k)^{1-u_t^k}$ is readily available in closed form and does not require any additional approximations (unlike in the case of post-training dLLMs; \citealt{zhao2025d1}). We also considered an alternative formulation based on the Plackett-Luce model \citep{luce1959individual,plackett1975analysis} which we call \emph{dynamic Plackett-Luce sampling} (DPLS; see Appendix \ref{sec:appendix-dpls}), but since our ablations showed comparable performance (\Cref{sec:exp-ablate}), we favor the Bernoulli formulation in our main experiments for its simplicity.
+
+At generation, we additionally propose to ``temper'' the Bernoulli parameters $s_t^k := \sigma(b_t^k / \tau_{\pi})$ , where $\tau_{\pi}$ is the policy sampling temperature. This temperature controls the sharpness of the policy distribution and, as shown in \Cref{sec:exp}, we found that it can sometimes serve as a test-time knob for balancing performance (for example,  $\tau_{\pi} < 1$ forces the Bernoulli distribution to be more ``decisive'' by pushing the probability more towards either 0 or 1 depending on the sign of the logit $b_t^k$). Moreover, to ensure convergence when all sampled actions are zero ($\vu_t = \mathbf{0}$), we unmask the position with the highest Bernoulli parameter $s_t^k$ (similar to Fast-dLLM, see \Cref{sec:back_heuristics}). 
+We apply this fallback only at generation time, as we found that forcing unmasking during training was prone to reward hacking, where the model would reliably obtain non-zero (but sub-optimal) reward simply by pushing all its predictions $b_t^k$ towards $-\infty$.
+By not enabling this behavior during training, the policy is forced to actively choose which tokens to unmask.
+
+
+
+
+
+
+
+\subsection{Learning $\pi_\phi$ with GRPO}
+\label{sec:methods_grpo}
+To train our sampling policy, we adopt group relative policy optimization (GRPO) \citep{shao2024deepseekmath}, a method recently popularized as a simpler and more scalable alternative to earlier policy gradient approaches such as PPO \citep{schulman2017proximal}. Specifically, for each prompt $\vx \in \gD$, we sample $G$ trajectories of generations $\{\vy_T^g, \ldots, \vy_{\hat{T}_g}^g \}_{g=1}^G$ along with their corresponding unmasking decisions $\{\vu_T^g, \ldots, \vu_{\hat{T}_g}^g \}_{g=1}^G$. Importantly, we fix the dLLM sampling temperature $
+\tau$ to $0$ (i.e., greedy decoding) to ensure that any variation among samples within a group arises solely from different unmasking actions. After computing rewards for each sample in the group, we define the advantage as $A_t^g := R(\vy, \vy_{\hat{T}_g}^g) - \frac{1}{G} \sum_{i=1}^G R(\vy, \vy_{\hat{T}_i}^i)$ , following recent best practices that recommend omitting standard deviation normalization of advantages \citep{zhao2025d1}. Additionally, note that the reward at the final generation step $\hat{T}_g$ for each sample is propagated to all preceding timesteps $t$ to provide a learning signal throughout the entire sampling process. Our final training objective is then
+\begin{align*}
+    \gJ(\phi) := \mathbb{E}_{(\vx, \vy) \sim \gD, \: \{\vy_{T:\hat{T}_g}^g \}_{g=1}^G \sim P_{\theta}, \: \{\vu_{T:\hat{T}_g}^g \}_{g=1}^G \sim \pi_{\phi_{\text{old}}}} \bigg[\frac{1}{G}\sum_{g=1}^G \frac{1}{T - \hat{T}_g}\sum_{t=\hat{T}_g}^{T} \min \big\{\rho_t^g \cdot A_t^g , \: \text{clip}(\rho_t^g, 1 - \epsilon, 1 + \epsilon) \cdot A_t^g \big\} \bigg]
+\end{align*}
+where $\pi_{\phi}$ is the current policy being updated, and $\pi_{\phi_{\text{old}}}$ refers to an earlier version of the policy used to generate the RL rollouts. The likelihood ratio  $\rho_t^g := \frac{\pi_{\phi}(\vu_t^g)}{\pi_{\phi_{\text{old}}}(\vu_t^g)}$ serves as the importance sampling correction term, which together with clipping (via $\epsilon$) aims to stabilize the off-policy training. Since our policies are trained from scratch, we remove %
+the KL regularization term in our GRPO objective. Finally, we note that GRPO can be equivalently interpreted as an off-policy variant of the standard REINFORCE algorithm \citep{williams1992simple}, where the group mean normalization functions as a control variate to reduce the variance of the policy gradient \citep{mohamed2020monte}.
+
+\paragraph{Reward} As mentioned in \Cref{sec:methods_mdp}, we wish to obtain a policy that yields `correct' generations while also being fast. To this end, we define our final \emph{multiplicative} reward as
+\begin{align}
+\label{eq:reward}
+        R(\vy, \vy_t) := \begin{cases}
+        r(\vy, \vy_t) \cdot \big(1 - \frac{T - t}{T} \big)^{\alpha} , & \text{if } t = \hat{T}, \\
+        0, & \text{otherwise,}
+    \end{cases}
+\end{align}
+where $r(\vy, \vy_t)$ is a task-specific correctness term (e.g., a binary reward indicating whether the generated mathematical answer is correct). To encourage faster sampling, we incorporate a computational penalty based on the number of steps, $T - \hat{T}$, with $\alpha \ge 0$ serving as a hyperparameter that controls the trade-off between accuracy and speed. %
+While we experimented with an additive penalty of the form $r(\vy_{\hat{T}
+}, \vy)- \alpha \big(\frac{T - \hat{T}}{T} \big)$ \citep{graves2016adaptive} we found that this led to problematic reward hacking: when all samples in a group are incorrect, as is the case early on when training from scratch, faster samples may still receive a positive advantage, despite being wrong. Such additive reward derailed and destabilized RL training (cf. \Cref{sec:exp-ablate}). Our multiplicative reward can therefore prioritize first correctness, and then efficiency.

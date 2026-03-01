@@ -1,0 +1,18 @@
+\begin{table}[h!]
+\centering
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{cccccccc}
+\toprule
+     & No FT & \multicolumn{6}{c}{33.5k FT steps}\\\cmidrule(r){2-2}\cmidrule(r){3-8}
+    & \multicolumn{2}{c}{Binary feedback} & \multicolumn{5}{c}{SM feedback with TD} \\\cmidrule(r){1-1}\cmidrule(r){2-3}\cmidrule(r){4-8}
+Task & No TD & No TD & No TD & Linear  & $t' = 0.2$ & $t' = 0.5$ & $t' = 0.8$ \\\cmidrule(r){1-1}\cmidrule(r){2-3}\cmidrule(r){4-8}
+Humaneval & $18.9$& $19.0_{(\pm 1.7)}$& $\mathbf{24.8}_{(\pm 1.1)}$& $22.4_{(\pm 1.2)}$& $\mathbf{24.8}_{(\pm 1.1)}$& $\mathbf{24.8}_{(\pm 1.1)}$& $\mathbf{24.8}_{(\pm 1.1)}$\\
+MBPP     &  $26.6$& $27.0_{(\pm 1.6)}$& $30.8_{(\pm 0.5)}$& $28.4_{(\pm 1.0)}$& $\mathbf{30.9}_{(\pm 0.5)}$& $30.7_{(\pm 0.5)}$& $30.6_{(\pm 0.6)}$\\ 
+GSM8k    & $57.8$& $59.5_{(\pm 1.1)}$& $\mathbf{62.3}_{(\pm 2.3)}$& $61.6_{(\pm 0.8)}$& $61.6_{(\pm 2.5)}$& $61.8_{(\pm 2.2)}$& $59.8_{(\pm 1.9)}$\\
+Math-500  & $14.2$& $17.3_{(\pm 1.2)}$& $19.8_{(\pm 2.1)}$& $\mathbf{20.4}_{(\pm 1.4)}$& $20.2_{(\pm 1.9)}$& $19.8_{(\pm 1.4)}$& $18.2_{(\pm 1.8)}$\\
+\midrule
+Avg.      & $29.4$& $31.4$&	$\mathbf{34.4}$&	$33.2$&	$\mathbf{34.4}$&	$34.3$& $33.3$\\ \bottomrule
+\end{tabular}
+\caption{Comparison of varying forms of TD. All TD functions transition from SM$\rightarrow$Binary with different processes. These ablations are compared with our binary baselines. All SM ablation columns are the \textit{mean} performance of the finetuned SM models with $k$=3 and the associated TD. For each task, the best performing model is highlighted in bold.}
+\label{tab:time_dependence_early}
+\end{table}

@@ -1,0 +1,29 @@
+{
+   "sources" : [
+      {
+         "usage" : "toplevel",
+         "filename" : "main.tex"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "antgroup.bst"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "ref/Top-sim.bib"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "ref/Top.bib"
+      },
+      {
+         "usage" : "ignore",
+         "filename" : "ref/reference.bib"
+      }
+   ],
+   "spec_version" : 1,
+   "texlive_version" : "2025",
+   "process" : {
+      "compiler" : "pdflatex"
+   }
+}

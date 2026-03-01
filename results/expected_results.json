@@ -1,0 +1,38 @@
+{
+  "description": "Expected results on GSM8K with LLaDA-8B-Instruct (T=64, L_gen=256)",
+  "note": "These are placeholder targets based on paper projections. Actual numbers will be populated after training.",
+  "baselines": [
+    {
+      "method": "Uniform Unmasking",
+      "accuracy": 0.55,
+      "nfe": 64,
+      "note": "Standard MDLM, no confidence-based selection"
+    },
+    {
+      "method": "S-Mode (tau_mask=0.7, tau_edit=0.9)",
+      "accuracy": 0.58,
+      "nfe": 64,
+      "note": "LLaDA 2.1 aggressive thresholds"
+    },
+    {
+      "method": "Q-Mode (tau_mask=0.95, tau_edit=0.99)",
+      "accuracy": 0.62,
+      "nfe": 64,
+      "note": "LLaDA 2.1 conservative thresholds"
+    },
+    {
+      "method": "Fast-dLLM (Wu et al. 2025)",
+      "accuracy": 0.56,
+      "nfe": 64,
+      "note": "Confidence thresholding without T2T editing"
+    }
+  ],
+  "aoae_pareto_targets": [
+    {"tau_pi": 0.3, "accuracy_target": 0.63, "speedup_target": "2-3x"},
+    {"tau_pi": 0.5, "accuracy_target": 0.62, "speedup_target": "3-5x"},
+    {"tau_pi": 0.7, "accuracy_target": 0.60, "speedup_target": "4-6x"},
+    {"tau_pi": 1.0, "accuracy_target": 0.58, "speedup_target": "5-8x"},
+    {"tau_pi": 1.5, "accuracy_target": 0.55, "speedup_target": "6-10x"},
+    {"tau_pi": 2.0, "accuracy_target": 0.50, "speedup_target": "8-12x"}
+  ]
+}

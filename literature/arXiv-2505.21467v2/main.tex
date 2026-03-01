@@ -1,0 +1,83 @@
+\documentclass{article}
+\usepackage{iclr2026_conference,times}
+
+% TODO:
+% Remove Alg2. 
+% Abstract: Report Avg. Speedup
+% Free Cache with better readability (Fig.2, Fig.1 (b)).
+% Add Llada Results to main manuscript.
+% Reduce / Remove comparison between GD and AR.
+% Update results based on the latest version of the work. 
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsfonts}
+\usepackage{nicefrac}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{colortbl}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{pifont}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{tcolorbox}
+% macros are defined in math_commands.tex
+\usepackage[ruled,vlined]{algorithm2e}
+
+% Custom commands from original paper
+\newcommand{\cmark}{\checkmark}
+\newcommand{\xmark}{\ding{55}}
+\newcommand{\circmark}{\textcircled{\small~}}
+\newcommand{\zhanqiu}[1]{\textcolor{blue}{(\texttt{zhanqiu:}#1\texttt{)}}}
+\definecolor{ora}{rgb}{0.97,0.88,0.84}
+\definecolor{goodgreen}{HTML}{009901}
+\definecolor{badred}{HTML}{CB0000}
+\definecolor{warningyellow}{HTML}{CD9934}
+\definecolor{lightred}{RGB}{255,200,200}
+\definecolor{lightgreen}{RGB}{200,255,200}
+\definecolor{lightyellow}{RGB}{255,255,200}
+\usepackage{tikz}
+\newcommand*\circled[1]{\tikz[baseline=(char.base)]{
+            \node[shape=circle,draw,inner sep=0.5pt] (char) {#1};}}
+
+\title{FlashDLM: Accelerating Diffusion Language Model Inference via Efficient KV Caching and Guided Diffusion}
+
+\author{Zhanqiu Hu\thanks{Equal contribution.} \quad Jian Meng\footnotemark[1] \quad Yash Akhauri \\
+\textbf{Mohamed S. Abdelfattah} \quad \textbf{Jae-sun Seo} \quad \textbf{Zhiru Zhang} \quad \textbf{Udit Gupta} \\
+Cornell University \\
+% \texttt{\{zh338, jm2787, ya255, ma839, js3528, zz284, ug28\}@cornell.edu}
+}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+
+\begin{document}
+
+\maketitle
+
+\input{abstract}
+
+\input{sections/outline}
+\input{sections/intro/introduction}
+\input{sections/related/related_work}
+\input{sections/method/method}
+\input{sections/experiments/experiments}
+\input{sections/limitations/limitations}
+
+\bibliography{sections/bib/references}
+\bibliographystyle{iclr2026_conference}
+
+\newpage
+\appendix
+\input{sections/appendix/appendix}
+
+\end{document}

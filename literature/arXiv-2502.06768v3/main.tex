@@ -1,0 +1,563 @@
+ %%%%%%%% ICML 2025 EXAMPLE LATEX SUBMISSION FILE %%%%%%%%%%%%%%%%%
+
+\documentclass{article}
+
+\usepackage{mdframed}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{array}
+\usepackage{subfigure}
+\usepackage{booktabs} % for professional tables
+\usepackage{stfloats}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{multirow}
+\usepackage{adjustbox}
+
+\usepackage{hyperref}
+
+\usepackage{ dsfont }
+
+% Attempt to make hyperref and algorithmic work together better:
+\newcommand{\theHalgorithm}{\arabic{algorithm}}
+\newcommand{\kulin}[1]{{\color{blue} Kulin: #1}}
+\newcommand{\sitan}[1]{{\color{blue} Sitan: #1}}
+\newcommand{\TODO}[1]{{\color{red} TODO: #1}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\mask}{0}
+
+
+\newcounter{boxcounter}
+\renewcommand{\theboxcounter}{\arabic{boxcounter}}
+
+
+% Custom environment for the box
+
+
+
+\newcommand{\topk}{Top-\(K\) }
+\newcommand{\topkprobdiff}{Top-\(K\) probability margin }
+\newcommand{\prior}{p_{\textrm{prior}}}
+\newcommand{\pdata}{p_{\rm{data}}}
+
+\usepackage[accepted]{icml2025}
+
+% For theorems and such
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+
+% if you use cleveref.
+\usepackage[capitalize,noabbrev]{cleveref}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% THEOREMS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{example}[theorem]{Example}
+\newtheorem{conjecture}[theorem]{Conjecture}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+
+\theoremstyle{remark}
+
+\newcommand{\msg}{\textrm{MS}}
+
+
+\newcounter{theo}
+\renewcommand{\thetheo}{\arabic{theo}}
+\newenvironment{theo}[2][]{%
+\refstepcounter{theo}%
+\ifstrempty{#1}%
+{\mdfsetup{%
+frametitle={%
+\tikz[baseline=(current bounding box.east),outer sep=0pt]
+\node[anchor=east,rectangle,fill=blue!20]
+{\strut Theorem~\thetheo};}}
+}%
+{\mdfsetup{%
+frametitle={%
+\tikz[baseline=(current bounding box.east),outer sep=0pt]
+\node[anchor=east,rectangle,fill=blue!20]
+{\strut ~#1};}}%
+}%
+\mdfsetup{innertopmargin=10pt,linecolor=blue!20,%
+linewidth=2pt,topline=true,%
+frametitleaboveskip=\dimexpr-\ht\strutbox\relax
+}
+\begin{mdframed}[]\relax%
+\label{#2}}{\end{mdframed}}
+
+% Todonotes is useful during development; simply uncomment the next line
+%    and comment out the line below the next line to turn off comments
+%\usepackage[disable,textsize=tiny]{todonotes}
+\usepackage[textsize=tiny]{todonotes}
+
+
+
+\newcommand{\loss}{\mathcal L}
+
+
+% The \icmltitle you define below is probably too long as a header.
+% Therefore, a short form for the running title is supplied here:
+\icmltitlerunning{Train for the Worst, Plan for the Best: Understanding Token Ordering in Masked Diffusions}
+
+\begin{document}
+
+
+\twocolumn[
+\icmltitle{Train for the Worst, Plan for the Best: \\
+Understanding Token Ordering in Masked Diffusions}
+
+\icmlsetsymbol{equal}{*}
+
+\begin{icmlauthorlist}
+\icmlauthor{Jaeyeon Kim}{equal,yyy}
+\icmlauthor{Kulin Shah}{equal,comp}
+\icmlauthor{Vasilis Kontonis}{comp}
+\icmlauthor{Sham Kakade}{yyy}
+\icmlauthor{Sitan Chen}{yyy}
+\end{icmlauthorlist}
+
+
+
+\icmlaffiliation{yyy}{Harvard University}
+\icmlaffiliation{comp}{University of Texas Austin}
+
+\icmlcorrespondingauthor{Kulin Shah}{kulinshah@utexas.edu}
+\icmlkeywords{Machine Learning, ICML}
+
+\vskip 0.3in]
+
+\printAffiliationsAndNotice{\icmlEqualContribution}
+
+\begin{abstract}
+In recent years, masked diffusion models (MDMs) have emerged as a promising alternative approach for generative modeling over discrete domains. Compared to autoregressive models (ARMs), MDMs trade off complexity at training time with flexibility at inference time. At training time, they must learn to solve an exponentially large number of infilling problems, but at inference time, they can decode tokens in essentially arbitrary order. In this work, we closely examine these two competing effects. On the training front, we theoretically and empirically demonstrate that MDMs indeed train on computationally intractable subproblems compared to their autoregressive counterparts. On the inference front, we show that a suitable strategy for adaptively choosing the token decoding order significantly enhances the capabilities of MDMs, allowing them to sidestep hard subproblems. On logic puzzles like Sudoku, we show that adaptive inference can boost solving accuracy in pretrained MDMs from $<7$\% to $\approx 90$\%, even outperforming ARMs with $7\times$ as many parameters and that were explicitly trained via teacher forcing to learn the right order of decoding. This shows that MDMs without knowledge of the correct token generation order during training and inference can outperform ARMs trained with knowledge of the correct token generation order. We also show the effectiveness of adaptive MDM inference on reasoning tasks such as coding and math on the 8B large language diffusion model (LLaDa 8B). 
+\end{abstract}
+
+\section{Introduction}
+
+While diffusion models~\cite{ho2020denoising,song2021score} are now the dominant approach for generative modeling in continuous domains like image, video, and audio, efforts to extend this methodology to discrete domains like text and proteins~\cite{austin2023structured,lou2024discrete,hoogeboom2021argmax} remain nascent. Among numerous proposals, masked diffusion models (MDMs) \cite{lou2024discrete,sahoo2024simple,shi2025simplified} have emerged as a leading variant, distinguished by a simple and principled objective: to generate samples, learn to reverse a noise process which independently and randomly masks tokens. 
+
+
+In many applications, such as language modeling, masked diffusion models (MDMs) still underperform compared to autoregressive models (ARMs)~\cite{nie2024scaling,zheng2024maskeddiffusionmodelssecretly}, which instead learn to reverse a noise process that unmasks tokens sequentially from left to right. However, recent studies suggest that MDMs may offer advantages in areas where ARMs fall short, including reasoning \cite{nie2024scaling,kitouni2024factorization}, planning \cite{ye2024beyond}, and infilling \cite{gong2024scaling}. This raises a key question: what are the strengths and limitations of MDMs compared to ARMs, and on what type of tasks can MDMs be scaled to challenge the dominance of ARMs in discrete generative modeling?
+
+To understand these questions, we turn a microscope to two key competing factors when weighing the merits of MDMs over ARMs:
+\begin{itemize}[leftmargin=*,topsep=0pt,itemsep=0pt]
+    \item \textbf{Complexity at training time}: MDMs face a more challenging training task by design. While ARMs predict the next token given an unmasked prefix, MDMs predict a token conditioned on a set of unmasked tokens in arbitrary positions. This inherently increases their training complexity.
+    \item \textbf{Flexibility at inference time}: On the other hand, the sampling paths taken by an MDM are less rigid. Unlike the fixed left-to-right decoding of ARMs, MDMs decode tokens in random order at inference. Even more is possible: MDMs can be used to decode in \emph{any order} (including left-to-right). 
+\end{itemize}
+Therefore, we ask:
+\begin{center}
+    \emph{Are the benefits of inference flexibility for MDMs enough to outweigh the drawbacks of training complexity?}
+\end{center}
+In this work, we provide dual perspectives on this question.
+
+\textbf{(1) Training for the worst.} \enspace First, we provide theoretical and empirical evidence that the overhead imposed by training complexity quantifiably impacts MDMs' performance. 
+
+Theoretically, we show examples of simple data distributions with a natural left-to-right order, where ARMs can provably generate samples efficiently. In contrast, there are noise levels at which a large fraction of the corresponding subproblems solved by MDMs for these distributions are provably computationally intractable. Empirically, we validate this claim on real-world text data, known to have left-to-right order and show that the imbalance in training complexity across subproblems persists even in real-world text data (Fig.~\ref{fig:scaling_laws}, left). 
+
+\paragraph{(2) Planning for the best.} While the above might appear to be bad news for MDMs, in the second part of this paper, we answer our guiding question in the affirmative by building upon the observation~\cite{chang2022maskgit, zheng2024reparameterized} that MDMs which can perfectly solve all masking subproblems can be used to decode in \emph{any} order.
+
+In first part of the paper, we show that the imbalance in complexity across subproblems during the training of MDMs results in some of the subproblems being poorly trained and the vanilla MDM inference that unmasks tokens in random order results in evaluating the poorly trained marginals. Therefore, in place of vanilla MDM inference, we consider \emph{adaptive} strategies that carefully select which token to unmask next. 
+Our key insight is that the adaptive strategies makes it possible to \emph{sidestep} the hard subproblems from training (Fig.~\ref{fig:main_fig}). In particular, we find that \textbf{even without modifying how MDMs are trained}, the resulting models' logits contain enough information to determine the right order in which to unmask. We show the effectiveness of the adaptive inference in solving logic puzzles, coding, math and infilling tasks. For example, on Sudoku puzzles, a simple adaptive strategy (Section~\ref{subsec:effective-design}) improves the accuracy of MDMs from $<7$\% to almost 90\%.
+
+\paragraph{Advantage of MDMs over ARMs.} We show that the main effectiveness of MDMs lies in tasks that do not have the \emph{same} natural token generation order across all sequences (e.g., logic puzzles and reasoning tasks like coding and math). By carefully designing experiments on logic puzzles, we show that \textbf{MDMs without the knowledge of the correct token generation order during training and inference} can outperform \textbf{ARMs trained with the knowledge of the correct token generation order}. In particular, we show that MDMs that decide the correct token generation order during inference via adaptive strategies can outperform ARMs that are trained to learn the right token generation order via supervised teacher forcing~\cite{shah2024causal,lehnert2024beyond}. 
+
+
+\paragraph{Organization.} In Section~\ref{sec:2}, we provide preliminaries on MDMs and set notation. In Section~\ref{sec:hardness}, we 
+examine MDM training and demonstrate the imbalance in computational intractability across subproblems. In Section~\ref{sec:inference}, we consider adaptive inference in MDMs and investigate its impact on likelihood modeling across various tasks.
+ 
+\section{Masked Diffusion Models (MDM)} \label{sec:2}
+In this section, we explain the framework of Masked Diffusion Models \cite{shi2025simplified,sahoo2024simple} and highlight its interpretation as an \emph{order-agnostic learner}. MDMs gradually add masking noise to the true discrete data and learn the marginal distribution of the induced reverse process. We formally define both the forward and reverse processes for MDMs below.
+
+
+Let the distribution $p_{\rm{data}}$ on $\{1,\ldots,m\}^L$ be the data distribution over sequences of length $L$ and with vocabulary $\{1, \ldots, m\}$. We use $\mask$ to denote the ``mask'' token. 
+
+\paragraph{Forward process.} For a given $x_0 \sim p_{\rm{data}}$ and a noise level $t \in [0,1]$, the forward process $x_t \sim q_{t|0}(\cdot \, | \, x_0)$ is a coordinate-independent masking process via $q_{t|0}(x_t | x_0) = \prod_{i=0}^{L-1} q_{t|0}(x_t^i | x_0^i)$,
+where $$q_{t|0}(x_t^i \mid x_0^i) = \mathrm{Cat}\bigl(\alpha_t \mathbf{e}_{x_0^i} + (1-\alpha_t)\mathbf{e}_{\mask} \bigr).$$ Here, $\alpha_t$ is a predefined noise schedule satisfying $\alpha_0 \approx 1, \alpha_1 \approx 0$ and $\mathbf{e}_{x_0^i} \in \mathbb{R}^{m+1}$ is a one-hot vector corresponding to the value of token $x_0^i$. $\mathrm{Cat}(\pi)$ denotes the categorical distribution given by $\pi \in \Delta^{m}$. In other words, for each $i$-th coordinate, $x_t^i$ is masked to the mask token $\mask$ with probability $1-\alpha_t$ and remains unchanged otherwise.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.47\textwidth]{Figures/figure_1_3.png}
+    \vspace{-0.2in}
+    \includegraphics[width=0.47\textwidth]{Figures/figure_1_4.png}
+    \caption{ 
+    (\textbf{Top}) MDM training can be seen as learning multiple masked prediction problems, where some are harder to learn, leading to performance imbalance (Section~\ref{sec:hardness}). 
+    (\textbf{Bottom}) During inference, adaptive MDM can avoid difficult problem instances, improving performance (Section~\ref{sec:inference}).}
+    \label{fig:main_fig}
+\end{figure}
+
+\paragraph{Reverse process.} The reverse process of the above forward process is denoted by $q_{s|t}(x_s | x_t, x_0)$ and is given by $q_{s|t}(x_s | x_t, x_0) = \prod_{i=0}^{L-1} q_{s|t}(x_s^{i} | x_t, x_0)$ for any $s<t$, where
+\begin{equation*}
+     q_{s|t}(x_s^i \, \lvert\, x_t, x_0) = \begin{cases} 
+       \mathrm{Cat}(\mathbf{e}_{x_t^{i}}) \quad & x_t^i \ne  0 \\
+     \mathrm{Cat}\left(\frac{1-\alpha_s}{1-\alpha_t}\mathbf{e}_0 + \frac{\alpha_s - \alpha_t}{1-\alpha_t}\mathbf{e}_{x_0^i}\right)
+  \quad &x_t^i= 0\,. 
+     \end{cases}
+\end{equation*}
+%\kulin{changed $e_{x_0}$ to $e_{x_0^i}$.} 
+The reverse transition probability $q_{s|t}(x_s^i | x_t, x_0)$ is approximated using $g_{\theta}(x_s^i | x_t) \triangleq q_{s|t}(x_s^i \, \lvert\, x_t, x_0 \leftarrow p_{\theta}(  \cdot | x_t, t) )$ where $p_\theta( \cdot | x_t,t)$ is a denoising network trained to predict the marginal distribution on $x_0^i$ via an ELBO-based loss for all masked tokens at noise scale $t$ (i.e., for all $i$ such that $x_t^i = 0$). To be precise, $q_{s|t} \left( x_s^i \mid x_t, x_0 \leftarrow p_{\theta}( \cdot | x_t, t) \right)$ indicates the conditional probability where $p_{\theta}(\cdot | x_t, t)$ is placed in the position of $e_{x_0^i}$ within $q_{s|t}(x_s^i \mid x_t, x_0)$. The denoising network is trained to minimize the following loss derived from the score-entropy \cite{lou2024discrete, sahoo2024simple, shi2025simplified, ou2024absorbing}:
+\begin{equation*}
+    \mathcal{L}_\theta = \int_{0}^1 \frac{\alpha_t'}{1-\alpha_t} \displaystyle \mathop{\mathbb{E}}_{ \substack{x_0 \sim p_{\rm data} \\ x_t \sim q_{t|0}(\cdot | x_0)}  }  
+    \sum_{i: x_t^i = 0} -\log p_\theta(x_0^i | x_t,t)  dt,
+\end{equation*}
+where $\alpha_t'=\frac{d \alpha_t}{dt}$ and the summation is computed over masked tokens (i.e., all $i$ such that $x_t^i = \mask$). In practice, a time-embedding-free architecture for the denoising network, i.e., $p_\theta( \cdot | x_t, t) = p_\theta(\cdot | x_t)$ is generally used as \(x_t\) implicitly contains information about \(t\) via the number of masked tokens.
+
+The reverse sampling process starts from the fully masked sentence $x_1 = (\mask,\ldots,\mask)$. Suppose we have a partially \textbackslash fully masked sequence \(x_t\) at a given noise level \(t \in (0,1]\). Then, to obtain $x_s$ for a predetermined noise level \(s < t\), we sample $x_s^i \sim g_\theta(\cdot | x_t)$ for all $i$. This process is repeated recursively from \(t=1\) to \(t=0\). 
+
+
+\subsection{Reformulating the training and inference of MDMs} \label{sec:agnostic_learner}
+
+In this section, we first discuss training of MDMs and compare it with ``left-to-right" order training of autoregressive models in \cref{sec:vanilla-mdm-training}. Then, we reformulate vanilla MDM inference in \cref{sec:vanilla-mdm-inference} to set the stage for the upcoming discussion.
+
+\subsubsection{Order-agnostic training of MDMs}
+\label{sec:vanilla-mdm-training}
+
+Recent works \cite{zheng2024maskeddiffusionmodelssecretly,ou2024absorbing} have observed that the learning problem of MDM is equivalent to a masked language model. Building upon their analysis, we reformulate the loss $\mathcal{L}_\theta$ to show that $\loss_{\theta}$ is a linear combination of the loss for all possible infilling masks. We first define \(x_0[M]\) as a masked sequence, obtained from original sequence $x_0$ where indices in the mask set $M$ (a subset of $[L]\triangleq\{1,2,\ldots,L\}$) are replaced with mask token $0$.
+
+\begin{proposition} \label{prop:mdm_loss}
+Assume $\alpha_0=1$, $\alpha_1 =0$ and denoising network $p_\theta$ is time-embedding free.
+Then $ \mathcal{L}_\theta \le -\mathbb{E}_{x_0 \sim p_{\rm data}}[\log p_\theta(x_0)]$ and
+\begin{equation} \label{eqn:mdm_loss}
+\mathcal{L}_\theta = -\sum_{ M\subseteq [L],i \in M} \frac{1}{| M |} \frac{1}{\binom{L}{|M|}} \displaystyle \mathop{\mathbb{E}}_{x_0 \sim p_{\rm data}} [ \log p_\theta(x^i_0 | x_0[M]) ],
+\end{equation}
+where $|M|$ is the size of the set $M$ 
+and \(p_\theta(x_i \mid x_0[M])\) indicates the conditional probability of the \(i\)-th coordinate from \(p_\theta(x_t)\).
+\end{proposition}
+The proof of the above proposition is given in Appendix~\ref{appenix:mdm-equivalent-loss}. As the MDM loss is a linear combination of the loss for all possible infilling mask $M$, the minimizer of the loss $\loss_{\theta}$ learns to solve \emph{every} masking problem. In other words, the optimal predictor $p_\theta$ is the posterior marginal of the $i$-th token, conditioned on $x_0[M]$ for all masks $M$. 
+
+
+On the other hand, Autoregressive Models (ARMs) learn to predict $i^{\textrm{th}}$ token $x^i$ based on all preceding tokens, from $x^0$ to $x^{i-1}$. This is equivalent to predicting $x^i$ by masking positions from $i$ to $L-1$. Therefore, the training objective for ARMs can be expressed as:
+\begin{equation} \label{eqn:ar_loss}
+    \log p_\theta(x_0) = \sum_{i=0}^{L-1} \log p_\theta ( x_0^i | x_0 [\{i,\ldots,L-1\}]).
+\end{equation}
+Typically, ARMs are trained to predict tokens sequentially from left to right. We refer to this as left-to-right training. However, it's also possible to train these models to predict tokens sequentially based on a \emph{fixed, known} permutation of the sequence. We refer to this general approach as \textbf{order-aware training}.
+
+To understand the comparison between the training objective of MDMs and ARMs, we want to highlight the equivalence between any-order autoregressive loss and MDM loss \cite{hoogeboom2022autoregressive, ou2024absorbing}. In particular, under conditions of Proposition~\ref{prop:mdm_loss}, MDM loss is equal to 
+
+{\small
+\begin{align*}
+    \mathcal{L}_\theta =- \mathop{\E}_{\substack{ x_0 \sim p_{\textrm{data}} \\ \pi \sim \textrm{Unif}(\mathbb S_L) }} \left[\sum_{i=0}^{L-1} \log p_\theta \left( x_0^{\pi(i)} \Big| x_0 [\pi\{i,\ldots,L-1\}] \right) \right],
+\end{align*}}
+
+where $\textrm{Unif}(\mathbb S_L)$ is a uniform distribution over all the permutations of length $L$ (See Appendix~\ref{sec:mdm-aoarm} for the proof). Observe that if the expectation is only with respect to the identity permutation, then the loss becomes an autoregressive loss. This shows that MDM loss solves \emph{exponentially} more subproblems than ARM loss. In contrast to ARM loss, MDM does not prefer any particular (e.g., left-to-right) order during the training; therefore, we call its training \emph{order-agnostic training}. 
+
+
+\subsubsection{Order-agnostic inference of MDMs}
+\label{sec:vanilla-mdm-inference}
+
+The MDM inference can be decomposed into two steps: (a) randomly selecting a set of positions to unmask and (b) assigning token values to each position via the denoising network $p_\theta$. More precisely, we can reformulate the reverse process $x_s \sim g_\theta(\cdot | x_t)$ as follows. 
+
+\begin{theo}[Vanilla MDM inference]{alg:random_sampler_redefine}
+
+\begin{itemize}
+    \item[(a)] Sample a set of masked tokens \(\mathcal{S} \subseteq \{i \mid x_t^i = \mask\}\), \(\mathbb{P}(i \in \mathcal{S}) = \frac{\alpha_s-\alpha_t}{1-\alpha_t}\).
+    \item[(b)] For each $i \in \mathcal{S}$, sample $x_s^i \sim p_\theta(x^i | x_t)$.
+\end{itemize}
+\end{theo}
+Therefore, the inference in MDM is implemented by randomly selecting $S$ and then filling each token value according to the posterior probability $p_{\theta}(x_s^i | x_t)$. 
+
+On the other hand, ARMs are trained to predict tokens sequentially from left to right and therefore, generate tokens also in left-to-right order. In contrast, vanilla MDM inference generates the tokens in a random order. 
+
+\section{MDMs train on hard problems}\label{sec:hardness}
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.8\textwidth]{Figures/figure_2_2.png} 
+\caption{\textbf{Left: MDMs train on hard problems (Section~\ref{sec:hardness_text})}. x-axis and y-axis correspond to $\log(\text{FLOPs})$ and $-\log p_\theta(x)$, respectively. MDM {\color{blue} (Blue)} is worse than ARM {\color{orange} (Orange)} in likelihood modeling. Most masking problems {\color{purple} (Other lines)} that MDM is trained on are harder than those encountered by ARM, as indicated by small log-likelihoods. \textbf{Right: Task error imbalance (Section~\ref{sec:imbalance_error})}. MDM's performance varies across different tasks. For text data (top right), this is indicated by validation loss. For L\&O-NAE-SAT (bottom right), MDM performs well on the masking problems for observation positions (light region) but struggles with latent positions (dark region).}\label{fig:scaling_laws}
+\end{figure*}
+
+
+In this section, we provide theoretical and empirical evidence that when the data distribution has left-to-right order (or any fixed known order) then autoregressive training in left-to-right order (or in the known order) is more tractable than MDMs. In particular, for such distributions with fixed order, we show that ARMs can efficiently sample from the distributions but for MDMs, we theoretically and empirically demonstrate that a large portion of masking subproblems $p_\theta(x^i_0 \mid x_0[M])$ can be difficult to learn. 
+
+In Section~\ref{sec:csp}, we show several examples of simple, non-pathological distributions for which: (1) the masking problems encountered during order-\emph{aware} training (such as in ARMs) are computationally tractable, yet (2) many of the ones encountered during order-agnostic training (such as in MDMs) are computationally intractable. In Section~\ref{sec:hardness_text}, we empirically show that text data also exhibits this gap between the computational complexity of order-aware and order-agnostic training and therefore, MDMs train on subproblems of wide variety of complexity (depending on the order/masks). In Section~\ref{sec:imbalance_error}, we empirically show that the variety in training complexity results in \underline{\textbf{performance imbalance across subproblems}}: MDMs trained on data from such distributions exhibits small errors on easy subproblems but suffers from large errors on harder ones.
+
+\subsection{Benign distributions with hard masking problems} \label{sec:csp}
+
+We now describe a simple model of data under which we explore the computational complexity of masking problems and show the contrast between masking problems encountered by MDMs and ARMs. 
+
+\begin{definition}\label{definition:planted}
+    A \emph{latents-and-observations (L\&O) distribution} is a data distribution $p_{\rm data}$ over sequence of length $L$ with alphabet size $m$ (precisely, $p_{\rm data}$ is over $\{0,\ldots,m\}^L$)  is specified by a permutation $\pi$ over indices $\{1, 2, \ldots, L \}$, number of latent tokens $N$, number of observation tokens $P$ such that $N + P = L$, prior distribution $\prior$ of latent variables over $\{1,\ldots,m\}$ and efficiently learnable \emph{observation functions} $\mathcal{O}_1,\ldots,\mathcal{O}_P: \{1,\ldots,m\}^N \to \Delta(\{0,\ldots,m\})$,\footnote{Here \emph{efficiently learnable} is in the standard PAC sense: given polynomially many examples of the form $(z,y)$ where $z\sim \prior^N$ and $y\sim \mathcal{O}_j(z)$, there is an efficient algorithm that can w.h.p. learn to approximate $\mathcal{O}_j$ in expectation over $\prior^N$.} 
+    \begin{itemize}[topsep=0pt,itemsep=0pt,leftmargin=*]
+        \item (\textbf{Latent tokens}) For $i = 1,\ldots,N$, sample $x^{\pi(i)}$ 
+        independently from the prior distribution $\prior$ of the latents.
+        \item (\textbf{Observation tokens}) For $j = 1,\ldots,P$, sample $x^{\pi(N + j)}$ independently from $\mathcal{O}_j(x^{\pi(1)},\ldots,x^{\pi(N)})$.
+    \end{itemize} 
+\end{definition}
+
+L\&O distributions contain two types of tokens: (1) \emph{latent tokens} and (2) \emph{observation tokens}. Intuitively, latent tokens are tokens in the sequence, indexed by $\pi(1), \pi(2), \ldots, \pi(N)$ that serve as ``seeds" that provide randomness in the sequence; the remaining tokens, called observation tokens (indexed by $\pi(N+1), \pi(N+2), \ldots, \pi(N+P)$), are determined as (possibly randomized) functions of the latent tokens via $\mathcal{O}_1,\ldots,\mathcal{O}_P$.  Observe that L\&O distributions specified by a permutation $\pi$ have a natural generation order by permutation $\pi$. 
+
+
+\paragraph{Order-aware training} Order-aware training, i.e. by permuting the sequence so that $\pi$ becomes the identity permutation and then performing autoregressive training, is computationally tractable: predicting $x^{\pi(i)}$ given $x^{\pi(1)},\ldots,x^{\pi(i-1)}$ is trivial when $i \le N$ as the tokens are independent, and computationally tractable when $i > N$ because $x^{\pi(i)}$ only depends on $x^{\pi(1)},\ldots,x^{\pi(N)}$ and is efficiently learnable by assumption. In contrast, below we will show examples where if one performs order-agnostic training \emph{à la} MDMs, one will run into hard masking problems with high probability.
+
+
+\paragraph{Order-agnostic training} We first note that if the observations $(\mathcal{O}_1,\ldots,\mathcal{O}_P)$ are given by a cryptographic hash function, then the masking problem of predicting $(x^{\pi(1)},\ldots,x^{\pi(L)})$ given $(x^{\pi(N+1)},\ldots,x^{\pi(N+P)})$ is computationally intractable by design because it requires inverting the hash function. While this is a well-known folklore observation regarding the role of token ordering in language modeling, it is not entirely satisfying because this construction is worst-case in nature \--- in real-world data, one rarely trains on sequences given by cryptographic hash functions. Furthermore, it only establishes hardness for a specific masking pattern which need not be encountered in the course of running the reverse process.
+
+We provide several simple instances of L\&O distributions that address these issues: instead of leveraging delicate cryptographic constructions, they are \emph{average-case} in nature and furthermore we can establish hardness for \emph{typical} masking problems encountered along the reverse process. 
+
+In all these examples, the hardness results we establish hold even if the algorithm knows all of the parameters of $p_{\rm data}$ as well as the observation functions $\mathcal{O}_1,\ldots,\mathcal{O}_P$. Due to space constraints, here we focus on the following example, deferring two others to Apps.~\ref{app:parity} and~\ref{app:slab}.
+
+\begin{example}[Sparse predicate observations]\label{example:csp}
+    Consider the following class of L\&O distributions. Given \emph{arity} $k\ge 2$, fix a \emph{predicate} function $g: \{1,\ldots,m\}^k \to \{0,1\}$. Consider 
+    the set of all ordered subsets of $\{1,2,\ldots,N\}$ of size $k$ and set the total number of observation latents $P$ equal to the size of this set (hence $P = N ! / (N-k)! = N(N-1)\cdots(N-k+1)$). To sample a new sequence, we first sample latent tokens $x^{\pi(1)},\ldots,x^{\pi(N)}$ from the prior distribution $\prior$ and an observation latent corresponding to a $k$-sized subset $S$ is given by $g( \{ x^{\pi(i)} \}_{i \in S} )$. In other words, each observation latent corresponds to a $k$-sized subset $S$ of $\{1,2,\ldots,N\}$ and the corresponding observation function $\mathcal{O}_S(x^{\pi(1)}, \ldots, x^{\pi(N)} )$ is given by $g( \{ x^{\pi(i)} \}_{i \in S} )$.
+\end{example}
+
+
+\begin{proposition}\label{prop:csp}
+    Let $x$ be a sample from an L\&O distribution $p_{\rm data}$ with sparse predicate observations as defined in Example~\ref{example:csp}, with arity $k$ and predicate $g$ satisfying Assumption~\ref{assume:paramagnetic}, and let $\gamma$ be the probability that $g$ is satisfied by a random assignment from $\{1,\ldots,m\}^k$. Let $D_{\rm KS}$ and $D_{\rm cond}$ be some constants associated with the predicate function $g$ (see Definition~\ref{def:thresholds}). Suppose each token in $x$ is independently masked with probability $\alpha$, and $M$ is the set of indices for the masked tokens. If $1 - \gamma^{-1} D_{\rm KS}/kN^{k-1} \le \alpha \le 1 - \gamma^{-1} D_{\rm cond}/kN^{k-1}$, then under the \emph{1RSB cavity prediction} (see Conjecture~\ref{conj:1rsb}), with probability $\Omega_k(1)$ over the randomness of the masking, no polynomial-time algorithm can solve the resulting subproblem of predicting any of the masked tokens among $x^{\pi(1)},\ldots,x^{\pi(N)}$ given $x[M]$.
+\end{proposition}
+The complete proof of the proposition is given in \Cref{app:planted_result}. We also provide a proof outline in \Cref{appendix:pf_outline_hardness} for a comprehensive understanding. 
+
+
+\subsection{Empirical evidence of hardness via likelihoods}
+\label{sec:hardness_text}
+
+In the previous section, we provided theoretical evidence that order-aware training is tractable when data has a natural order but the order-agnostic training is not. In this section, we provide empirical evidence to support this claim, using natural text data. Additionally, recent studies \cite{nie2024scaling, zheng2024maskeddiffusionmodelssecretly} have shown that masked diffusion models (MDMs) underperform compared to autoregressive models (ARMs) on natural text data. In this section, we provide evidence that this performance gap is primarily due to the order-agnostic training of MDMs. Natural text inherently follows a left-to-right token order, and we show that as training deviates from this order, model performance progressively declines.
+
+To understand the importance of the order during the training, we use the following setting: Given a permutation $\pi$ of indices $\{0,1, \ldots, L-1 \}$, define a \emph{$\pi$-learner} to be a likelihood model $\log p_{\theta}(x_0)$ given as follows: 
+\begin{equation}
+\label{eq:pi-learner-likelihood}
+    \log p_{\theta}(x_0) = \sum_{i=0}^{L-1} \log p_\theta \bigl( x_0^{\pi(i)} \Big| x_0 [\pi\{i,\ldots,L-1\}] \bigr)\,
+\end{equation}
+In other words, the $\pi$-learner predicts the token at position $\pi(i)$ given the clean tokens $x_0^{\pi(0)},\ldots, x_0^{\pi(i-1)}$ and masked tokens $x_0^{\pi(i)},\ldots, x_0^{\pi(L-1)}$. If $\pi$ is the identity permutation, this reduces to the standard (left-to-right) autoregressive training. Note that the MDM loss encodes a $\pi$-learner for every permutation $\pi$ because
+the MDM loss~\eqref{eqn:mdm_loss} is equivalent to the average loss of those $\pi$-learners over $\pi$ sampled from $\mathrm{Unif}(\mathbb{S}_L)$:
+
+{\small
+\begin{align*}
+    \mathcal{L}_\theta =- \mathop{\E}_{\substack{ x_0 \sim p_{\textrm{data}} \\ \pi \sim \textrm{Unif}(\mathbb S_L) }} \left[\sum_{i=0}^{L-1} \log p_\theta \left( x_0^{\pi(i)} \Big| x_0 [\pi\{i,\ldots,L-1\}] \right) \right],
+\end{align*}}
+
+where $\mathbb{S}_L$ denotes the set of all permutations over $\{0, 1, \ldots, L-1\}$. The proof of the above equivalence is given in \cref{appenix:mdm-equivalent-loss}. Therefore, by measuring the `hardness' of each $\pi$-learner, we can probe differences in hardness between arbitrary masking problems and left-to-right masking problems.
+
+\paragraph{Experimental setup.} We use the Slimpajama dataset \cite{soboleva2023slimpajama} to evaluate the performance of training in different orders. To train a $\pi$-learner, we employ a transformer with causal attention and use permuted data $\pi(x_0)$ as input. By varying $\pi$ while maintaining all other training configurations (e.g., model, optimization), we can use the resulting likelihood (computed using \cref{eq:pi-learner-likelihood}) as a metric to capture the hardness of subproblems solved by the $\pi$-learner.
+
+In our experiments, the sequence length $L$ is $2048$, so repeating the scaling laws for each $\pi$ is infeasible. Instead, we sample $\pi \sim \mathrm{Unif}(\mathbb{S}_L)$ and examine the scaling law of the $\pi$-learner's likelihood. We leverage the codebase from \cite{nie2024scaling}, where the baseline scaling laws of MDM and ARM were introduced. Moreover, given that RoPE has an inductive bias towards left-to-right ordering, we employ a learnable positional embedding layer for all experiments to correct this. Consequently, we also re-run the baseline results, where RoPE was employed. To investigate how the distance between $\pi$ and the identity permutation affects the scaling law, we consider two interpolating distributions over permutations between $\mathrm{Unif}(\mathbb{S}_L)$ (i.e, MDM training) and the point mass at the identical permutation (i.e, ARM training). We sample three permutations from the interpolating distribution and $\mathrm{Unif}(\mathbb{S}_L)$ and plot the scaling law for each of the permutation. Due to space constraints, we provide further experimental details in Appendix~\ref{appendix:exp_detail_text}.
+
+
+\paragraph{Results.} As shown in Fig.~\ref{fig:scaling_laws}, the scaling law for a $\pi$-learner with uniformly random $\pi$ is worse than that of an ARM. This elucidates the inherent hardness of masking problems \( p_\theta(x_i \mid x_0[M]) \) beyond left-to-right prediction and also explains why MDM, which is trained simultaneously on all $\pi \in \mathbb{S}_L$, is worse than ARM in likelihood modeling. Additionally, as $\pi$ gets closer to the identity permutation, the scaling laws also get closer to ARM ($\pi$-learner-closer and $\pi$-learner-much-closer in Fig.~\ref{fig:scaling_laws}). This also supports the common belief that ARM is a good fit for text data as it inherently follows a \emph{left-to-right} ordering.
+
+
+That said, it should also be noted that even though MDMs are trained on exponentially more masking problems than ARM ($\Theta(L2^L)$ versus $L$), its performance is not significantly worse than $\pi$-learners. We attribute this to the \emph{blessing of task diversity};  multi-task training can benefit both the optimization dynamics \cite{kim2024task} and validation performance \cite{tripuraneni2022provablem,andreas2016benefit,ruder2017overview} due to positive transfers across tasks.
+
+
+\subsection{Error is imbalanced across masking problems}
+\label{sec:imbalance_error}
+In previous sections, we have demonstrated that the hardness of different masking problems \( p_\theta(x^i \mid x_0[M]) \) can vary significantly, potentially hindering the MDM's learning. In this section, we provide empirical evidence that the MDM's final performance exhibits a similar imbalance across subproblems. Details are provided in App.~\ref{appendix:exp_detail_3_3}.
+
+\paragraph{L\&O-NAE-SAT.}
+Consider an L\&O distribution with $\pi$ given by the identity permutation and where each observation $\mathcal{O}_j$ is deterministically given by $\mathrm{NAE}(x_{i_1},x_{i_2},x_{i_3}) \triangleq 1 - \mathbf{1}[x_{i_1} = x_{i_2} = x_{i_3}]$ for some randomly chosen (prefixed) triples $(i_1,i_2,i_3) \in[N]$. For an MDM trained on this distribution, we measure the error it achieves on each task $\log p_\theta(x_0 | x_0[M])$ via $ \mathbb{E}_{x_0} \Bigl \| \log p_\theta(x_0 | x_0[M])-  \log p_{\rm data}(x_0 | x_0[M]) \Bigr\|^2$,
+where $p_{\rm data}(x_0 | x_0[M])$ denotes the Bayes-optimal predictor.
+Technically, we do not have access to this, so instead we train another MDM for a much larger number of iterations and use this as a proxy. Fig.~\ref{fig:scaling_laws} reveals that prediction tasks for latent positions (light region) exhibit larger errors compared to those for observation positions (dark region). 
+ 
+\paragraph{Text.}
+Here we revisit the text experiment from Section~\ref{sec:hardness_text}. Since we do not have access to the Bayes-optimal predictor, we use the metric
+{\small
+$
+    \mathbb{E}_{x_0 \sim p_{\rm{data}}}\left[\sum_{i=0}^{L-1} \log p_\theta \left( x_0^{\pi(i)} \Big| x_0 [\pi\{i,\ldots,L-1\}] \right) \right]
+$}. This captures the accumulation of error across subproblems $p_\theta \left( x_0^{\pi(i)} \Big| x_0 [\pi\{i,\ldots,L-1\}] \right)$, since $p_\theta(x_0 | x_0[M]) = p_{\rm{data}}(x_0 | x_0[M])$ minimizes this metric. Fig.~\ref{fig:scaling_laws} shows a clear gap between different subproblems.
+
+The theoretical and empirical evidence demonstrates that MDMs perform better in estimating $p_{\theta}(x_0 | x_0[M])$ for some subproblems $M$ than for others. We therefore want to avoid encountering hard subproblems $M$ at inference time. In the next section, we show that while vanilla MDM inference can run into such subproblems, simple modifications at the inference stage can effectively circumvent these issues, resulting in dramatic, \emph{training-free} performance improvements.
+
+
+\section{MDMs can plan around hard problems} \label{sec:inference}
+We previously argued that due to the complex nature of masking subproblems, MDM must perform poorly on certain ones $p_\theta(x^i | x_t)$. Therefore, during vanilla MDM inference,
+MDM inevitably encounters such difficult subproblems at Step (b). While this might suggest that we need to fundamentally revisit how MDMs are trained, in this section we show that, surprisingly, simple modifications at the inference stage—\emph{without any further training}—can sidestep these issues and lead to significant performance improvements.
+
+\paragraph{MDM offers multiple sampling paths.}
+The vanilla MDM inference (Algorithm~\ref{alg:random_sampler_redefine}) aim to align the intermediate distributions with the forward process, as used in continuous diffusion. However, unlike continuous diffusion, the reverse process of MDM allows multiple valid sampling paths (different orders of unmasking the tokens) that match the starting distribution of the forward process of MDM. 
+
+We first show that when we have an ideal MDM that perfectly solves all masking problems, i.e., $p_\theta(x_0^i | x_0[M]) = p_{\rm{data}}(x_0^i | x_0[M])$, then using any sampling path (unmasking the tokens in any order) results in the same distribution. Consider the following sampler: For every step, $S$ is a set with one index selected agnostically (without following any distribution). For any clean sample $x_0$ generated by this sampler, note that $p_\theta(x_0) = \prod_{i=0}^{L-1}  p_\theta \left( x_0^{\pi(i)} \Big| x_0 [\pi\{i,\ldots,L-1\}] \right)$ by chain rule, and this is equal to $\prod_{i=0}^{L-1}  p_{\rm{data}} \left( x_0^{\pi(i)} \Big| x_0 [\pi\{i,\ldots,L-1\}] \right) = p_{\rm{data}}(x_0)$.
+Therefore, other choices of $S$, not necessarily following Algorithm~\ref{alg:random_sampler_redefine}, still capture the true likelihood.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.9\linewidth]{Figures/perplexity_vs_sampling_steps_with_entropy_1.1B.png}
+    \vspace{-0.1in}
+    \caption{\textbf{Generative Perplexity.} We compare the resulting generative perplexity (GenPPL) of adaptive vs. vanilla MDM inference. We employ a pretrained $170$M MDM and LLaMA-$7$B \cite{touvron2023llama2} as inference and evaluation, respectively. Adaptive MDM inference {(\color{blue} Blue)} leads to a substantial reduction in generative perplexity, while maintaining the entropy.}
+    \label{fig:genppl}
+\end{figure}
+
+In practice, unlike this ideal case, MDM does not perform equally well on all subproblems, as shown in Section~\ref{sec:imbalance_error}. Consequently, different sampling paths result in varying likelihood modeling abilities. Motivated by this observation, we consider \emph{adaptive inference for MDMs}:
+
+\vspace{0.05in}
+\begin{theo}[Adaptive MDM inference]{alg:sampling_adaptive}
+\vspace{-0.1in}
+\begin{itemize}
+    \item[(a)] Sample a set of masked tokens $\mathcal{S} = \mathcal{F}\left( \theta, x_t \right) \subseteq \{i \mid x_t^i = \mask\}$.
+    \item[(b)] For each $i \in \mathcal{S}$, sample $x_s^i \sim p_\theta(x^i | x_t)$.
+\end{itemize}
+\end{theo}
+
+Instead of selecting $S$ randomly, adaptive MDM inference leverages an oracle $\mathcal{F}(\theta, x_t)$ to select $S$ strategically to avoid hard masking problems. This naturally raises the question of how to design an effective oracle $\mathcal{F}$.
+
+In the following sections, we demonstrate that adaptive MDM inference with careful choices of $\mathcal{F}$ enhance MDM's likelihood matching ability. In other words, a pretrained MDM, even if it performs poorly on certain hard subproblems, \emph{still contains sufficient information to avoid them} when paired with an effective oracle $\mathcal{F}$.
+
+\subsection{Effective design of ordering oracle}
+\label{subsec:effective-design}
+We introduce two different oracles, Top probability and Top probability margin. Intuitively, both strategies are based on the idea that $S$ should be selected based on how ``certain'' the model is about each position. We caution that these strategies should not be confused with notions like nucleus sampling in ARMs~\cite{holtzman2019curious}; the oracles we describe are for selecting the \emph{position} of the next token to decode, rather than the \emph{value}, and thus are only meaningful in the context of MDMs.
+
+
+\begin{table}[h]
+    \centering 
+    \caption{\textbf{L\&O-NAE-SAT}. Adaptive MDM inference achieves better likelihood matching than vanilla MDM inference. Note that naive guessing leads to $75\%$ accuracy, indicating that vanilla inference performs similarly or worse than naive guessing.}
+    \vspace{0.1in}
+    \begin{tabular}{c c c}
+        \toprule
+        \textbf{($N,P$)} & \textbf{Vanilla inference} & \textbf{Adaptive inference}\\
+        \midrule
+        $(25,275)$  & 78.06\%   & 93.76\%  \\
+        $(30,270)$  & 75.70\% & 93.54\% \\
+        $(40,260)$  & 74.60\%   & 92.21\%  \\
+        $(50,250)$  & 67.94\% & 90.01\% \\
+        $(100,200)$ & 62.84\% & 88.91\% \\
+        \bottomrule
+    \end{tabular}
+    \label{tab:csp_sampler}
+\end{table}
+
+
+\paragraph{Top probability~\cite{zheng2024reparameterized}.} Suppose we want to unmask $K$ positions at time step $t$, i.e., select $|S|=K$. In the top probability, the uncertainty of a position is estimated by the maximum probability assigned to any value in the vocabulary. More precisely, the certainty at position $i$ is $\max_{j \in \{ 0, \ldots, m-1 \} } p_\theta(x^i = j | x_t)$ and \(\mathcal{F}(\theta, x_t) = \text{Top } K \left(\max p_\theta(x^i | x_t) \right)\). 
+
+Top probability strategy is a good proxy for many tasks and works well in practice \cite{zheng2024reparameterized,ye2024beyond,wang2024diffusion}. However, this approach can often provide misleading estimates of uncertainty. Consider when an MDM is confused between two token values, thus assigning them almost equal but high probabilities.  In this case, unmasking according to top probability may still choose to unmask this position, despite its uncertainty. To mitigate this issue, we propose the following alternative strategy.
+
+\paragraph{Top probability margin.} In this strategy, the uncertainty of a position is instead estimated using the absolute difference between the two most probable values at position $i$. More precisely, if $j_1$ and $j_2$ are the two most probable values in vocabulary according to $p_\theta(x^i | x_t)$ in position $i$, the certainty in the position is given by $| p_\theta(x^i = j_1 | x_t) - p_\theta(x^i = j_2 | x_t) |$  and \(\mathcal{F}(\theta, x_t) = \text{Top } K \left(| p_\theta(x^i = j_1 | x_t) - p_\theta(x^i = j_2 | x_t) | \right)\). When multiple values have similar probabilities at a position, top probability margin strategy will provide a better estimate of the uncertainty of a position, and when there is a single best choice of value then top probability and top probability margin work similarly. 
+
+
+
+\begin{table}[t]
+    \centering
+    \caption{Comparison of accuracy for solving the Sudoku puzzle.}
+    \vspace{0.1in}
+    \begin{tabular}{l >{\centering\arraybackslash}p{1.4cm} c}  % Proper center alignment
+        \toprule
+        \textbf{Method} & \textbf{\# Param} & \textbf{Accuracy} \\
+        \midrule
+        ARM (w/o ordering) & \multirow{2}{*}{42M} & 9.73\% \\
+        ARM (with ordering) &  & 87.18\% \\
+        \midrule
+        MDM (vanilla) & \multirow{3}{*}{6M} & 6.88\% \\
+        MDM (Top probability) &  & 18.51\% \\
+        MDM (Top prob. margin) &  & 89.49\% \\
+        \bottomrule
+    \end{tabular}
+    \label{tab:sudoku-results}
+\end{table}
+
+
+\subsection{Adaptive MDM inference} \label{subsec:adaptive_inference}
+
+In this section, we experimentally validate that adaptive MDM inference helps MDMs avoid hard subproblems, leading to better likelihood matching. We first show our results on L\&O-NAE-SAT and text data, before turning to our primary application to logic puzzles.
+
+\textbf{L\&O-NAE-SAT and text data.} For the L\&O-NAE-SAT distribution defined in \cref{sec:imbalance_error}, we evaluate the effectiveness of adaptive inference by measuring the accuracy in predicting the observation tokens. Table~\ref{tab:csp_sampler} in the appendix reveals a clear improvement over vanilla inference. For the text dataset, we evaluate using the standard metric of \emph{generative perplexity}, by which likelihood is measured by a large language model. We also compute the entropy of the generated samples to ensure both inference strategies exhibit similar levels of diversity. As shown in Fig.~\ref{fig:genppl}, we observe a substantial decrease in generative perplexity using adaptive inference. We defer further experimental details to Appendix~\ref{appendix:exp_detail_inference}.
+
+\textbf{Logic puzzles.} We consider two different types of logic puzzles: Sudoku and Zebra (Einstein) puzzles. Intuitively, for Sudoku, some empty (masked) cells are significantly easier to predict than others and we want to choose the cells that are easier to predict during the inference. We evaluate the effectiveness of adaptive MDM inference over vanilla MDM inference in selecting such cells.\footnote{A prior work \cite{ye2024beyond} reported that a $6$M MDM with \topk inference achieves 100\% accuracy on Sudoku. Given that a 6M MDM with \topk only achieves 18.51\% on our dataset (Table~\ref{tab:sudoku-results}), this suggests that the Sudoku dataset in~\cite{ye2024beyond} is significantly easier than ours.}
+
+To measure the performance of an inference method, we use the percentage of correctly solved puzzles. For both puzzles, we use train and test datasets from \cite{shah2024causal}. For the Sudoku puzzle (Table~\ref{tab:sudoku-results}) we observe that adaptive MDM inference, in particular, Top probability margin strategy, obtains substantially higher accuracy (89.49\%) compared to vanilla MDM inference (6.88\%). Additionally, Top probability margin obtains higher accuracy (89.49\%) than Top probability strategy (18.51\%). As mentioned in \cref{subsec:effective-design}, this is because Top probability margin strategy more reliably estimates uncertainty when multiple competing values are close in probability at a given position, as is often the case in Sudoku. For the Zebra puzzle, as shown in \Cref{tab:zebra-results}, we observe a consistent result: Top probability (98.5\%) and Top probability margin (98.3\%) outperform vanilla MDM inference (76.9\%).
+
+
+
+\begin{table}[h]
+    \centering
+    \caption{Comparison of accuracy for solving the Zebra puzzle.}
+    \vspace{0.1in}
+    \begin{tabular}{l >{\centering\arraybackslash}p{1.4cm} c}  % Proper center alignment
+            \toprule
+        \textbf{Method} & \textbf{\# Param} & \textbf{Accuracy} \\
+        \midrule
+        ARM (w/o ordering) & \multirow{2}{*}{42M} & 80.31 \% \\
+        ARM (with ordering) &  & 91.17 \% \\
+        \midrule
+        MDM (vanilla) & \multirow{3}{*}{19M} & 76.9 \% \\
+        MDM (Top probability) &  & 98.5 \% \\
+        MDM (Top prob. margin) &  & 98.3 \% \\
+        \bottomrule
+    \end{tabular}
+    \label{tab:zebra-results}
+\end{table}
+
+\subsection{Eliciting sequence-dependent reasoning paths using adaptive MDM inference in logic puzzles} 
+\label{sec:sequence-dependent-tasks}
+
+In this section, we study the effectiveness of adaptive MDM inference in finding the right reasoning/generation order for tasks where every sequence has a different ``natural'' order. To do so, we will compare the performance of adaptive MDM inference to that of ARM on Sudoku and Zebra puzzles. For these puzzles, the natural order of generation is not only different from left-to-right, but it is also sequence-dependent. For such tasks, prior works have shown that ARMs struggle if the information about the order is not provided during the training \cite{shah2024causal, lehnert2024beyond}. Therefore, to obtain a strong baseline, we not only consider an ARM trained without the order information but also consider an ARM trained with the order information for each sequence in the training data. Note that the latter is a much stronger baseline than the former as one can hope to teach the model to figure out the correct order by some form of supervised teacher forcing (as performed in \citet{shah2024causal, lehnert2024beyond}), eliminating the issue of finding the right order in an unsupervised manner. 
+
+We compare ARMs and MDMs for Sudoku in \cref{tab:sudoku-results} and Zebra puzzles in \cref{tab:zebra-results}. We observe that for both, Top probability margin-based adaptive MDM inference not only outperforms the ARM trained without ordering information, but it \emph{\textbf{even outperforms the ARM trained with ordering information}}! This shows that the \emph{unsupervised} way of finding the correct order and solving such logic puzzles using adaptive MDM inference outperforms the \emph{supervised} way of finding the correct order and solving such puzzles using an ARM, and is significantly less computationally intensive.
+
+\subsection{Adaptive MDM inference on natural language tasks}
+
+To examine the effect of different inference strategies on text benchmarks, we adapted LLaDA, the 8B MDM model from \cite{nie2025large}. We compare three inference strategies: vanilla, top probability, and top probability margin. The results are presented in Table~\ref{tab:sampler_performance}.
+
+We see that both adaptive MDM inference strategies, top probability and top probability margin, consistently outperform vanilla MDM inference. Notably, top probability margin demonstrates a clear advantage over top probability in challenging tasks like HumanEval-Multiline (infill), HumanEval-Split Line (infill), and Math. This is because Top probability margin provides a more reliable estimate of uncertainty when multiple tokens have similar probabilities, a frequent occurrence in these difficult tasks. These results further underscore the potential for developing new, sophisticated adaptive inference strategies for various tasks. We provide experimental details in Appendix~\ref{sec:llada_detail}.
+
+\begin{table*}[!htbp]
+    \centering
+    \caption{Performance of different inference strategies for LLaDa 8B model on coding and math tasks.}
+    \vspace{0.05in}
+    \label{tab:sampler_performance}
+    \begin{tabular}{lcccccc}
+        \toprule
+        \textbf{Method} & \textbf{HumanEval-Single} & \textbf{HumanEval-Multi} & \textbf{HumanEval-Split} & \textbf{Math} & \textbf{MMLU} & \textbf{ROCStories} \\
+        \midrule
+        Vanilla & 31.8\% & 16.5\% & 14.2\% & 28.5\% & 33.2\% & 21.23\% \\
+        Top probability & 32.9\% & 20.8\% & 18.4\% & 31.3\% & \textbf{36.5\%} & 21.10\% \\
+        Top prob. margin & \textbf{33.5\%} & \textbf{25.4\%} & \textbf{22.3\%} & \textbf{34.3\%} & 35.4\% & \textbf{21.41\%} \\
+        \bottomrule
+    \end{tabular}
+\end{table*}
+
+\subsection{Easy to hard generalization}
+
+In the previous section we showed that when the training and inference sequences come from the same distribution, order-agnostic training of MDMs combined with adaptive inference can perform very well on logic puzzles. To evaluate if the model has learned the correct way of solving the puzzles and test the robustness of adaptive inference, we also test the MDMs on harder puzzles than the ones from training, for Sudoku. 
+
+We keep the training dataset the same as proposed in \citet{shah2024causal}. \citet{shah2024causal} created this dataset from \citet{david_g__radcliffe_2020} by selecting the puzzles that can be solved using 7 fixed strategies and do not require backtracking-based search. We use the remaining puzzles in \citet{david_g__radcliffe_2020} as our hard dataset. Hence, these puzzles all use a strategy not seen during training and/or backtracking to obtain the correct solution.  
+
+\begin{table}[t]
+    \centering
+    \caption{Comparison of accuracy for solving the hard Sudokus.}
+    \vspace{0.1in}
+    \begin{tabular}{l >{\centering\arraybackslash}p{1.4cm} c}
+    \toprule
+        \textbf{Method} & \textbf{$\#$Param} & \textbf{Accuracy} \\
+        \midrule
+         ARM (with ordering) & 42M & 32.57 \% \\
+         \midrule
+         MDM (random) & \multirow{3}{*}{6M} & 3.62 \% \\
+         MDM (Top probability) & & 9.44 \% \\
+         MDM (Top prob. margin) &  & 49.88 \% \\
+         \bottomrule
+    \end{tabular}
+    \label{tab:easy-to-hard-sudoku}
+\end{table}
+
+
+We measure the accuracy of MDMs and ARMs on the hard test set and present the results in \cref{tab:easy-to-hard-sudoku}. We see that the Top probability margin-based adaptive MDM inference strategy (49.88\%) again significantly outperforms ARMs trained with order information (32.57\%). In particular, although the accuracy drops for both methods due to the more challenging test set, MDMs with adaptive inference appear to be more robust to this distribution shift than ARMs. We believe this is due to the fact that MDMs try to solve a significantly higher number of infilling problems than ARMs ($\exp(L)$ compared to $L$) and therefore are able to extract knowledge about the problem more efficiently than ARMs. 
+
+\section{Conclusion}
+
+In this work, we examined the impact of token generation order on training and inference in MDMs. We provided theoretical and experimental evidence that MDMs train on hard masking problems. We also demonstrated that adaptive inference strategies can be used to sidestep these hard problems. For logic puzzles, we find that this leads to dramatic improvements in performance not just over vanilla MDMs, but even over ARMs trained with teacher forcing to learn the right order of decoding. An important direction for future work is to go beyond the relatively simple adaptive strategies to find a better generation order like top probability and top probability margin considered here.
+
+\paragraph{Acknowledgements.} JK thanks Kiwhan Song for discussions about MDM training. KS and VK are supported by the NSF AI Institute for Foundations of Machine Learning (IFML). KS and VK thank the computing support on the Vista GPU Cluster through the Center for Generative AI (CGAI) and the Texas Advanced Computing Center (TACC) at UT Austin. KS thanks Nishanth Dikkala for the initial discussions about the project. SK acknowledges: this work has been made possible in part by a
+gift from the Chan Zuckerberg Initiative Foundation to establish the Kempner Institute
+for the Study of Natural and Artificial Intelligence and support from the
+Office of Naval Research under award N00014-22-1-2377. SC is supported by the Harvard Dean's Competitive Fund for Promising Scholarship and thanks Brice Huang and Sidhanth Mohanty for enlightening discussions about computational-statistical tradeoffs for planted CSPs. 
+
+\section*{Impact statement}
+This paper advances the understanding of discrete diffusion models, contributing to the broader field of Machine Learning. There are many potential societal consequences of our work, none of which we feel must be specifically highlighted here.
+
+
+\bibliography{main}
+\bibliographystyle{icml2025}
+
+\newpage
+\appendix
+\onecolumn
+\input{appendix}
+\end{document}
+
+

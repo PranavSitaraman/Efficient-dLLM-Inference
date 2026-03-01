@@ -1,0 +1,37 @@
+\section{Proofs}\label{appsec:proofs}
+
+\paragraph{\gls{med} \gls{kl} upper-bound.}
+Here we prove that for any set $A \subset \{1, \dots\} / \textsc{un-masked}$, the following upper bound holds:
+\begin{align}
+    \kl{p_\theta(\mbx^{A} \mid \mbx_\textsc{un-masked}, \mbc) \Bigg| \prod_{i\in A} p_\theta( x^i \mid \mbx_\textsc{un-masked}, \mbc)} 
+    \leq \sum_{i \in A} H(x^i \mid \mbx_\textsc{un-masked}, \mbc)
+\end{align}
+Note that:
+\begin{align}\nonumber
+   & \kl{p_\theta(\mbx^{A}  \mid \mbx_\textsc{un-masked}, \mbc) \Bigg| \prod_{i\in A} p_\theta( x^i \mid \mbx_\textsc{un-masked}, \mbc)}  \\
+    & \qquad = \mbE_{p_\theta(\mbx^{A} \mid \mbx_\textsc{un-masked}, \mbc) } \left[ \log p_\theta(\mbx^{A} \mid \mbx_\textsc{un-masked}, \mbc)  - \log \prod_{i\in A} p_\theta(x^i \mid \mbx_\textsc{un-masked}, \mbc) \right]   \\ 
+    & \qquad = \mbE_{p_\theta(\mbx^{A} \mid \mbx_\textsc{un-masked}, \mbc) } \left[ \log p_\theta(\mbx^{A} \mid \mbx_\textsc{un-masked}, \mbc)  - \sum_{i\in A} \log p_\theta(x^i \mid \mbx_\textsc{un-masked}, \mbc) \right]   \\   \label{eq:kl_entropy}  
+    & \qquad = -H(\mbx^{A} \mid \mbx_\textsc{un-masked}, \mbc) + \sum_{i \in A} H(\mbx^i \mid \mbx_\textsc{un-masked}, \mbc) 
+\end{align}
+Now, since the entropy for discrete random variables is positive, $H(\mbx^{A} \mid \mbx_\textsc{un-masked}, \mbc) \geq 0$, which implies:
+\begin{align}
+    -H(\mbx^{A} \mid \mbx_\textsc{un-masked}, \mbc) + \sum_{i \in A} H(\mbx^i \mid \mbx_\textsc{un-masked}, \mbc) \leq \sum_{i \in A} H(\mbx^i \mid \mbx_\textsc{un-masked}, \mbc) 
+\end{align}
+Hence, we have that for any set $A$, we have that: 
+\begin{align}
+    \kl{p_\theta(\mbx^{A} \mid \mbx_\textsc{un-masked}, \mbc) \Bigg| \prod_{i\in A} p_\theta( x^i \mid \mbx_\textsc{un-masked}, \mbc)} \leq \sum_{i \in A} H(x^i \mid \mbx_\textsc{un-masked}, \mbc)
+\end{align}
+
+\paragraph{Entropy upper-bound}
+Next, we prove that:
+\begin{align}
+    H(\mba \mid \mbr_{\textsc{un-masked}}, \mbc) \leq  H_\textsc{ub}(\mba \mid \mbr_\textsc{un-masked}, \mbc)
+\end{align}
+where $H_\textsc{ub}(\mba \mid \mbr_\textsc{un-masked}, \mbc) = \sum_{i} H(a^i \mid \mbr_{\textsc{un-masked}}, \mbc)$. 
+
+Next, we note that $\gls{kl}(p_\theta(\mba \mid \mbr_{\textsc{un-masked}}, \mbc) \mid \prod p_\theta(a^i \mid \mbr_{\textsc{un-masked}}, \mbc) \geq 0$, which implies that, similar to \cref{eq:kl_entropy}, we have
+\begin{align}\nonumber
+   -H(\mba \mid \mbr_{\textsc{un-masked}}, \mbc) + H_\textsc{ub}(\mba \mid \mbr_\textsc{un-masked}, \mbc) &= \gls{kl}(p_\theta(\mba \mid \mbr_{\textsc{un-masked}}, \mbc) \mid \prod p_\theta(a^i \mid \mbr_{\textsc{un-masked}}, \mbc) \\
+   -H(\mba \mid \mbr_{\textsc{un-masked}}, \mbc) + H_\textsc{ub}(\mba \mid \mbr_\textsc{un-masked}, \mbc)  &\geq 0 \\
+   H_\textsc{ub}(\mba \mid \mbr_\textsc{un-masked}, \mbc) &\geq H(\mba \mid \mbr_{\textsc{un-masked}}, \mbc) 
+\end{align}

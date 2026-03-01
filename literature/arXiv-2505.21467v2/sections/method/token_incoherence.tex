@@ -1,0 +1,42 @@
+\subsubsection{Token Incoherence in Parallel Generation}\label{sec:incor}
+
+% Another fundamental challenge in diffusion-based language models is what we refer to as the 
+As introduced in Section~\ref{sec:preliminary}, DLM irregularly unmasks output token positions throughout diffusion process. As a result, simultaneously unmasking token positions without semantical correlation leads to insufficient semantical consistency, which can further degrades the model performance. 
+While the desire of preserving the parallel diffusion persists. Figure~\ref{fig:bars} shows accuracy degradation with decreasing denoising steps for three diffusion sampling methods: MaskGIT~\cite{chang2022maskgitmaskedgenerativeimage}, entropy-based, and Top-K Margin~\cite{kim2025trainworstplanbest_topkmargin}.  The challenge arises as follows: 
+
+\textbf{Challenge}\circled{2} \textit{How to enhance the semantic correlation of the diffusion process \textbf{ without} introducing additional training and fine-tuning effort? }
+
+% As presented recent studies of reinforcement learning, understand the semantical logic and causality of given context is critical for high performance reasoning. 
+Motivated by the aforementioned challenges, we propose a novel approach which directly accelerates the diffusion model in a simple, effective, and systematic manner. 
+% \textit{When multiple masked positions are predicted and unmasked simultaneously without coordination, each prediction is made independently without conditioning on each other. This can lead to unmasked tokens violating semantic or grammatical consistency, leading to quality degradation. }
+
+% At each denoising step, the model predicts all masked tokens simultaneously. While this enables high parallelism, it often leads to inconsistent or grammatically invalid token combinations—e.g., ``an cat'', ``a elephant'', ``two is'', or duplicated entities—because the model lacks an explicit mechanism for enforcing consistency across tokens predicted in the same step. 
+
+% For example, unmasking multiple tokens in one denoising step might resulting in incorrect token combindations (e.g., ``an cat'', ``a elephant'', ``two is''), or duplicated entities, because the model lacks an explicit mechanism for enforcing consistency across tokens predicted in the same step. 
+
+% This issue arises because predictions at each position are made in parallel, conditioned on a partially masked context, without coordinated control over the semantics of jointly predicted tokens. We refer to such mismatched outputs as token-incoherent generations.
+
+% Recent approaches such as MaskGIT~\cite{} and \zhanqiu{TODO: cite more} attempt to mitigate this using heuristic confidence scores or sampling rules based on predicted token probabilities. 
+
+% However, these heuristics do not model token interactions explicitly, and often degrade generation quality when unmasking multiple tokens per step. As a result, diffusion models are forced to unmask conservatively, increasing the number of denoising steps and reducing inference efficiency.
+
+
+% However, these heuristics do not model token interactions explicitly, and often degrade generation quality with decreasing denoising steps. Figure \ref{fig:pareto} \zhanqiu{Replace table, add description} shows the accuracy degredation with the average number of tokens generated at each step (generated tokens / denoising steps).
+
+
+
+% To address this limitation and fully exploit the parallelism of diffusion-based generation, we propose a principled solution: \textit{guided diffusion}. Our method leverages a lightweight pre-trained autoregressive model (ARM) to provide alignment supervision during inference: masked tokens predicted by the diffusion model are only unmasked when they are consistent with the ARM’s sequential predictions. This cross-model agreement serves as a lightweight coherence prior, enabling the model to safely unmask multiple tokens in parallel, without requiring any additional training or fine-tuning.
+
+% In contrast to prior heuristic-based methods (e.g., confidence thresholds or top-$k$ logits), which often suffer from severe quality degradation when unmasking more than a few tokens per step, guided diffusion maintains fluency and correctness even under aggressive unmasking. This substantially reduces the number of denoising steps, often by a factor of 5× or more, without compromising output quality.
+
+% We provide detailed comparisons in Section~\ref{sec:experiments}, \zhanqiu{TODO} showing that guided diffusion achieves significantly faster inference and stronger generation quality compared to baseline sampling strategies.
+
+
+
+% DLM predicts the entire sequence for the next timestep. SOTA approaches use heuristics such as maskgit~\cite{} \zhanqiu{check qwen paper for sampling strategy} that compute a confidence score based on predicted logits for masked tokens, and greedily unmask tokens with high confidence scores. 
+
+% However, tokens generated in parallel might be interdependent, unmasking interdependent tokens in the timestep will result in false token combinations being predicted. Heuristic sampling strategies do not have a mechanism that prevents this. Therefore, unmasking multiple tokens in one step results in a significant quality drop in generated sequences. 
+
+% \zhanqiu{Add data here}
+
+% This prevents us from exploiting the parallelized generation of diffusion language models without drop in quality. To solve this problem, we proposes guided diffusion techniques that leverage a pre-trained lightweight autoregressive model to guide unmasking strategies, achieving aggressive unmasking without quality drop. 

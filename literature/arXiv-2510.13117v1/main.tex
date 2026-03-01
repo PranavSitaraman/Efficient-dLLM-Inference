@@ -1,0 +1,717 @@
+\documentclass{article} %
+\usepackage{iclr2026_conference,times}
+
+\usepackage{custom}
+
+\input{macros.tex}
+
+\title{On the Reasoning Abilities of Masked Diffusion Language Models}
+
+
+\author{Anej Svete\thanks{~~This research was conducted while interning at the Allen Institute for AI.} \\
+ETH Zürich \\
+\href{mailto:asvete@inf.ethz.ch}{\texttt{asvete@inf.ethz.ch}} \\
+\And
+Ashish Sabharwal \\
+Allen Institute for AI \\
+\href{mailto:ashishs@allenai.org}{\texttt{ashishs@allenai.org}} \\
+}
+
+
+\iclrfinalcopy %
+\begin{document}
+
+
+\maketitle
+
+\vspace{-5mm}
+\begin{abstract}
+   Masked diffusion models (\MDMsAcr) for text offer a compelling alternative to traditional autoregressive language models. 
+   Parallel generation makes them efficient, but their computational capabilities and the limitations inherent to their parallelism remain largely unexplored. 
+   To this end, we characterize what types of reasoning problems \MDMsAcr can provably solve and how efficiently. 
+   We do this by connecting \MDMsAcr to the well-understood reasoning frameworks of chain of thought (\CoTAcr) and padded looped transformers (\LTsAcr) in the finite-precision log-width setting: We show that \MDMsAcr and polynomially-padded \LTsAcr are, in fact, equivalent in this setting, and that \MDMsAcr can solve all problems that \CoTAcr-augmented transformers can.
+   Moreover, we showcase classes of problems (including regular languages) for which \MDMsAcr are inherently more efficient than \CoTAcr transformers, where parallel generation allows for substantially faster reasoning.
+\end{abstract}
+
+
+\vspace{-4mm}
+\section{Introduction} \label{sec:introduction}
+
+Many complex problems can be decomposed into smaller, independent sub-problems, making them naturally suited for parallel computation. 
+For example, we can compute the value of a mathematical expression by evaluating its sub-expressions independently and combining the results (see \cref{fig:expression-tree}). 
+However, dominant autoregressive language models (LMs) tackle these problems sequentially. 
+Methods like chain of thought (\CoTAcr), for instance, generate solutions one step at a time, failing to capitalize on the underlying parallel structure.
+Parallel generation by masked diffusion models (\MDMsAcr) offers a compelling alternative.
+Recent advances have positioned \MDMsAcr as a viable contender to autoregressive LMs in language modeling, code generation, and even molecule design \citep{Lou2024DiscreteDM,zhang2025surveyparalleltextgeneration,sunSpeedAlwaysWins2025}.
+However, the fundamental reasoning capabilities of \MDMsAcr remain poorly understood,
+which limits the extent to which we can
+leverage their potential and apply them to appropriate tasks.
+This work bridges that gap by providing the first formal characterization of the expressivity of \MDMsAcr, clarifying their fundamental computational strengths and weaknesses.
+
+\begin{figure}[ht]
+   \centering
+
+    \begin{tikzpicture}[
+        node distance=1.5cm and 2.5cm,
+        model/.style={
+            rectangle,
+            rounded corners=3pt,
+            fill=#1!20,
+            text width=2.5cm,
+            minimum height=1cm,
+            align=center,
+            font=\small
+        },
+        complexity/.style={
+            rectangle,
+            rounded corners=3pt,
+            fill=gray!15,
+            minimum width=1cm,
+            align=center
+        },
+        arrow_eq/.style={<->, thick, #1},
+        arrow_incl_right/.style={right hook->, thick, #1},
+        arrow_sep_right/.style={right hook->, dashed, thick, #1},
+        arrow_incl_left/.style={left hook->, thick, #1},
+        arrow_sep_left/.style={left hook->, dashed, thick, #1},
+        label_style/.style={midway, font=\tiny, align=center, text=black!80},
+        resource_style/.style={font=\tiny\itshape, text=ETHPetrol!80!black, align=center, midway}
+    ]
+    
+    \node[model=ETHGreen] (mdm) at (0,0) {Masked Diffusion \\ Models};
+    \node[model=ETHBlue] (lt) at (-5.25,0) {Padded Looped \\ Transformers};
+    \node[model=ETHPurple] (cot) at (5.25,0) {Chain of Thought};
+    
+    \node[complexity] (reg) at (-5.5, -2.25) {$\mathtt{Reg}$};
+    \node[complexity] (nc) at (-2.5, -2.25) {$\NC$};
+    \node[complexity] (acd) at (0, -2.25) {$\ACd$};
+    \node[complexity] (ac0) at (5.25, -2.25) {$\ACZero$};
+    
+    
+    
+    \draw[arrow_incl_left=ETHRed] (mdm.175) to[bend right=30] %
+        node[label_style, midway, above] {Added stochasticity}
+        node[label_style, midway, below, resource_style] {\cref{thm:lts-mdms}}
+        (lt.5); %
+    
+    \draw[arrow_incl_left=ETHRed] (lt.355) to[bend right=30] %
+        node[label_style, midway, below] {Extra output space}
+        node[label_style, midway, above, resource_style] {\cref{thm:lts-mdms}}
+        (mdm.185); %
+    
+    \draw[arrow_incl_right=ETHRed] (mdm.5) to[bend left=30] 
+        node[label_style, midway, above] {Extra steps}
+        node[label_style, midway, below, resource_style] {\cref{thm:cot-can-simulate-mdms}}
+        (cot.175);
+    \draw[arrow_incl_right=ETHRed] (cot.185) to[bend left=30] 
+        node[label_style, midway, below] {Extra output space}
+        node[label_style, midway, above, resource_style] {\cref{thm:mdms-can-simulate-cot}}
+        (mdm.355);
+        
+    
+    \draw[arrow_sep_left=ETHRed] (cot.north) to[bend right=30] 
+        node[label_style, pos=0.5, above, align=center] {\textbf{Sequentiality Bottleneck} under $\log\strlen$ steps.}
+        node[label_style, midway, below, resource_style] {\cref{thm:cot-mdm-separation}}
+        (mdm.north);
+    
+    \draw[arrow_sep_right=black] (reg.east) -- (nc.west) {};
+        
+    \draw[arrow_sep_right=ETHRed] (reg.45) -- (mdm.220)
+        node[label_style, above, sloped, pos=0.275] {$\log \strlen$ steps, $\strlen$ output}
+        node[resource_style, sloped, below, pos=0.275] {\cref{thm:regular-languages-in-mdm-efficient}};
+    
+    \draw[arrow_sep_right=black] (cot.south) -- (ac0.north)
+        node[label_style, above, sloped] {$\log \strlen$ steps};
+        
+    \draw[arrow_eq=black] (acd.west) -- (nc.east)
+        node[label_style, above, sloped] {$d \to \infty$};
+    
+    \draw[arrow_eq=ETHRed] (acd.90) to
+    node[label_style, right] {$\log^d \strlen$ steps \\ $\polyFun{\strlen}$ output}
+    node[resource_style, right, yshift=-5mm, xshift=4mm] {\cref{cor:mdms-with-polylog-steps}}
+    (mdm.270);
+
+    \draw[arrow_eq=ETHRed] (ac0.105) to
+    node[label_style, above, sloped, pos=0.3] {Constantly-many steps}
+    node[label_style, below, sloped, pos=0.3] {$\polyFun{\strlen}$ output}
+    node[resource_style, below=3mm, sloped, pos=0.3] {\cref{cor:mdms-with-constant-steps}}
+    (mdm.320);
+        
+    \draw[arrow_sep_left=black] (ac0.west) -- (acd.east);
+        
+    \end{tikzpicture}
+    
+   \caption{
+      A summary of masked diffusion model expressivity. 
+      The colored nodes in the top row correspond to transformer-based computational models and the languages recognized by them.
+      The gray nodes in the bottom row correspond to languages in ($\LUniform$) classical complexity classes.
+      $\sX \hookrightarrow \sY$ indicates the inclusion of $\sX$ in $\sY$, and $\sX \leftrightarrow \sY$ indicates equality. 
+      Dashed arrows represent strict inclusions. 
+      \textcolor{ETHRed}{Red arrows} denote novel results. 
+      $\mathtt{Reg}$ refers to all regular languages.
+      }
+   \label{fig:figure-1}
+\end{figure}
+
+\begin{figure}[ht]
+    \centering
+    \begin{tikzpicture}[
+      scale=0.8,
+      every node/.style={transform shape},
+      box/.style={draw=ETHPetrol!50, fill=ETHPetrol!20, minimum width=5mm, minimum height=5mm, font=\footnotesize},
+      maskbox/.style={box, fill=ETHGray!40, draw=ETHGray!80, dashed},
+      mediumbox/.style={box, fill=ETHBronze!20, draw=ETHBronze!60},
+      cotgenbox/.style={box, fill=ETHRed!40, draw=ETHRed!80, dashed},
+      mdmgenbox/.style={box, fill=ETHGreen!40, draw=ETHGreen!60},
+      treearrow/.style={-, thick, ETHGreen!60},
+      seqarrow/.style={->, >=stealth, thick, ETHBlue!50},
+      label/.style={font=\small},
+      tinylabel/.style={font=\tiny\itshape, text=gray},
+      brace/.style={decoration={brace,amplitude=5pt}, thick, decorate},
+      ]
+      
+      \usetikzlibrary{decorations.pathreplacing, calc, positioning}
+      
+      \begin{scope}[shift={(0, -5)}]
+          \node[box] (char0) at (0, 0) {$\scriptstyle ($};
+          \node[box] (char1) at (0.5, 0) {$2$};
+          \node[box] (char2) at (1, 0) {$+$};
+          \node[box] (char3) at (1.5, 0) {$3$};
+          \node[box] (char4) at (2, 0) {$\scriptstyle )$};
+          \node[box] (char5) at (2.5, 0) {$\times$};
+          \node[box] (char6) at (3, 0) {$\scriptstyle ($};
+          \node[box] (char7) at (3.5, 0) {$4$};
+          \node[box] (char8) at (4, 0) {$+$};
+          \node[box] (char9) at (4.5, 0) {$1$};
+          \node[box] (char10) at (5, 0) {$\scriptstyle )$};
+          \node[box] (char11) at (5.5, 0) {$-$};
+          \node[box] (char12) at (6, 0) {$6$};
+          \node[box] (char13) at (6.5, 0) {$=$};
+          
+          \node[maskbox] (char14) at (7, 0) {\small \maskSym};
+          \node[maskbox] (char15) at (7.5, 0) {\small \maskSym};
+          \node[maskbox] (char16) at (8, 0) {\small \maskSym};
+          \node[maskbox] (char17) at (8.5, 0) {\small \maskSym};
+          \node[maskbox] (char18) at (9, 0) {\small \maskSym};
+          \node[maskbox] (char19) at (9.5, 0) {\small \maskSym};
+          \node[maskbox] (char20) at (10, 0) {\small \maskSym};
+          \node[maskbox] (char21) at (10.5, 0) {\small \maskSym};
+          \node[maskbox] (char22) at (11, 0) {\small \maskSym};
+          \node[maskbox] (char23) at (11.5, 0) {\small \maskSym};
+          \node[maskbox] (char24) at (12, 0) {\small \maskSym};
+          
+          \node[mdmgenbox] (char25) at (7, 0.75) {$5$};
+          \node[mdmgenbox] (char26) at (7.5, 0.75) {$\times$};
+          \node[mdmgenbox] (char27) at (8, 0.75) {$5$};
+          \node[mdmgenbox] (char28) at (8.5, 0.75) {$-$};
+          \node[mdmgenbox] (char29) at (9, 0.75) {$6$};
+          \node[mdmgenbox] (char30) at (9.5, 0.75) {$=$};
+          \node[maskbox] (char31) at (10, 0.75) {\small \maskSym};
+          \node[maskbox] (char32) at (10.5, 0.75) {\small \maskSym};
+          \node[maskbox] (char33) at (11, 0.75) {\small \maskSym};
+          \node[maskbox] (char34) at (11.5, 0.75) {\small \maskSym};
+          \node[maskbox] (char35) at (12, 0.75) {\small \maskSym};
+          
+          \node[mdmgenbox] (char36) at (7, 1.5) {$5$};
+          \node[mdmgenbox] (char37) at (7.5, 1.5) {$\times$};
+          \node[mdmgenbox] (char38) at (8, 1.5) {$5$};
+          \node[mdmgenbox] (char39) at (8.5, 1.5) {$-$};
+          \node[mdmgenbox] (char40) at (9, 1.5) {$6$};
+          \node[mdmgenbox] (char41) at (9.5, 1.5) {$=$};
+          \node[mdmgenbox] (char42) at (10, 1.5) {$25$};
+          \node[mdmgenbox] (char43) at (10.5, 1.5) {$-$};
+          \node[mdmgenbox] (char44) at (11, 1.5) {$6$};
+          \node[mdmgenbox] (char45) at (11.5, 1.5) {$=$};
+          \node[maskbox] (char46) at (12, 1.5) {\small \maskSym};
+          
+          \node[mdmgenbox] (char47) at (7, 2.25) {$5$};
+          \node[mdmgenbox] (char48) at (7.5, 2.25) {$\times$};
+          \node[mdmgenbox] (char49) at (8, 2.25) {$5$};
+          \node[mdmgenbox] (char50) at (8.5, 2.25) {$-$};
+          \node[mdmgenbox] (char51) at (9, 2.25) {$6$};
+          \node[mdmgenbox] (char52) at (9.5, 2.25) {$=$};
+          \node[mdmgenbox] (char53) at (10, 2.25) {$25$};
+          \node[mdmgenbox] (char54) at (10.5, 2.25) {$-$};
+          \node[mdmgenbox] (char55) at (11, 2.25) {$6$};
+          \node[mdmgenbox] (char56) at (11.5, 2.25) {$=$};
+          \node[mdmgenbox] (char57) at (12, 2.25) {$19$};
+          
+          \draw[seqarrow] (char19.north) to (char30.south);
+          \draw[seqarrow] (char30.north) to (char41.south);
+          \draw[seqarrow] (char41.north) to (char52.south);
+
+          \draw[brace,draw=ETHGreen] ($(char57.north east) + (0.1,0.1)$) -- ($(char24.south east) + (0.1,-0.1)$) 
+              node [midway, right=5pt, font=\small, text=ETHGreen] {Three unmasking Steps};
+      \end{scope}
+      
+      \begin{scope}[shift={(2.5, -4.25)}]
+          \node[mediumbox] (root) at (1.5, 1.5) {\tiny $-$};
+          \node[mediumbox] (mult) at (0, 0.75) {\tiny $\times$};
+          \node[mediumbox] (six) at (3.5, 0.75) {\tiny $6$};
+          \node[mediumbox] (plus1) at (-1.5, 0) {\tiny $+$};
+          \node[mediumbox] (plus2) at (1.5, 0) {\tiny $+$};
+          
+          \draw[treearrow] (root) -- (mult);
+          \draw[treearrow] (root) -- (six);
+          \draw[treearrow] (mult) -- (plus1);
+          \draw[treearrow] (mult) -- (plus2);
+          
+          \draw[treearrow] (plus1) -- ($(char2)+(0,0.25)$);
+          \draw[treearrow] (plus2) -- ($(char8)+(0,0.25)$);
+          \draw[treearrow] (six) -- ($(char12)+(0,0.25)$);
+          
+          \node[text=ETHBronze,font=\small] at (1.5, 2) {Tree Structure};
+      \end{scope}
+      
+      \begin{scope}[shift={(0, -5.75)}]
+          \node[cotgenbox] (cot1) at (7, 0) {$5$};
+          \node[cotgenbox] (cot2) at (7.5, 0) {$\times$};
+          \node[cotgenbox] (cot3) at (8, 0) {$5$};
+          \node[cotgenbox] (cot4) at (8.5, 0) {$-$};
+          \node[cotgenbox] (cot5) at (9, 0) {$6$};
+          \node (cot_dots) at (10.25, 0) {\dots};
+          \node[cotgenbox] (cot_end_final) at (12, 0) {$19$};
+          
+          \node[label, text=ETHRed] at (4, 0) {Eleven chain of thought steps:};
+
+          \draw[seqarrow, bend right=45] (cot1.south) to (cot2.south);
+          \draw[seqarrow, bend right=45] (cot2.south) to (cot3.south);
+          \draw[seqarrow, bend right=45] (cot3.south) to (cot4.south);
+          \draw[seqarrow, bend right=45] (cot4.south) to (cot5.south);
+      \end{scope}
+    \end{tikzpicture}
+    \caption{
+    \textbf{Two strategies for solving a mathematical expression}. \emph{(a) \textcolor{ETHGreen}{Parallel}}: Parallel computation of intermediate values (three steps).
+    \emph{(b) \textcolor{ETHRed}{Sequential}}: Step-by-step generation (eleven steps).
+    }
+    \label{fig:expression-tree}
+\end{figure}
+
+Our analysis builds upon the study of LM expressivity---the formal characterization of the problems whose solution the neural architecture of an LM (with appropriate parameters) can express. 
+While this field comprehensively describes autoregressive LMs, its findings do not directly apply to \MDMsAcr due to their fundamentally different, non-sequential processing of text, leaving the theoretical studies of these two paradigms largely in isolation. 
+Prior theoretical work on \MDMsAcr has focused on the limitations of their factorized backward process and its convergence properties.
+This research has shown that while \MDMsAcr can approximate $n$-gram LMs with constantly many denoising steps, the number of steps must grow linearly with the string length even for simple LMs such as probabilistic regular languages \citep{feng2025theoreticalbenefitlimitationdiffusion,li2025convergencetheorydiffusionlanguage}.\footnote{We provide a detailed overview of related work in \cref{app:related-work}.} 
+However, the asymptotic nature of these findings, together with the strict assumptions on the theoretical model, makes it difficult to draw concrete conclusions about the practical reasoning capabilities of \MDMsAcr, leaving a critical gap: A theoretical framework for \MDMsAcr that is both 
+\begin{enumerate*}[label={(\arabic*)}]
+    \item formally rigorous enough to provide a comprehensive picture of how \MDMsAcr can use the combination of parallelism and iterative refinement for formal reasoning, and
+    \item faithful to how they are implemented in practice.
+\end{enumerate*}
+Our work introduces such a framework, providing a tight characterization of their reasoning capabilities.
+
+
+Concretely, we connect \MDMsAcr implemented as finite-precision transformers with logarithmically-growing model width to known reasoning paradigms of \CoTAcr \citep{wei2022chainofthought}, looping \citep{dehghani2019universaltransformers}, and pause tokens \citep{lanham2023measuringfaithfulnesschainofthoughtreasoning}.
+For example, we formalize:
+\begin{takeaway}[\textit{\cref{thm:mdms-can-simulate-cot,thm:cot-can-simulate-mdms}}] \label{takeaway:takeaway-1}
+   \MDMsAcr can perform \CoTAcr reasoning with some overhead and the \MDMAcr denoising process can be (inefficiently) simulated by \CoTAcr by generating one symbol at a time.
+\end{takeaway}
+We also show how \MDMsAcr can solve complex problems by solving easier sub-problems in parallel, which makes them inherently more efficient than \CoTAcr on parallelizable problems.
+\begin{takeaway}[\textit{\cref{thm:cot-mdm-separation}}] \label{takeaway:takeaway-2}
+   \MDMsAcr are provably more efficient at parallelizable problems than \CoTAcr.
+\end{takeaway}
+We refer to the fact that \CoTAcr \emph{cannot} take advantage of this parallelism as the \defn{sequentiality bottleneck} of \CoTAcr.
+\cref{takeaway:takeaway-2} highlights the potential efficiency gains of \emph{parallel} \CoTAcr that generates multiple symbols at once.
+Our analysis, in fact, identifies a tighter and more natural connection between \MDMsAcr and this variant, which we refer to as \pCoTAcr.
+The parallelism of \MDMsAcr also facilitates a close connection with \emph{looped} and \emph{padded} transformers, where looping naturally maps to denoising steps and padding tokens to the generated tokens of an \MDMAcr.
+We find the class of problems solvable by \MDMsAcr is, in fact, precisely equivalent to that solvable by padded looped transformers.
+\begin{takeaway}[\textit{\cref{thm:lts-mdms}}] \label{takeaway:takeaway-3}
+   \MDMsAcr are equivalent to \LTsAcr.
+\end{takeaway}
+
+These connections allow us to leverage known characterizations of \CoTAcr and \LTsAcr together with classical complexity theory results to understand the fundamental capabilities and limits of \MDMsAcr \citep{li2024chain,saunshi2025reasoninglatentthoughtspower,london2025pausetokensstrictlyincrease,svete2025exactexpressivepowerfiniteprecision}.
+For example, with $\strlen$ representing the length of the input string and with $\ACd$ for $d \in \N$ being the standard class of Boolean circuits with \andGate, \orGate, and \notGate gates and depth $\bigO(\log^d\strlen)$, we obtain:
+\begin{takeaway}[\textit{\cref{thm:regular-languages-in-mdm-efficient}}] \label{takeaway:takeaway-4}
+   \MDMsAcr with $\log\strlen$ denoising steps can recognize regular languages.
+\end{takeaway}
+\begin{takeaway}[\textit{\cref{cor:mdms-with-constant-steps,cor:mdms-with-polylog-steps}}] \label{takeaway:takeaway-5}
+   For $d \in \N$, \MDMsAcr with $\bigO(\log^d\strlen)$ denoising steps and $\polyFun{\strlen}$ output space are equivalent to $\ACd$.
+   As $d \to \infty$, this yields $\NC$, the class of all parallelizable problems.
+   With \emph{constantly} many denoising steps ($d = 0$), \MDMsAcr are equivalent to the limited class $\ACZero$, i.e., they are no more powerful than standard transformers and, e.g., cannot recognize all regular languages.
+\end{takeaway}
+We summarize these takeaways and their relationships in \cref{fig:figure-1}.
+Our proofs emphasize the affordances and difficulties in solving reasoning problems with \MDMsAcr. 
+We find, for example, that the discrete nature of text generation, which serves as a communication channel between individual denoising steps, limits the amount of information that can be passed between steps.
+This necessitates extra output space to store the intermediate computations and is analogous to the discrepancy between fixed-precision and log-precision transformers \citep{li2024chain}, and the difference between the classes $\AC$ and $\TC$, the class of circuits with threshold gates.
+We find that \emph{positional encodings} that carry information not computable by transformers themselves are crucial in locating this information.
+We also observe that, while unmasked attention makes \MDMAcr attention patterns flexible, it complicates left-to-right processing, which is often natural in human language---we find that exact implementation of causal masking requires quadratically more output space.
+
+
+
+\section{Preliminaries} \label{sec:preliminaries}
+
+This section introduces the preliminaries and notation used throughout the paper.
+We reserve the main text for the high-level intuitions and defer technical details to \cref{app:preliminaries}.
+
+
+\subsection{Transformers}
+
+We analyze (un)masked transformers for string generation and classification.
+We present the full model in \cref{app:transformers} and focus here on the most relevant aspects.
+
+\textbf{Transformer families.}
+We study \emph{finite precision} transformers where the value of each parameter and activation is represented with a fixed number of bits.
+We allow the model \emph{width}, i.e., the size of the contextual representations, to grow logarithmically with the input length $\strlen$.
+This is a standard assumption in the literature on transformer expressivity \citep{li2024chain} since it is necessary and sufficient for the model to uniquely identify input positions, and aligns with modern implementations of \emph{quantized} but \emph{wide} transformers.
+The growing width results in a separate transformer $\tf_\strlen$ for each $\strlen$, yielding a \defn{family} $\{\tf_\strlen\}_{\strlen \in \N}$ of transformers. 
+We enforce $\LUniformity$ in the family by requiring an associated Turing machine that constructs $\tf_\strlen$ in $\bigOFun{\log\strlen}$ space (cf. \cref{app:transformers}).
+
+\textbf{(Parallel) \CoTAcr transformers.}
+\CoTAcr reasoning enables sequential processing by solving problems in multiple steps \citep{wei2022chainofthought}.
+It is an integral part of today's popular ``reasoning'' models and substantially increases transformers' expressivity \citep{li2024chain,merrill2024the}.
+We define our idealization of \CoTAcr transformers in \cref{app:transformers}, including \emph{parallel} \CoTAcr transformers,
+which predict $\padlen' \in \N$ symbols in parallel at each time step,
+enabling some parallelism if the task allows it.\footnote{This is different from \emph{speculative decoding} \citep{10.5555/3618408.3619203}, which generates multiple symbols \emph{one a time} with a smaller LM and then evaluates their probability in a single pass of a larger LM.}
+We denote the classes of \CoTAcr and parallel \CoTAcr transformers by $\CoTClass$ and $\pCoTClass$, respectively.
+
+\textbf{Padded looped transformers (\LTsAcr).} 
+Looped transformers repeatedly apply a fixed block of transformer layers to the input \citep{dehghani2019universaltransformers}.
+This dynamically increases the depth of the model, enabling more complex reasoning, and does not increase the model size, as the same blocks are reused, thus reducing the memory footprint and computational cost \citep{bae2025mixtureofrecursionslearningdynamicrecursive}.
+Such reasoning steps include both sequential and parallel processing, resulting in both efficiency as well as depth of the reasoning process.
+Padded transformers additionally pad the input with blank symbols, which can be used to perform additional computations \emph{in parallel}.
+This additional padding space is analogous to increasing the circuit width in circuit complexity.
+We additionally provide \LTsAcr with external noise applied to the residual stream at each step, which enables stochastic computations
+(cf.~\cref{app:looped-padded-transformers}).
+We denote the class of padded looped transformers by $\LTClass$.
+
+
+\textbf{Transformer LMs.}
+An \defn{alphabet} $\alphabet$ is a finite, non-empty set of \defn{symbols}. 
+Its Kleene closure is $\strings \defeq \bigcup_{n=0}^{\infty} \alphabet^n$, the set of all strings.
+A \defn{language model} is a distribution over $\strings$.
+Most LMs are \defn{autoregressive}---they define \defn{next-symbol} distributions $\pLMFun{\cdot \mid \str}$ over $\eosalphabet \defeq \alphabet \cup \set{\eos}$ for $\str \in \kleene{\alphabet}$, where $\eos \notin \alphabet$ is the \underline{e}nd-\underline{o}f-\underline{s}tring symbol.
+A transformer-based LM computes $\pLMFun{\cdot \mid \str}$ by linearly transforming the contextual representation of the final symbol to the logits of a distribution over $\eosalphabet$.
+Moreover, contextual representations can be used for \defn{infilling}---predicting symbols at masked positions.
+Infilling probabilities $\pLMInfFun{\cdot \mid \str}$ at masked positions in $\str \in \kleene{\maskAlphabet}$ are distributions over $\alphabet$, where $\maskSym \notin \alphabet$ is the mask symbol and $\maskAlphabet \defeq \alphabet \cup \set{\maskSym}$.
+
+\textbf{Transformers and formal languages.}
+Plenty of work describes transformer capabilities and limitations with formal languages \citep{strobl-etal-2024-formal}.
+These studies typically frame transformers as \defn{language recognizers}, i.e., classifiers that decide whether a string $\str \in \kleene{\alphabet}$ belongs to some formal language $\lang \subseteq \kleene{\alphabet}$ \citep{butoi2025training}.
+String membership is usually \emph{deterministic} and can be formalized by determinizing the LM defined by a transformer: The next-symbol and infilling probabilities are used to decode the most probable symbol or decision.\footnote{Some work also considers transformers as LMs directly \citep{svete-cotterell-2024-transformers,nowak-etal-2024-representational,borenstein-etal-2024-languages,svete-etal-2024-transformers} and shows the (probabilistic) gains afforded by \CoTAcr reasoning.}
+The final prediction of $\ind{\str \in \lang} \in \{\acceptSym, \rejectSym\}$ can be made 
+\begin{enumerate*}[label=(\arabic*)]
+    \item \emph{in a single pass} by classifying based on the contextual representation of a particular symbol in the string, analogous to classifying based on the \texttt{CLS} symbol in BERT \citep{devlin-etal-2019-bert}, or
+    \item after \emph{``reasoning''}, i.e., solving the problem in multiple time steps. 
+    In this case, the transformer's prediction is only made after a sequence of intermediate predictions that augment its computation and help the final decision.
+    This is analogous to using \CoTAcr reasoning for string recognition and can be thought of as simulating a Turing machine with each step of the \CoTAcr process.
+\end{enumerate*} 
+
+Particularly fruitful has been the study of transformers as \defn{Boolean circuits}.
+In particular, our idealization of transformers falls under $\ACZero$ circuits \citep{li2024chain}---Boolean circuits of constant depth, polynomial size, and with \andGate, \orGate, and \notGate gates of unbounded fan-in---and captures the entire class if padding is allowed \citep{london2025pausetokensstrictlyincrease}.
+Other idealizations of transformers can compute functions outside of $\ACZero$ \citep{li2024chain,merrill2025exactexpressivepowertransformers} but remain in $\TCZero$, the class of \emph{threshold circuits} which add threshold gates (which determine whether the number of inputs exceeds some threshold) to $\ACZero$ circuits.
+\cref{app:circuit-complexity,app:transformers} provide more details on circuit classes and their relation to transformers.
+
+\subsection{Masked diffusion language models} \label{sec:diffusion-language-models}
+\defn{Discrete diffusion LMs} define a distribution over $\strings$ by progressively denoising noisy strings sampled from some fixed distribution.
+Formally, they define a \defn{forward (noising) process} and a \defn{reverse (denoising) process}.
+The forward process defines a Markov chain over strings that iteratively corrupts them. 
+Common examples include replacing symbols uniformly at random (uniform diffusion) or masking them with the mask symbol $\maskSym$ (\defn{masked diffusion models}, \MDMsAcr).
+The latter is the focus of this work.
+In this setting, the forward process starts from an initial string $\str^{(0)} \in \strings$ of some pre-determined length $\padlen$ and, at each of the $\timesteps$ (discrete) steps, independently masks symbols with probability determined by a masking schedule $\maskScheduleFun{\frac{t}{\timesteps}} \in [0, 1]$:
+\begin{minipage}[t]{0.45\textwidth}
+   \begin{equation*}
+      \diffusionProcess_{t|0}(\str^{(t)} \mid \str^{(0)}) = \prod_{\stridx=1}^{\strlen} \diffusionProcess_{t|0}(\sym^{(t)}_\stridx \mid \sym^{(0)}_\stridx),
+   \end{equation*}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.5\textwidth}
+   \begin{equation*}
+      \diffusionProcess_{t|0}(\sym^{(t)}_\stridx \mid \sym^{(0)}_\stridx) =
+      \begin{cases}
+         1 - \maskSchedule(\frac{t}{\timesteps}), &\ifcondition\sym^{(t)}_\stridx = \maskSym \\
+         \maskSchedule(\frac{t}{\timesteps}), &\otherwisecondition
+      \end{cases}.
+   \end{equation*}
+\end{minipage}
+The masking schedule is set such that $\maskScheduleFun{0} = 1$ (no masking at the start) and $\maskScheduleFun{1} = 0$ (fully masked at the end, meaning that the noise distribution is the Dirac delta on the fully masked string).
+
+Starting from the fully masked input, the reverse process $\diffusionProcess_{0|\timesteps}$ inverts the forward process $\diffusionProcess_{\timesteps|0}$ by 
+\begin{enumerate*}[label=(\arabic*)]
+   \item uniformly selecting some positions to unmask, and
+   \item sampling the chosen unmasked symbols.
+\end{enumerate*}
+After $\timesteps$ denoising steps, $\diffusionProcess_{0|\timesteps}$ produces a string $\str^{(0)}$ sampled from the LM defined by the diffusion process.
+It is this reverse process that is learned from data.
+Its analytical form is generally intractable, so one usually models a parameterized approximation of a single denoising step $\learnedGenerativeProcess_{t - 1|t}(\str^{(t-1)} \mid \str^{(t)})$, typically implemented as a transformer, that \emph{factorizes} across positions:
+\begin{equation} \label{eq:factorized-reverse-process}
+   \learnedGenerativeProcess_{t - 1|t}(\str^{(t-1)} \mid \str^{(t)}) = \prod_{\stridx=1}^\strlen \learnedGenerativeProcess_{t - 1|t}(\sym^{(t-1)}_\stridx \mid \str^{(t)})
+\end{equation}
+\cref{eq:factorized-reverse-process} enables \emph{parallel generation} but ignores inter-symbol dependencies at each denoising step.
+
+Much of the existing work on \MDMAcr expressivity analyzes the convergence of $\learnedGenerativeProcess_{t - 1|t}$ to $\diffusionProcess_{0|\timesteps}$ \citep{li2025convergencetheorydiffusionlanguage,chen2024convergenceanalysisdiscretediffusion,feng2025theoreticalbenefitlimitationdiffusion}.
+Studying convergence properties usually requires assuming uniform unmasking and a good approximation of the ground-truth model \citep[e.g.,][]{li2025convergencetheorydiffusionlanguage,chen2024convergenceanalysisdiscretediffusion,feng2025theoreticalbenefitlimitationdiffusion,liu2025perfectdiffusionmathsftc0}.
+\begin{assumption}[Uniform unmasking] \label{assumption:uniform-unmasking}
+   The \defn{uniform unmasking assumption} states that $\learnedGenerativeProcess_{t - 1|t}$ generates strings $\str^{(t - 1)}$ from $\str^{(t)}$ by uniformly selecting positions to unmask.
+\end{assumption}
+\begin{assumption}[Perfect approximation] \label{assumption:perfect-approximation}
+   Let $\qdens_{t - 1|t}$ be the backward processes of an \MDMAcr and $\pLMInf$ a transformer-based LM.
+   The \defn{perfect approximation assumption} states that
+   $\qLM_{t - 1|t}(\sym^{(t - 1)}_\stridx \mid \str^{(t)}) = \pLMInfFun{\sym^{(t - 1)}_\stridx \mid \str^{(t)}}$
+   for all $\str^{(t)} \in \kleene{\maskAlphabet}$, $\sym^{(t - 1)}_\stridx \in \alphabet$, and $\stridx \in \{1, \ldots, |\str^{(t)}|\}$.
+\end{assumption}
+In words, \cref{assumption:perfect-approximation} states that the transformer perfectly models \emph{all} conditional distributions of the diffusion process.\footnote{Or \emph{approximates} them well, requiring the error to be smaller than some $\epsilon > 0$.}
+While this seems necessary, the following observation, proved in \cref{app:proofs}, shows that \cref{assumption:perfect-approximation,assumption:uniform-unmasking} severely limit the class of functions that the model can compute.
+\begin{restatable}[]{theorem}{perfectApproximationTheorem} \label{thm:perfect-approximation-limitation} 
+   If \cref{assumption:perfect-approximation,assumption:uniform-unmasking} hold for an LM $\pdens$, $\pdens$ cannot compute non-$\ACZero$ functions.\footnote{That is, $\pdens$ can only implement LMs whose next-symbol logits can be computed by $\ACZero$ circuits \citep{liu2025perfectdiffusionmathsftc0}.}\textsuperscript{,}\footnote{An analogous version of the theorem applies to transformers in $\TCZero$.}
+\end{restatable}
+By assuming that the \MDMAcr is unable to choose which positions to unmask, the model has no choice in which sub-problems to solve first, which ignores the possibility of problem decomposition and requires the model to be equally good at solving \emph{any} sub-problem---including predicting the final answer based on the input directly (with no reasoning steps).
+This implies that the problem is solvable in a single prediction step of a transformer.
+However, the expressivity of a single transformer pass is limited---\cref{thm:perfect-approximation-limitation} uses the fact that fixed-depth transformers lie in $\ACZero$ \citep{li2024chain}.
+However, not \emph{all} conditional probabilities have to be known to be able to solve algorithms in few steps.
+Intuitively, by \emph{choosing} to solve \emph{simple} subproblems with non-random unmasking, an \MDMAcr can avoid the difficult parts.
+For example, given the current arithmetic expression, one only has to predict the next set of simplifications---which are simple functions of the current expression.
+This motivates us to \emph{loosen} \cref{assumption:uniform-unmasking,assumption:perfect-approximation}, which we do in our idealization of an \MDMAcr.
+   
+\subsubsection{Our idealization of masked diffusion models} \label{sec:idealization}
+
+We aim to understand the expressivity of the \emph{reverse process}. 
+To this end, we introduce an idealization that captures its key aspects---iterative unmasking and infilling---and provides a principled lens for understanding the expressivity of practical \MDMsAcr and comparing them to well-known paradigms such \CoTAcr. 
+Here, we describe the high-level ideas; see \cref{app:idealization} for the full formal model.
+
+We formalize the reverse process with two components: A \defn{planner} that \emph{decides} which positions to unmask at each step and a \defn{predictor} that samples the symbols at the unmasked positions.
+This loosens \cref{assumption:uniform-unmasking} and generalizes standard \MDMsAcr in which the planner is implicitly defined by choosing the positions to unmask uniformly at random.
+It also mirrors popular \MDMAcr implementations that generate text by selecting a subset of masked positions---for example, based on model confidence or according to a learned policy---and predicting the symbols conditioned on the current partially unmasked string \citep{ghazvininejad-etal-2019-mask,peng2025pathplanningmaskeddiffusion,zheng2024reparameterizeddiscretediffusionmodel,liu2025thinkgeneratediscretediffusion,kim2025trainworstplanbest,benhamu2025acceleratedsamplingmaskeddiffusion}.\footnote{\cref{thm:single-model-equivalence} in \cref{app:planner-centrality} shows that the planner and predictor can be fused into a single model that unmasks symbols based on their confidence.
+This means that all our results apply to this popular model of unmasking.}
+Discarding \cref{assumption:uniform-unmasking} also sidesteps limitations of the position-wise independence in~\cref{eq:factorized-reverse-process}, a restriction that prevents \MDMsAcr with uniform unmasking matching even simple distributions exactly \citep{feng2025theoreticalbenefitlimitationdiffusion,wu2025fastdllmtrainingfreeaccelerationdiffusion}.
+In reasoning problems with a deterministic sequential structure, the ability to decide what to unmask enables problem decomposition into a sequence of deterministic steps that can be solved in parallel.\footnote{This is related to the importance of the mutual information and correlations between symbols to \MDMAcr performance \citep{li2025convergencetheorydiffusionlanguage,wu2025fastdllmtrainingfreeaccelerationdiffusion} and string-level correctness \citep{feng2025theoreticalbenefitlimitationdiffusion}.}
+To connect our analysis to practical implementations, we assume that the planner and predictor are implemented as transformers.\looseness=-1
+
+We allow the planner to choose to \emph{resample} already unmasked positions.
+This overcomes another key limitation---the inability to revert decisions and correct earlier mistakes---a challenge that is the focus of much recent research \citep[][\textit{inter alia}]{rutte2025generalized,song2025seeddiffusionlargescalediffusion}.\footnote{While our results focus on \MDMsAcr that can resample generated symbols, they also apply to non-resampling \MDMsAcr---\cref{thm:mdms-can-simulate-emdms} in \cref{app:editing-mdms} shows that the latter can simulate the former if given additional output space.}
+While existing work focuses on reformulating the diffusion process to allow for resampling and refining the resulting training objectives, our idealized \MDMsAcr can be seen as a complementary approach that foregoes the complications of training and focuses on the expressivity of the generation process itself---it analyzes what is theoretically possible in a very targeted way when resampling is allowed.
+
+We denote the class our idealized \MDMsAcr by $\MDMClass$.
+For a more detailed discussion, including the theoretical connection of our idealization to existing \MDMAcr variants, see \cref{app:theoretical-model}.
+
+
+\section{Theoretical results}
+\label{sec:theoretical-results}
+
+This section describes two complementary characterizations of \MDMAcr expressivity: One based on their connection to \LTsAcr and the other based on their ability to perform sequential \CoTAcr reasoning.\footnote{The proofs of all statements in this section are deferred to \cref{app:proofs}.}
+
+\paragraph{Notation.}
+Let $\timesteps = \timesteps(\strlen)$ and $\padlen = \padlen(\strlen)$ be functions of $\strlen$.
+In the following, $\CoTClass[\timesteps]$ refers to languages recognized by families $\{\tf_\strlen\}_{\strlen \in \N}$ of \CoTAcr transformers with at most $\timesteps$ steps.
+For $\modelClass \in \{\pCoTClass,\MDMClass,\LTClass\}$, $\modelClass[\timesteps, \padlen]$ refers to languages recognized by families in $\modelClass$ with at most $\timesteps$ generation, denoising, or looping steps, respectively, and $\padlen$ total output or padding symbols.
+$\bigOLogFun{\strlen}$ refers to big-$\bigO$ notation that ignores logarithmic factors, and $\polyFun{\strlen}$ to polynomial functions in $\strlen$.
+
+
+\subsection{\MDMsAcr are equivalent to padded looped transformers} \label{sec:mdms-and-lts}
+
+Intuitively, \LTsAcr closely resemble \MDMsAcr: Both iteratively refine information in parallel---\MDMsAcr by unmasking and predicting discrete symbols, and \LTsAcr by updating the residual stream.\footnote{\LTsAcr thus also resemble \emph{latent} diffusion LMs that diffuse in the representation space. We do not explore this connection here due to the superior performance and popularity of \MDMsAcr \citep{zhang2025surveyparalleltextgeneration} in practice.}
+\cref{thm:lts-mdms} formalizes this, assuming \LTsAcr are supplied with external sampling noise (cf.~\cref{sec:preliminaries}, \S\ref{app:looped-padded-transformers}) like \MDMsAcr.
+
+\begin{restatable}[\LTsAcr and \eMDMsAcr ]{theorem}{LTsandMDMsThm} \label{thm:lts-mdms} \hfill
+   
+   \begin{subequations}      
+      \noindent\begin{minipage}[b]{0.4\textwidth}
+         \begin{equation}
+            \MDMClassEdit[\timesteps, \padlen] \subseteq \LTClass[\timesteps, \padlen]
+         \end{equation}
+      \end{minipage}
+      \hfill
+      \begin{minipage}[b]{0.05\textwidth}
+         \centering
+         and
+      \end{minipage}
+      \hfill
+      \begin{minipage}[b]{0.45\textwidth}
+         \begin{equation} \label{eq:mdm-simulates-lt}
+            \LTClass[\timesteps, \padlen] \subseteq \MDMClassEdit[\timesteps, (\strlen + \padlen) \textcolor{ETHRed}{\hiddDim}].
+         \end{equation}
+      \end{minipage}
+   \end{subequations}
+\end{restatable}
+The simulation of a \LTAcr by an \MDMAcr incurs a factor $\hiddDim$ increase in the required padding (cf.~\cref{eq:mdm-simulates-lt}), where $\hiddDim$ is the model width of the \LTAcr.
+In our setting where $\hiddDim = \bigOFun{\log \strlen}$, this implies that the classes of finite-precision \MDMsAcr and \LTsAcr coincide up to a logarithmic factor in the padding length:
+\begin{restatable}{corollary}{MDMEquivalenceCor} \label{cor:mdm-lt-equivalence}
+   For any $K \geq 1$,
+   \begin{equation}
+      \MDMClassEdit[\timesteps, \bigOLogFun{\strlen^K}] = \LTClass[\timesteps, \bigOFun{\strlen^K}].
+   \end{equation}
+\end{restatable}
+
+The close connection between \MDMsAcr and \LTsAcr allows us to leverage existing results about \LTAcr expressivity to understand \MDMsAcr.
+\citet[][Thm. 5.1]{saunshi2025reasoninglatentthoughtspower}, for example, show that log-depth unpadded transformers can recognize regular languages.
+Combined with \cref{cor:mdm-lt-equivalence}, this implies:
+\begin{restatable}{corollary}{RegularLanguagesInMDMLem} \label{cor:mdms-can-simulate-regular-languages}
+   Regular languages are in $\MDMClass[\log\strlen, \strlen \log\strlen]$.
+\end{restatable}
+
+In fact, we obtain a tighter bound with a more specialized construction.\footnote{This is possible because the \LTAcr of \cite{saunshi2025reasoninglatentthoughtspower} only stores discrete values in its residual stream.}
+\begin{restatable}{theorem}{RegularLanguagesInMDMEfficientThm} \label{thm:regular-languages-in-mdm-efficient}
+   Regular languages are in $\MDMClass[\log\strlen, \strlen]$.
+\end{restatable}
+
+\citet{london2025pausetokensstrictlyincrease} show that polynomially padded finite-precision \LTsAcr with constantly many steps are equivalent to $\LUniform \ \ACZero$, the class of $\ACZero$ circuits that can be constructed by a logspace Turing machine (cf.~\cref{app:circuit-complexity}). 
+We leverage this result together with \cref{thm:lts-mdms} to characterize the expressivity of \MDMsAcr with constantly many denoising steps.
+\begin{restatable}[\MDMsAcr with constantly many denoising steps]{corollary}{MDMsConstantStepsCor} \label{cor:mdms-with-constant-steps}
+   \begin{equation}
+      \MDMClassEdit[\bigOFun{1}, \polyFun{\strlen}] = \LTClass[\bigOFun{1}, \polyFun{\strlen}] = \LUniform \ \ACZero.
+   \end{equation}
+\end{restatable}
+Allowing for a \emph{constant} number of decoding steps therefore does not increase the expressivity of \MDMsAcr beyond the limited class $\ACZero$.
+This further corroborates the empirical observation that the number of denoising steps must scale with the input complexity and complements existing results on \MDMAcr expressivity as a function of the number of denoising steps \citep{li2025convergencetheorydiffusionlanguage,feng2025theoreticalbenefitlimitationdiffusion}.
+
+
+We can, however, increase expressivity with more denoising steps.
+\citet{svete2025exactexpressivepowerfiniteprecision} show that finite-precision \LTsAcr with $\bigOFun{\log^d \strlen}$ steps and polynomial padding are equivalent to $\LUniform \ \ACd$, similar to the case of log-precision \LTsAcr and $\LUniform \ \TCd$ \citep{merrill2025exactexpressivepowertransformers}.
+Thus:
+\begin{restatable}[\MDMsAcr with polylogarithmically many denoising steps]{corollary}{MDMsPolylogStepsCor} \label{cor:mdms-with-polylog-steps}
+   \begin{equation}
+      \MDMClassEdit[\bigOFun{\log^d \strlen}, \polyFun{\strlen}] = \LTClass[\bigOFun{\log^d \strlen}, \polyFun{\strlen}] = \LUniform \ \ACd
+   \end{equation}
+\end{restatable}
+In particular, since $\NCFun{d} \subseteq \ACFun{d}$ for $d \in \N$ (where $\NCFun{d}$ denotes $\ACd$ circuits with bounded fan-in) \citep{Vollmer1999}, we get that with polylogarithmic looping and polynomial padding, \MDMsAcr converge to $\NC$, the class of all parallelizable problems.
+\cref{cor:mdms-with-polylog-steps} also implies that regular languages are in $\MDMClassEdit[\log \strlen, \polyFun{\strlen}]$; \cref{thm:regular-languages-in-mdm-efficient} provides a more efficient construction with a linear output space.
+Moreover, \cref{cor:mdms-with-polylog-steps} implies that $\LUniform \ \NCOne \subseteq \MDMClassEdit[\log \strlen, \polyFun{\strlen}]$.
+
+\subsection{\MDMsAcr and \CoTAcr can (inefficiently) simulate each other} \label{sec:mdms-and-cot}  
+
+While the close connection between \MDMsAcr and \LTsAcr provides a useful lens to analyze \MDMsAcr in terms of known complexity classes, the lack of practical \LTAcr implementations makes it difficult to draw intuitive conclusions.
+We therefore complement \cref{sec:mdms-and-lts} by connecting \MDMsAcr and the more popular \CoTAcr paradigm,
+and consider how \MDMAcr can behave ``autoregressively'' like \CoTAcr.
+The intuition is simple: An \MDMAcr can simulate \CoTAcr by unmasking one symbol at a time, effectively mimicking the sequential generation.
+More precisely, we connect \MDMsAcr to \pCoTAcr since the latter's ability to generate multiple symbols at once naturally maps to \MDMsAcr' parallel generation.
+In particular:
+\begin{restatable}[\eMDMsAcr  can simulate \pCoTAcr transformers]{theorem}{MDMsAtLeastAsPowerfulAsCoTFP} \label{thm:mdms-can-simulate-cot}
+   \begin{equation}
+      \pCoTClass[\timesteps, \padlen] \subseteq \MDMClassEdit[\timesteps, \padlen + (\strlen + \padlen)^2]
+   \end{equation}
+\end{restatable}
+The simulation incurs a quadratic blow-up in the padding length.
+This is not due to an inherent feature of the diffusion process but rather the challenge of simulating masked attention with unmasked one (cf.~\cref{lem:unmask-conversion-fp}).\footnote{To the best of our knowledge, \cref{lem:unmask-conversion-fp} is the first result showing how to simulate masked attention with unmasked attention and might be of interest in its own right.} 
+In particular, if the \MDMAcr transformer is causally masked, the blow-up disappears. 
+Moreover, if the unmasked transformer can simulate masking more efficiently (with, for example, more expressive scoring functions), the blow-up can be alleviated.\footnote{This is, for example, used by \citet[][Thm 5.4]{saunshi2025reasoninglatentthoughtspower} to show that unmasked \LTsAcr can simulate \CoTAcr with no blow-up in the padding using a \emph{masking function}---an additional step in the computation of attention scores that allows for zeroing out of irrelevant keys---and with linearly-increasing width.}
+While \cref{lem:unmask-conversion-fp} could possibly be improved, it is interesting to note that the seemingly more general unmasked
+nature of \eMDMsAcr might negatively impact their ability to align with human-oriented sequential processing captured by causal masking, which could provide a useful inductive bias for the masked models.\footnote{Interestingly, some existing work finds that \MDMsAcr that decode based on the most confident symbols tend to decode autoregressively \citep{gong2025diffucoderunderstandingimprovingmasked}. In this sense, the unmasked nature of \MDMsAcr could be seen as a hurdle that the model has to overcome to eventually rely on more autoregressive generation. This further motivates the development of hybrid models that combine autoregressive generation of entire blocks with non-autoregressive infilling within the blocks \citep[][\textit{inter alia}]{nie2025largelanguagediffusionmodels,arriola2025blockdiffusioninterpolatingautoregressive,song2025seeddiffusionlargescalediffusion}.}
+
+The other direction of \cref{thm:mdms-can-simulate-cot} shows that \pCoTAcr transformers can simulate \eMDMsAcr .
+\begin{restatable}[\pCoTAcr transformers can simulate \eMDMsAcr ]{theorem}{MDMsCoTChain} \label{thm:cot-can-simulate-mdms}
+   \begin{equation}
+      \MDMClassEdit[\timesteps, \padlen] \subseteq \pCoTClass[\timesteps, \numlayers \timesteps (\padlen + \strlen)], 
+   \end{equation}
+   where $\numlayers$ is the number of layers in the transformer implementing the \eMDMAcr.
+\end{restatable}
+Again, the factor $\numlayers$ comes from the need to simulate unmasked attention in \MDMsAcr with causally masked transformers implementing \pCoTAcr (cf.~\cref{lem:mask-conversion}).
+However, here, the blow-up is only linear.
+The additional factor of $\timesteps$ comes from the \pCoTAcr having to write out every padding token after each denoising step, as the \MDMAcr can unmask tokens in an arbitrary order.
+
+The results above can be summarized by the following sequence of inclusions.
+\begin{restatable}{corollary}{MDMCoTSandwich} \label{thm:mdms-cot-sandwich} We have the following set of inclusions:
+   \begin{subequations}
+      \begin{align}
+         \CoTClass[\timesteps] &= \pCoTClass[\timesteps, \timesteps] \justification{\cref{prop:cot-as-pcot}} \\ 
+         &\subseteq \MDMClassEdit[\timesteps, \timesteps + (\strlen + \timesteps)^2] \justification{\cref{thm:mdms-can-simulate-cot}} \\ 
+         &\subseteq \pCoTClass[\timesteps, \numlayers \timesteps(\strlen + \timesteps + (\strlen + \timesteps)^2)] \justification{\cref{thm:cot-can-simulate-mdms}} \\ 
+         &\subseteq \CoTClass[\numlayers \timesteps (\strlen + \timesteps + (\strlen + \timesteps)^2)] \justification{\cref{prop:cot-as-pcot}} \\
+         &\subseteq \CoTClass[\numlayers \timesteps (\strlen + \timesteps + 1)^2].
+      \end{align}
+   \end{subequations}
+   In particular, when $\timesteps \geq \strlen$, we have
+      $\CoTClass[\timesteps]
+      \subseteq \MDMClassEdit[\timesteps, \bigOFun{\timesteps^2}]
+      \subseteq \pCoTClass[\timesteps, \bigOFun{\timesteps^3}]
+      \subseteq \CoTClass[\bigOFun{\timesteps^3}]$.
+\end{restatable}
+\cref{thm:mdms-cot-sandwich} lower- and upper-bounds \eMDMAcr expressivity based on the expressivity of \CoTAcr transformers.
+For example, \eMDMAcr with polynomially many denoising steps remain within the class $\polyCls$, the problems solvable in polynomial time by a non-random-access multitape Turing machine.
+This follows from the equivalence of \CoTAcr transformers with polynomially many steps to $\polyCls$ \citep{li2024chain}.
+\begin{corollary}[\MDMsAcr with polynomially many denoising steps] 
+   For any $K \geq 1$, we have that
+   \begin{equation}
+      \MDMClassEdit[\timesteps, \strlen^K] \subseteq \CoTClass[\bigOFun{\timesteps \strlen^K}],
+   \end{equation}
+   meaning that \eMDMsAcr  with polynomially many denoising steps remain in $\polyCls$:
+   \begin{equation}
+      \MDMClassEdit[\polyFun{\strlen}, \polyFun{\strlen}] \subseteq \CoTClass[\polyFun{\strlen}] \subseteq \polyCls.
+   \end{equation}
+\end{corollary}
+
+\subsubsection{A separation between \eMDMsAcr  and \CoTAcr transformers}
+\citet{merrill2024the,li2024chain} show that \CoTAcr transformers with logarithmically many decoding steps remain in $\TCZero$.
+Combining this with \cref{thm:regular-languages-in-mdm-efficient}, the widely accepted assumption that $\TCZero \neq \NCOne$, and known $\NCOne$-completeness of specific regular languages, we obtain the following separation in expressivity under a small (logarithmic) number of decoding steps.
+We term the inability of \CoTAcr to leverage parallelism the \defn{sequentiality bottleneck} of \CoTAcr.
+\begin{restatable}[A strict separation in efficient reasoning abilities of \eMDMsAcr and \CoTAcr transformers]{corollary}{CoTMDMSeparationCor} \label{thm:cot-mdm-separation}
+   \begin{equation}
+      \CoTClass[\log\strlen] \subsetneq \MDMClass[\log\strlen, \strlen].
+   \end{equation}
+\end{restatable}
+Concretely, $\MDMClass[\log\strlen, \strlen] \, \setminus \, \CoTClass[\log\strlen]$, for example, contains all $\NCOne$-complete regular languages.
+
+
+
+\section{Discussion} \label{sec:discussion}
+
+\paragraph{Strengths and weaknesses of \MDMsAcr.}
+\cref{sec:theoretical-results} provides insights into the suitability of using \MDMsAcr for different classes of problems.
+On the one hand, \cref{thm:cot-mdm-separation} reveals the sequentiality bottleneck of \CoTAcr and an expressivity gap between \CoTAcr transformers and \MDMsAcr with logarithmically many model evaluations: While \CoTAcr transformers remain in $\TCZero$, \MDMsAcr can solve $\NCOne$-complete problems.
+This formalizes the intuition that \MDMsAcr are more suitable for highly-parallelizable problems and has implications for the practical applications of these two paradigms with a limited number of model evaluations.
+For example, the common \emph{state-tracking} benchmark used to evaluate the reasoning abilities \citep{liu2023transformers,10.5555/3692070.3693514} can be solved with \MDMsAcr with logarithmically many steps, while \CoTAcr transformers require linearly many steps.
+On the other hand, the equivalence of \MDMsAcr with polylogarithmically many denoising steps to the class $\NC$ (cf.~\cref{cor:mdms-with-polylog-steps}) reveals problems where efficiency gains from parallelism are limited.
+For example, assuming the widely-believed hypothesis that $\NC \neq \polyCls$, none of the following ($\polyCls$-complete) problems benefit from \MDMAcr parallelism:
+\begin{itemize}[noitemsep,topsep=0pt,leftmargin=10pt]
+   \item \textbf{Circuit value problem}: Given a circuit, its inputs, and a gate, calculate the gate's value.
+   \item \textbf{Linear programming}: Maximize a linear function subject to linear inequality constraints.
+   \item \textbf{Context free grammar (CFG) membership}: Given a CFG $\grammar$ and a string $\str$, is $\str \in \lang(\grammar)$?
+   \item \textbf{Horn-satisfiability} ($\polyCls$ version of \texttt{SAT}): Is there a satisfying assignment to a set of Horn clauses?
+\end{itemize}
+In other words, these problems, in general, require a ``\CoTAcr-style'' step-by-step sequential solution. 
+Due to the overhead introduced by unmasked attention of \MDMsAcr (such as the inability to store KV-cache), such problems are more efficiently solved by standard autoregressive \CoTAcr transformers.
+
+\paragraph{Equivalence to padded looped transformers.}
+\cref{cor:mdm-lt-equivalence} reveals a tight connection between \MDMsAcr and \LTsAcr.
+While this suggests these two frameworks are largely interchangeable, important distinctions exist.
+On the one hand, unlike \MDMsAcr, standard \LTsAcr perform sequential computations \emph{deterministically}.
+This makes \MDMsAcr more suitable for ambiguous generation tasks, where decisions early in the generation make subsequent decisions easier.
+\LTsAcr would, in that case, have to keep track of all possible generations in the residual stream until the final---decoding---step.
+Moreover, \MDMsAcr are easier to train and steer---since their intermediate computation steps are based on partially masked inputs, the model explicitly learns to solve complex tasks from random sub-tasks, which benefits their reasoning abilities \citep{kim2025trainworstplanbest}.
+\LTsAcr, in contrast, only receive training signal from the final decision and have to construct the sub-steps of the computation on their own.
+This could lead to suboptimal utilization of the sequential computation or even to failure to use it at all.
+Similarly, the human-understandable sub-tasks that \MDMsAcr have to solve make their training more interpretable and easier to control. 
+On the other hand, the more information-rich intermediate states of \LTsAcr make them more efficient at storing and processing information, and the lack of sampling steps makes them more efficient at inference time.
+
+\paragraph{Generalizations.}
+By focusing on transformer-based \MDMsAcr, we can draw from the rich theory developed on the expressivity of transformers. 
+However, \MDMsAcr do not have to be implemented by a transformer---they could, for example, be implemented by a state-space model.
+Nevertheless, the parallelizable nature of \MDMsAcr suggests that any reasonable real-world implementation will include parallelizable components---for example, a model implementable by a constant-depth circuit, such as a $\TCZero$ circuit.\footnote{A similar modeling assumption is made by \citet{liu2025perfectdiffusionmathsftc0,liu2025serialscalinghypothesis} for latent diffusion LMs.}
+The close connection between transformers (with logarithmically-growing precision and padding) and the class $\TCZero$ \citep{merrill-sabharwal-2023-parallelism,li2024chain} suggests that the results of \cref{sec:theoretical-results} will largely carry over to such implementations.
+We conjecture that, regardless of whether \MDMsAcr are implemented by finite-precision transformers ($\ACZero$ circuits) or a more expressive $\TCZero$ circuit, $\MDMClass[\log^d\strlen, \polyFun{\strlen}]$ would remain in $\ACd$ (cf.~\cref{cor:mdms-with-constant-steps}) or a similar class like $\TCd$.
+Moreover, we state the sequentiality bottleneck only for $\log \strlen$ decoding steps, since the expressivity of $\CoTClass[\log\strlen]$ is known to be limited.
+However, we believe that a similar separation exists for polylogarithmically many decoding steps: While the expressivity of $\CoTClass[\log^d\strlen]$ has not been formalized yet, it likely does not capture all of $\ACd$, unlike $\MDMClass[\log^d\strlen, \polyFun{\strlen}]$ (cf.~\cref{cor:mdms-with-constant-steps}).
+
+
+\paragraph{Discrepancies.}
+We strive to compare different paradigms fairly by analyzing a specific implementation of \MDMsAcr---one based on a specific idealization of transformers.
+Some inherent differences between the frameworks, however, remain.
+One is the dichotomy between using causal masking for \CoTAcr and unmasked transformers for \MDMsAcr and \LTsAcr.
+We focus on unmasked models to analyze the more natural and popular implementations rather than artificially constraining \MDMsAcr and \LTsAcr to causal masking.
+Another impactful decision is the nature of positional encodings (PEs). 
+While we assume relatively simple PEs standard in theoretical literature (in particular, logspace-computable, cf. \cref{app:transformers}), we allow them to come from an outside source not part of the transformer---they may thus carry information not computable by the model; see \cref{app:positional-encodings} for additional discussion.
+
+
+\section{Conclusion} \label{sec:conclusion}
+We describe the expressivity of masked diffusion LMs (\MDMsAcr) by connecting them to padded looped transformers (\LTsAcr) and chain-of-thought-augmented (\CoTAcr) transformers.
+This reveals a close connection between \LTsAcr and \MDMsAcr, which leads to the equivalence of \MDMAcr with polylogarithmically many denoising steps to the class $\NC$ of parallelizable problems, with concrete implications around what problems can benefit from the parallelism afforded by \MDMsAcr.
+We also show that \MDMsAcr can (somewhat inefficiently) simulate \CoTAcr transformers. 
+We describe the sequentiality bottleneck and the strict expressivity gap between \MDMsAcr and \CoTAcr transformers with logarithmically many model evaluations.
+This shows \MDMsAcr to be more suitable for highly-parallelizable problems, while \CoTAcr transformers are more suitable for inherently sequential ones.
+Overall, our results provide insights into the strengths and weaknesses of \MDMsAcr and their suitability for different classes of problems.
+
+\section*{Ethics Statement}
+This work is theoretical and aims to describe the capabilities of masked diffusion models to better understand their strengths and limitations. 
+We do not foresee any direct negative societal impacts.
+
+\section*{Reproducibility Statement}
+All our results are theoretical and thus reproducible from the provided proofs in \cref{app:theoretical-gadgets,app:proofs}.
+
+
+\section*{The use of large language models} \label{app:llm-use}
+We used AI-based tools (Gemini and GitHub Copilot) for brainstorming and writing assistance.
+We used the tools in compliance with the ICLR 2026 policies.
+
+\bibliography{bibliography}
+\bibliographystyle{iclr2026_conference}
+
+\newpage
+\input{appendix}
+
+\end{document}

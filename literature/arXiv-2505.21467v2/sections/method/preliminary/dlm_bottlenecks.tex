@@ -1,0 +1,46 @@
+
+\begin{table}[h!]
+\centering
+\renewcommand{\arraystretch}{1.1}
+\resizebox{0.95\linewidth}{!}{\begin{tabular}{llcc}
+\toprule
+\textbf{Module} & \textbf{Operation} & \textbf{Auto-Regressive LM (decode)} & \textbf{Diffusion LM (length $L$)} \\
+\midrule
+\multirow{4}{*}{MHA} 
+& $W_Q$, $W_K$, $W_V$ projections & $\mathcal{O}(d^2)$ & $\mathcal{O}(Ld^2)$ \\
+& Query $\times$ Key ($QK^\top$) & $\mathcal{O}(l^2 d / h)$ & $\mathcal{O}(L^2 d / h)$ \\
+% & Softmax + scaling              & $\mathcal{O}(l^2)$        & $\mathcal{O}(L^2)$ \\
+& Attention Score $\times$ Value           & $\mathcal{O}(l d / h)$ & $\mathcal{O}(L^2 d / h)$ \\
+& Output projection ($W_{\text{out}}$) & $\mathcal{O}(d^2)$ & $\mathcal{O}(L d^2)$ \\
+\midrule
+\multirow{2}{*}{FFN}
+& $W_1$ projection               & $\mathcal{O}(d \dot d_{\text{ff}})$ & $\mathcal{O}(L d d_{\text{ff}})$ \\
+& $W_2$ projection               & $\mathcal{O}(d d_{\text{ff}})$ & $\mathcal{O}(L d d_{\text{ff}})$ \\
+\bottomrule
+\end{tabular}}
+\vspace{1.0em}
+\caption{Compute complexity of Transformer modules: AR decodes a prefix of length \(l\) per token vs. DLM processes full length \(L\) each denoising step.}
+\label{tab:transformer-complexity}
+\end{table}
+
+\subsubsection{Bottleneck of Diffusion Language Model Inference}
+
+While diffusion models allow parallelized generation of tokens, this comes at the expense of extra computation overhead per forward pass. 
+Given the input $x_T$ with sequence length $L$, each forward pass of the diffusion model $f_\theta$ requires full-sized computation~(both current and past tokens) throughout the multi-head attention~(MHA) block and feed-forward network~(FFN) of the transformer model. 
+Unlike the autoregressive model where the past tokens are cached for the new token generation, diffusion model produces output without the consideration of causality. 
+As shown in Table~\ref{tab:transformer-complexity}, DLM models introduce an additional computational complexity of $O(L)$ at each module of a transformer-based model architecture. 
+As a result, the latency overhead introduced by the DLM architecture is massive compared to the Auto-Regressive Model, as shown in the comparison in Section~\ref{sec:res}. 
+Based on the theoretical analysis above, the first challenge of the diffusion model is: 
+
+\textbf{Challenge}\circled{1}: \textit{How to alleviate the latency and computation overhead caused by the liability of full sized cache computation of DLM?}
+
+
+% it incur an additional factor of \(O(L)\) cost per step from recomputing full‐sequence forward passes. 
+
+% In addition, quality drops significantly as the size of the unmasked set $U_t$ increases. In this work, we address this inefficiency with two complementary training-free techniques, KV approximation caching \zhanqiu{Rename} and AR-guided unmasking, which accelerate inference without compromising quality.  
+
+% Let L denote the full sequence length, which is equal to the sum of input token length and context window length for generation tasks. Each $f_\theta$ is a full forward pass of a transformer decoder with input sequence length of L, which includes multi-head attention (MHA) and feedforward (FFN) layers, applied to the entire sequence at every timestep.
+
+% Table~\ref{tab:transformer-complexity} highlights a key contrast in forward pass efficiency between autoregressive models and diffusion models. Autoregressive decoding operates on a growing prefix of length $l$, while diffusion models operate on the full sequence of length $L$ at each denoising step. All linear projections in DLM scale with $L$ compared to the constant size in ARM. 
+
+% Most linear projections in ARM involve matrix-vector multiplication (e.g., $\mathbb{R}^{d \times d} \cdot \mathbb{R}^{d \times 1}$), while DLM requires matrix-matrix multiplication ($\mathbb{R}^{d \times d} \cdot \mathbb{R}^{d \times L}$), leading to significantly higher computational cost.

@@ -1,0 +1,101 @@
+\section{Rethinking Reasoning and Sampling with MDLMs}
+\glspl{mdlm} are trained to in-fill sequences by modeling the distributions $p_\theta(x^j \mid \mbx_\textsc{unmasked}, \mbc)$ for masked positions $j \in \textsc{mask-set}$ given unmasked text $\mbx_\textsc{unmasked}$ and a context $\mbc$.  Typically, \glspl{mdlm} are prompted similarly to \gls{ntp} models, and the distributions of the masked positions are used only for sampling a small \textit{fixed} number of positions. The remaining distributions are discarded.
+In this work, we show that the ability of \glspl{mdlm} to in-fill and to access the distribution of \textit{all} masked positions
+unlocks many new sampling and post-training capabilities. 
+
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Reasoning-as-Infilling for Control, Early Exits, and Post-Training Benefits}. We propose pre-filling a user-specified prompt in multiple parts of the sequence. Specifically for reasoning tasks, we first pre-fill a reasoning template that differentiates between reasoning and answer positions, then infill with the \gls{mdlm} model. This method of prompting enables controlling the length of the reasoning process, and measuring the uncertainty of the answer block during the reasoning process for early exiting. We also demonstrate how this approach supports new post-training directions for \glspl{mdlm}.
+    \item \textbf{Multi-token Entropy Decoding}. We introduce \gls{med}, an adaptive multi-token decoding algorithm that controls the error incurred by multi-token decoding by decoding multiple positions only if the conditional entropies of the decoded positions fall below a threshold.     
+\end{itemize}
+
+\paragraph{Assumptions.} We assume that the masked conditional distributions learned by the \gls{mdlm} model define a consistent joint distribution \citep{majid2025consistent}.
+
+
+
+
+
+
+
+
+\subsection{Reasoning-as-Infilling with MDLMs}
+Generally, \gls{ntp} models are controlled at inference-time with a prompt prefix that is inserted at the beginning of the sequence. However, for \glspl{mdlm} we propose pre-filling the output sequence with user-specified tokens. In the case of reasoning tasks, where a model produces a reasoning trace prior to answering, we can pre-fill the output sequence with a reasoning template that distinguishes the reasoning and answer token positions:
+
+ \begin{align}\label{eq:reasoning_as_infilling}\nonumber
+\left[\begin{array}{l}
+\underbrace{[\textsc{mask}]_1 \quad [\textsc{mask}]_2 \quad \dots \quad [\textsc{mask}]_k}_{\text{reasoning block}} \quad \text{<Answer Delimiter>} \quad 
+\underbrace{[\textsc{mask}]_{k+1} \quad \dots \quad [\textsc{mask}]_L}_{\text{answer block}}
+\end{array}\right]
+\end{align}
+Here the answer delimiter is a user-specified choice (e.g. \textit{"The answer is: "} for math tasks, or function definitions for a coding task). In this reformulation of prompting, the context $\mbc$ now includes both the prompt and the answer delimiter, see \cref{fig:reasoning_template}. 
+By distinguishing between reasoning and answer positions, reasoning-as-infilling offers several advantages for sampling and post-training. 
+
+
+
+
+
+
+
+\paragraph{Early exits.}
+By designating explicit answer block positions, reasoning-as-infilling enables measuring answer uncertainty \textit{while generating the reasoning trace}. A measure of uncertainty is the entropy of the answer block given the unmasked reasoning positions. This joint entropy requires additional estimation as \glspl{mdlm} only provide access to the marginals
+$p_\theta( a^i \mid \mbr_\textsc{unmasked}, \mbc)$. However, we show that the marginal distributions can be used to upper-bound the joint entropy,
+\begin{align}
+   H_{\textsc{ub}} := \sum_{j \in \textsc{answer-block}} H(a_j \mid \mbr_{\textsc{unmasked}}, \mbc) \, \, \geq  \, \,  H(\mba \mid \mbr_{\textsc{unmasked}}, \mbc)
+\end{align}
+See \cref{appsec:proofs} for a proof. Using this quantity, we propose \textbf{early exiting based on the answer uncertainty upper-bound} $H_\textsc{ub}$. That is, given a partial reasoning trace, $\mbr_\textsc{unmasked}$, we skip filling in the remaining reasoning tokens if the answer-entropy upper bound falls below a user-specified threshold $\gamma$, $H_\textsc{ub} < \gamma$.
+
+
+
+
+\paragraph{Post-training \glspl{mdlm} with reasoning-as-infilling.}
+
+Typically, post-training a model to reason uses expensive human demonstrations \citep{ouyang2022traininglanguagemodelsfollow}. Alternatively, \cite{zelikman2022star,phan2023training,ruan2025reasoning} have demonstrated that post-training on model generated reasoning traces provides an alternative for improving performance \citep{zelikman2022star,phan2023training,ruan2025reasoning}. These methods work off the principle that sampling reasoning traces from the posterior $p_\theta(\mbr \mid \mbc, \mba)$ and then training on these sample can increase the likelihood of generating correct answers. However, sampling from the posterior $p_\theta(\mbr \mid \mba, \mbc)$ is intractable for \gls{ntp} models, therefore, \citet{phan2023training,zelikman2022star} make use of approximate sampling methods, which require either significant prompt engineering or training another model to yield reasoning traces given answer hints. 
+
+
+With {reasoning-as-infilling} in \glspl{mdlm}, one can \textit{simply} pre-fill the answer block positions to enable sampling from the posterior distribution, without prompt engineering or having to train another model. These posterior traces can be used for post-training in several ways, including with STaR \citep{zelikman2022star}, maximum marginal log-likelihood training \citep{phan2023training,pml2Book}, or maximizing the likelihood on the answer and the posterior reasoning traces: $\max_\theta \sum_{i=1}^N \log p_\theta(\mba_i, \mbr_i \mid \mbc_i)$ where the posterior reasoning traces are generated by the model, $\mbr_i \sim p_\theta(\mbr_i \mid \mbc_i, \mba_i)$. 
+
+\paragraph{Scoring partial reasoning traces when post-training.} 
+Existing fine-tuning algorithms, such as \textsc{grpo} \citep{shao2024deepseekmath} and \textsc{rloo} \citep{ahmadian2024back}, do not make use of posterior samples but score the generations upon completion. These algorithms can benefit from intermediate rewards \citep{silver2016mastering}. Recent work shows that guiding the generation process with intermediate rewards produces samples that improve model fine-tuning \citep{zhang2024rest}. These intermediate rewards are generally provided by an \textit{external} pre-trained process reward model (PRM) \citep{lightman2023letsverifystepstep,zhang2024rest, zhang2025lessonsdevelopingprocessreward}. Reasoning-with-infilling, given the answer, allows \glspl{mdlm} to {score} arbitrary reasoning traces at {intermediate} steps. Given a partial reasoning trace $\mbr_{\textsc{unmasked}}$ and an answer $\mba^*$, we can score $\mbr_{\textsc{unmasked}}$ with:
+\begin{align}
+    \phi(\mbr_{\textsc{unmasked}} \mid \mbc, \mba^*) := \sum_{j \in \textsc{answer-block}} \log p_\theta(a_j = a_j^* \mid \mbc, \mbr_{\textsc{unmasked}}) .
+\end{align}
+The intuition behind the equation is that when the likelihood of individual answer tokens is higher for the reasoning trace $\mbr_{\textsc{unmasked}}$, then $\mbr_{\textsc{unmasked}}$ is often more likely to produce the answer. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+\subsection{Multi-token Entropy Decoding}
+As \glspl{mdlm} learn the conditional distribution $p_\theta(x^j \mid \mbx_{\textsc{unmasked}})$ for all masked tokens, they support unmasking multiple tokens in parallel. However, decoding even two positions, $x^i$ and $x^j$ in parallel can result in samples that may not be likely under the \gls{mdlm} joint distribution $p_\theta(\mbx)$, as typically $p_\theta(x^i, x^j \mid \mbx_{\textsc{unmasked}}) \neq p_\theta(x^i \mid \mbx_{\textsc{unmasked}}) p_\theta(x^j \mid \mbx_{\textsc{unmasked}})$. In \cref{tab:parallel_decoding}, we observe that decoding even $2$ tokens in parallel hurts task performance.
+
+
+However, for any set of positions $A \subseteq \textsc{mask-set} \subseteq \{1, \dots, L\}$, we can upper bound the \gls{kl} divergence between the joint distribution $p_\theta(\mbx^{A} \mid \mbx_\textsc{unmasked}, \mbc)$ and the factorized distribution $\prod_{i\in A} p_\theta( x^i \mid \mbx_\textsc{unmasked}, \mbc)$ with the sum of the entropies of the masked tokens: 
+\begin{align}\label{eq:kl_bound}
+    \kl{p_\theta(\mbx^{A} \mid \mbx_\textsc{unmasked}, \mbc) \Bigg| \prod_{i\in A} p_\theta( x^i \mid \mbx_\textsc{unmasked}, \mbc)} 
+    \leq \sum_{i \in A} H(x^i \mid \mbx_\textsc{unmasked}, \mbc)
+\end{align}
+where $H$ is the entropy of the distribution $p_\theta(x^i \mid  \mbx_\textsc{unmasked}, \mbc)$. For a proof, see \cref{appsec:proofs}.
+
+In this work, we propose multi-token entropy decoding, which makes use of the entropies of the masked positions $x^j$ to decide whether to decode multiple positions in parallel. Given unmasked text $\mbx_{\textsc{unmasked}}$, a decoding threshold $\lambda$ and a maximum number of tokens to be decoded $k_\text{max}$, we propose two definitions of the set $A$ for selecting positions to un-mask: 
+\begin{itemize}[leftmargin=*]
+    \item \textsc{med}: We sort the position entropies in an ascending order and decode positions that satisfy $H(x^i \mid \mbx_\textsc{unmasked}, \mbc) < \lambda$  and select $k_\text{max}$ such tokens. If no position has entropy lower than $\lambda$, we choose the position with the lowest entropy.     
+    \item \textsc{ar-med}: We decode at most $k_\text{max}$ tokens in a contiguous left-to-right order for positions that satisfy $H(x^i \mid \mbx_\textsc{unmasked}, \mbc) < \lambda$, or the left most position if no position has entropy below $\lambda$. 
+\end{itemize}
+Both \gls{med} and \textsc{ar-med} allow for upper bounding the Kullback-Leibler divergence in \cref{eq:kl_bound} by $\lambda k_\text{max}$, controlling the error incurred by multi-token decoding.

@@ -1,0 +1,278 @@
+\subsection{Prompt Templates}\label{sec:app-prompts}
+\textbf{Prompt Configuration for Question Answering and Reasoning.}
+We would like to highlight that our evaluation protocol encourages the diffusion model to generate the output tokens with the sense of reasoning for \textbf{both} math solving and basic common QA tasks~(e.g., PiQA). As a result, the model achieves higher accuracy compared to the reported performance in \cite{dream2025}. To solidify the fact that we are not heavily relying on prompt engineering, we release the prompt templates as follows:
+
+
+
+% Each prompt in the following is used verbatim. Replace ``$<$sentence$>$'', ``$<$question$>$'', ``$<$problem$>$'', or ``$<$instruction$>$'' with the actual input. All ``**'' markers are preserved exactly as in the original implementation.
+
+\medskip
+\begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+\textbf{ARC (-C/E):}\\
+
+You are a careful reasoning assistant.  
+A commonsense sentence is shown with a blank and **four** Answers that could fill the blank.  
+Think step by step about which option makes the sentence most sensible, then decide.\\
+
+\#\#\# Sentence:  
+$<$sentence$>$ \\
+
+\#\#\# What you should do:  \\
+1. Briefly explain your reasoning.  \\
+2. On a **new line**, write exactly:  
+   "The final answer is [answer]"  
+   where **[answer]** is either **Answer1**, **Answer2**, **Answer3**, or **Answer4**.  
+Do **not** output anything after that line.
+\end{tcolorbox}
+
+\medskip
+\begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+\textbf{GPQA:}\\
+
+You are a careful reasoning assistant.  
+A question is shown with **four** possible answers.  
+Think step by step about which option is correct, then decide. \\
+
+\#\#\# Question: $<$question$>$ \\
+
+\#\#\# In your response:  \\
+1. First reason and explain your reasoning briefly before providing the final answer to the question.  \\
+2. Then at the end of your explanation, on a **new line**, write exactly:  
+   "The final answer is [answer]"  
+   where **[answer]** is one of **Answer1**, **Answer2**, **Answer3**, or **Answer4**.  
+Do **not** output anything after that line.
+\end{tcolorbox}
+
+\medskip
+\begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+\textbf{GSM8K:}\\
+
+Given the following problem, reason and give a final answer to the problem. \\
+
+Problem:  
+$<$problem$>$ \\
+
+Your response should end with  
+"The final answer is [answer]"  
+where [answer] is just the final number to the problem.
+\end{tcolorbox}
+
+\medskip
+\begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+\textbf{HellaSwag:} \\
+
+You are a careful reasoning assistant.  
+A commonsense sentence is shown with a blank and **four** Endings that could fill the blank.  
+Think step by step about which option makes the sentence most sensible, then decide. \\
+
+\#\#\# Sentence:  
+$<$sentence$>$ \\
+
+\#\#\# In your response:  \\
+1. First reason and explain your reasoning briefly before answering this question.  \\
+2. Then at the end of your explanation, on a **new line**, write exactly:  
+   "The final answer is [answer]"  
+   where **[answer]** is either **Ending1**, **Ending2**, **Ending3**, or **Ending4**.  
+Do **not** output anything after that line.
+\end{tcolorbox}
+
+% \medskip
+% \begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+% \textbf{OBQA:} \\
+
+% You are a careful reasoning assistant.  
+% A commonsense sentence is shown with a blank and **four** Answers that could fill the blank.  
+% Think step by step about which option makes the sentence most sensible, then decide. \\
+
+
+% \#\#\# Sentence:  
+% $<$sentence$>$ \\
+
+% \#\#\# What you should do:  
+
+
+% 1. Briefly explain your reasoning.  \\
+% 2. On a **new line**, write exactly:  
+%    "The final answer is [answer]"  
+%    where **[answer]** is either **Answer1**, **Answer2**, **Answer3**, or **Answer4**.  
+% Do **not** output anything after that line.
+% \end{tcolorbox}
+
+\medskip
+\begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+\textbf{PIQA:} \\
+
+Below is an instruction that describes a task. Write a response that appropriately completes the request. \\
+
+\#\#\# Instruction:  
+$<$instruction$>$ \\
+
+Your response should end with  
+"The final answer is [answer]"  
+where [answer] is the response to the problem.
+\end{tcolorbox}
+
+\medskip
+\begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+\textbf{MMLU-PRO:} \\
+
+The following are multiple choice questions (with answers) about a subject. Think step by step and then finish your answer with "the answer is (X)" where X is the correct letter choice.
+\end{tcolorbox}
+The prompt of MMLU-PRO is adopted from the official repository of MMLU-PRO benchmark. 
+
+% \medskip
+% \begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+% \textbf{Winogrande:} \\
+
+% You are a careful reasoning assistant.  
+% A commonsense sentence is shown with a blank and **two** options that could fill the blank.  
+% Think step by step about which option makes the sentence most sensible, then decide. \\
+
+% \#\#\# Sentence:  
+% $<$sentence$>$ \\
+
+% \#\#\# What you should do:  \\
+% 1. Briefly explain your reasoning.  
+% 2. On a **new line**, write exactly:  \\
+%    "The final answer is [answer]"  
+%    where **[answer]** must be either **option1** or **option2**.  
+
+% Do **not** output anything after that line.
+% \end{tcolorbox}
+
+
+% \section{Prompt Templates}\label{sec:app-prompts}
+
+% Each prompt below was used verbatim. Replace `$<$sentence$>$`, `$<$question$>$`, `$<$problem$>$`, or `$<$instruction$>$` with the actual input. All `**` markers are preserved exactly as in the original implementation.
+
+% \medskip
+% \begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+% ARCC:
+
+% You are a careful reasoning assistant.  
+% A commonsense sentence is shown with a blank and **four** Answers that could fill the blank.  
+% Think step by step about which option makes the sentence most sensible, then decide.
+
+% \#\#\# Sentence:  
+% $<$sentence$>$
+
+% \#\#\# What you should do:  
+% 1. Briefly explain your reasoning.  
+% 2. On a **new line**, write exactly:  
+%    "The final answer is [answer]"  
+%    where **[answer]** is either **Answer1**, **Answer2**, **Answer3**, or **Answer4**.  
+% Do **not** output anything after that line.
+% \end{tcolorbox}
+
+% \medskip
+% \begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+% GPQA:
+
+% You are a careful reasoning assistant.  
+% A question is shown with **four** possible answers.  
+% Think step by step about which option is correct, then decide.
+
+% $<$question$>$
+
+% \#\#\# In your response:  
+% 1. First reason and explain your reasoning briefly before providing the final answer to the question.  
+% 2. Then at the end of your explanation, on a **new line**, write exactly:  
+%    "The final answer is [answer]"  
+%    where **[answer]** is one of **Answer1**, **Answer2**, **Answer3**, or **Answer4**.  
+% Do **not** output anything after that line.
+% \end{tcolorbox}
+
+% \medskip
+% \begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+% GSM8K:
+
+% Given the following problem, reason and give a final answer to the problem.
+
+% Problem:  
+% $<$problem$>$
+
+% Your response should end with  
+% "The final answer is [answer]"  
+% where [answer] is just the final number to the problem.
+% \end{tcolorbox}
+
+% \medskip
+% \begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+% HellaSwag:
+
+% You are a careful reasoning assistant.  
+% A commonsense sentence is shown with a blank and **four** Endings that could fill the blank.  
+% Think step by step about which option makes the sentence most sensible, then decide.
+
+% \#\#\# Sentence:  
+% $<$sentence$>$
+
+% \#\#\# In your response:  
+% 1. First reason and explain your reasoning briefly before answering this question.  
+% 2. Then at the end of your explanation, on a **new line**, write exactly:  
+%    "The final answer is [answer]"  
+%    where **[answer]** is either **Ending1**, **Ending2**, **Ending3**, or **Ending4**.  
+% Do **not** output anything after that line.
+% \end{tcolorbox}
+
+% \medskip
+% \begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+% OBQA:
+
+% You are a careful reasoning assistant.  
+% A commonsense sentence is shown with a blank and **four** Answers that could fill the blank.  
+% Think step by step about which option makes the sentence most sensible, then decide.
+
+% \#\#\# Sentence:  
+% $<$sentence$>$
+
+% \#\#\# What you should do:  
+% 1. Briefly explain your reasoning.  
+% 2. On a **new line**, write exactly:  
+%    "The final answer is [answer]"  
+%    where **[answer]** is either **Answer1**, **Answer2**, **Answer3**, or **Answer4**.  
+% Do **not** output anything after that line.
+% \end{tcolorbox}
+
+% \medskip
+% \begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+% PIQA:
+
+% Below is an instruction that describes a task. Write a response that appropriately completes the request.
+
+% \#\#\# Instruction:  
+% $<$instruction$>$
+
+% Your response should end with  
+% "The final answer is [answer]"  
+% where [answer] is the response to the problem.
+% \end{tcolorbox}
+
+% \medskip
+% \begin{tcolorbox}[colback=gray!5, colframe=gray!50, boxrule=0.5pt, arc=2pt]
+% Winogrande:
+
+% You are a careful reasoning assistant.  
+% A commonsense sentence is shown with a blank and **two** options that could fill the blank.  
+% Think step by step about which option makes the sentence most sensible, then decide.
+
+% \#\#\# Sentence:  
+% $<$sentence$>$
+
+% \#\#\# What you should do:  
+% 1. Briefly explain your reasoning.  
+% 2. On a **new line**, write exactly:  
+%    "The final answer is [answer]"  
+%    where **[answer]** must be either **option1** or **option2**.  
+% Do **not** output anything after that line.
+% \end{tcolorbox}
+%  Sentence:  
+% $<$sentence$>$
+
+% \#\#\# What you should do:  
+% 1. Briefly explain your reasoning.  
+% 2. On a **new line**, write exactly:  
+%    "The final answer is [answer]"  
+%    where **[answer]** must be either **option1** or **option2**.  
+% Do **not** output anything after that line.
+% \end{tcolorbox}

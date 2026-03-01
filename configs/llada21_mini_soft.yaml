@@ -1,0 +1,100 @@
+# ============================================================
+# AOAE — LLaDA2.1-mini with Soft-Routed MoE (paper §3.7)
+#
+# Uses the 16B MoE model with soft routing (all experts active)
+# to create a dense-equivalent compute baseline for fair
+# evaluation of AOAE throughput improvements.
+#
+# Key differences from default.yaml:
+#   - backend: soft_moe (replaces hard top-k with soft softmax routing)
+#   - routing_temperature: 0.01 (very low entropy, close to hard routing)
+#   - compose_gamma: 0.5 (composed prediction for cache-aligned tokens)
+#   - tp_size: 2 (LLaDA2.1-mini needs 2 GPUs for tensor parallelism)
+# ============================================================
+
+# ---- Base model (frozen, soft-routed MoE) ------------------
+base_model:
+  name_or_path: "inclusionAI/LLaDA2.1-mini"
+  torch_dtype: "bfloat16"
+  mask_token_id: 156895
+  backend: "soft_moe"
+  routing_temperature: 0.01    # tau_r: low = close to hard routing
+
+# ---- Soft-masked state (Eq. softmask + gating) -------------
+soft_mask:
+  top_k: 5
+  omega_s_init: 0.8
+  omega_a_init: 1.0
+  omega_b_init: 2.0
+
+# ---- AOAE policy network -----------------------------------
+policy:
+  d_model: 128
+  n_layers: 1
+  n_heads: 4
+  dropout: 0.0
+
+# ---- PRISM adapter ------------------------------------------
+prism:
+  hidden_dim: 256
+  threshold: 0.5
+  train_samples: 10000
+  epochs: 3
+  lr: 1.0e-3
+  batch_size: 4
+
+# ---- dKV-Cache ----------------------------------------------
+cache:
+  enabled: true
+
+# ---- GRPO training ------------------------------------------
+grpo:
+  group_size: 8
+  clip_eps: 0.2
+  alpha: 1.0
+  beta: 0.1
+  lr: 3.0e-4
+  weight_decay: 0.01
+  epochs: 5
+  max_steps: 50000
+  batch_size: 2                # smaller batch for 16B model memory
+  grad_accum_steps: 8
+  warmup_steps: 200
+  max_grad_norm: 1.0
+  policy_temperature: 1.0
+
+# ---- Diffusion inference ------------------------------------
+inference:
+  steps: 64
+  gen_length: 256
+  temperature: 0.0
+  fallback_unmask: true
+  block_length: 32
+  compose_gamma: 0.5          # Composed prediction strength (paper §3.6)
+
+# ---- Data ---------------------------------------------------
+data:
+  train_dataset: "nvidia/OpenMathInstruct-2"
+  train_split: "train"
+  train_max_samples: 50000
+  eval_dataset: "openai/gsm8k"
+  eval_split: "test"
+  eval_max_samples: 1319
+  max_prompt_len: 512
+  max_answer_len: 256
+
+# ---- Logging / checkpointing -------------------------------
+logging:
+  project: "aoae"
+  run_name: "llada21_mini_soft"
+  log_every: 50
+  eval_every: 500
+  save_every: 500
+  output_dir: "outputs/llada21_mini_soft/"
+  use_wandb: false
+
+# ---- Hardware -----------------------------------------------
+hardware:
+  seed: 42
+  bf16: true
+  tp_size: 2                   # LLaDA2.1-mini needs 2-GPU TP

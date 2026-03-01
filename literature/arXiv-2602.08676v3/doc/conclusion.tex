@@ -1,0 +1,13 @@
+\section{Outlook and Limitation}
+
+
+\paragraph{Tradeoff Between Inference Speed and Accuracy}  
+While LLaDA2.1 significantly improves inference speed, a clear speed-accuracy tradeoff persists, particularly with noticeable performance differences across various domains. It is necessary to adjust threshold parameters for different domains to balance speed and accuracy. In structured-data fields such as code and math, setting \textit{S Mode} achieves high speed with little accuracy loss. However, in some general chat cases, these settings can cause undesirable output. In such cases, we recommend adjusting the parameters to \textit{Q Mode}. Our conjecture is that this pattern may be related to the model's inherent preference for structured data or the distributional characteristics of training dataset. Further validation will be conducted in our future research.
+
+
+\paragraph{Editable Enhanced dLLM}
+Although dLLMs inherently support high parallelism, theoretically offering speed advantages over AR models, our experimental observations show that this high parallelism also introduces a higher error rate compared to AR models. These hidden errors can reduce the model’s confidence in subsequent reasoning, ultimately slowing down the overall process. Therefore, timely editing to correct errors is essential. In our case analysis of LLaDA2.1, we observed that prompt editing corrected decoding errors, helping to maintain higher inference speeds. However, research on the editing capabilities of dLLMs is still in its early stages. We anticipate that future work, such as integrating editing into reinforcement learning, will further enhance the performance of editable dLLMs.
+
+\paragraph{LLaDA2.1 remains in an experimental phase. Although rare, certain edge cases may occur.} Empirical observations show that aggressively lowering the masking threshold $\tau_{\text{mask}}$ can quickly generate ``rough drafts". Although the model's self-correction can partially alleviate the ``stuttering" artifacts (such as n-gram repetitions) caused by independent parallel sampling, balancing drafting speed with the quality of the initial structure remains a key operational frontier. Overall, by unifying dynamic inference, hybrid training, and principled reinforcement learning, our work establishes a solid foundation for self-correcting discrete diffusion language models.
+
+\paragraph{Conclusion} Overall, LLaDA2.1 introduces an editing feature, which, through cumulative error correction, significantly lowered the decoding threshold of the dLLM and yielded considerable inference speed benefits. However, this model still faces many unresolved issues, and we anticipate that more powerful editable dLLMs will deliver even more unexpected and impressive results.

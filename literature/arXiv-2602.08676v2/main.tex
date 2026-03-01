@@ -1,0 +1,132 @@
+\documentclass[]{antgroup}
+\PassOptionsToPackage{numbers, compress}{natbib}
+\usepackage{antgroup}
+
+% Require Package
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{todonotes}
+\usepackage{multirow}
+\usepackage{amsmath}
+\usepackage{cleveref}
+\usepackage{subcaption}
+\usepackage{multicol}
+\usepackage{amssymb}
+\usepackage{array}
+\usepackage{bm}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{tabularx}
+\usepackage{booktabs} 
+\usepackage{bbm}
+\usepackage{makecell}
+\usepackage{wrapfig}
+\usepackage{colortbl}
+\usepackage{threeparttable}
+\usepackage{fontawesome5}
+\usepackage[normalem]{ulem}
+\usepackage{changepage}
+\useunder{\uline}{\ul}{}
+
+\input{math_commands}
+\input{setting-ai}
+\usepackage{mdframed}
+
+
+\usepackage{xcolor}
+
+\definecolor{LightGray}{gray}{0.9}
+
+\definecolor{myPink}{HTML}{EE6B98}
+\definecolor{myBlue}{HTML}{6BB8FA}
+\definecolor{myPurple}{HTML}{9F63F0}
+\definecolor{myBlueBase}{HTML}{147BFF}
+
+
+\renewcommand\thefootnote{}
+
+\title{LLaDA2.1: Speeding Up Text Diffusion via Token Editing}
+
+\author{\centering
+Tiwei Bie$^1$,
+Maosong Cao$^1$,
+Xiang Cao$^1$,
+Bingsen Chen$^1$,
+Fuyuan Chen$^1$,
+Kun Chen$^1$,
+Lun Du$^1$,\\
+Daozhuo Feng$^1$,
+Haibo Feng$^{1,4}$,
+Mingliang Gong$^1$,
+Zhuocheng Gong$^1$,
+Yanmei Gu$^1$,
+Jian Guan$^1$,\\
+Kaiyuan Guan$^1$,
+Hongliang He$^{1,3}$,
+Zenan Huang$^1$,
+Juyong Jiang$^1$,
+Zhonghui Jiang$^1$,
+Zhenzhong Lan$^{1,3,\dag}$,\\
+Chengxi Li$^1$,
+Jianguo Li$^{1,\dag}$,
+Zehuan Li$^1$,
+Huabin Liu$^1$,
+Lin Liu$^1$,
+Guoshan Lu$^1$,
+Yuan Lu$^1$,
+Yuxin Ma$^1$,\\
+Xingyu Mou$^1$,
+Zhenxuan Pan$^1$,
+Kaida Qiu$^1$,
+Yuji Ren$^1$,
+Jianfeng Tan$^1$,
+Yiding Tian$^1$,
+Zian Wang$^1$,\\
+Lanning Wei$^1$,
+Tao Wu$^1$,
+Yipeng Xing$^1$,
+Wentao Ye$^{1,2}$,
+Liangyu Zha$^1$,
+Tianze Zhang$^1$,
+Xiaolu Zhang$^1$,\\
+Junbo Zhao$^{1,2,\dag}$,
+Da Zheng$^{1,\dag}$,
+Hao Zhong$^{1,2}$,
+Wanli Zhong$^{1,4}$,
+Jun Zhou$^1$,
+Junlin Zhou$^{1}$,
+Liwang Zhu$^1$,
+Muzhi Zhu$^{1,2}$,
+Yihong Zhuang$^1$
+}
+
+\footnotetext{Authors are listed in alphabetical order based on last name. $\dag$ indicates tech-leaders.}
+
+\affiliation{$^1$Ant Group, $^2$Zhejiang University, $^3$Westlake University, $^4$Southern University of Science and Technology}
+
+
+\begin{document}
+\maketitle
+
+
+% main document
+\input{doc/abstract}
+
+\newpage
+\input{doc/intro}
+\input{doc/paradigm}
+\input{doc/sft-training}
+\input{doc/rl-training}
+\input{doc/infra}
+\input{doc/evaluation}
+\input{doc/conclusion}
+
+
+\bibliographystyle{antgroup}
+
+\bibliography{ref/reference}
+
+\clearpage
+
+\end{document}

@@ -1,0 +1,75 @@
+% \begin{algorithm}[t!]
+% \small
+% \caption{MAGE Inference}
+% \label{alg:mage}
+% \begin{algorithmic}[1]
+% \Require KV cache $\mathcal{C}$, block size $B$, budget $K$, steps $T$
+% \Ensure Generated block $\mathbf{x}$
+
+% \State Initialize block with $B$ \texttt{[MASK]} tokens
+
+% \Statex \hspace{-1em} \textit{\textcolor{gray}{// Phase 1: Exact Attention with Union Formation ($t=1$)}}
+% \For{each layer $\ell \geq 2$}
+%     \State $\mathbf{A}_{\ell} \gets \text{Softmax}(\mathbf{Q}_{\texttt{MASK}} \mathbf{K}^\top / \sqrt{d})$
+%     \For{each KV head $h$}
+%         \State $\mathcal{T}_q \gets \text{TopK}(\mathbf{A}_\ell[q,:], K)$ for each query $q$
+%         \State $\mathcal{U}_h \gets \bigcup_q \mathcal{T}_q$ \Comment{Union via voting}
+%         \State $p_h \gets \frac{1}{GB}\sum_q \sum_{i \in \mathcal{U}_h} \mathbf{A}_\ell[q, i]$ \Comment{Coverage}
+%     \EndFor
+%     \State $s_\ell \gets \max_h |\mathcal{U}_h| \cdot (1 - \log p_h)$ \Comment{Adjusted score}
+% \EndFor
+
+% \Statex \hspace{-1em} \textit{\textcolor{gray}{// Phase 2: Index Selection}}
+% \For{each layer $\ell$, each KV head $h$}
+%     \State $K^\ell \gets \max\left(K_{\min}, \lfloor \frac{s_\ell}{\sum_{\ell'} s_{\ell'}} \cdot K \cdot L \rfloor\right)$
+%     \State $\mathbf{T}_{\ell,h} \gets \text{SelectTopK}(\mathcal{U}_h, K^\ell)$ \Comment{From union}
+% \EndFor
+
+% \Statex \hspace{-1em} \textit{\textcolor{gray}{// Phase 3: Sparse Denoising ($t=2$ to $T$)}}
+% \For{$t = 2$ to $T$}
+%     \For{each layer $\ell \geq 2$}
+%         \State $\mathbf{o}_{\ell} \gets \text{SparseAttn}(\mathbf{Q}, \mathcal{C}[\mathbf{T}_{\ell}])$
+%     \EndFor
+%     \State Unmask high-confidence positions
+% \EndFor
+% \State $\mathcal{C} \leftarrow \mathcal{C} \,\Vert\, \text{KV}(\mathbf{x})$ \Comment{Update KV cache}
+% \State \Return $\mathbf{x}$
+% \end{algorithmic}
+% \end{algorithm}
+
+
+
+\begin{algorithm}[t!]
+\small
+\caption{MAGE Inference}
+\label{alg:mage}
+\begin{algorithmic}[1]
+\REQUIRE KV cache $\mathcal{C}$, block size $B$, budget $K$, steps $T$
+\ENSURE Generated block $\mathbf{x}$
+\STATE Initialize block with $B$ \texttt{[MASK]} tokens
+\STATE \textit{\textcolor{gray}{// Phase 1: Exact Attention with Union Formation ($t=1$)}}
+\FOR{each layer $\ell \geq 2$}
+    \STATE $\mathbf{A}_{\ell} \gets \text{Softmax}(\mathbf{Q}_{\texttt{MASK}} \mathbf{K}^\top / \sqrt{d})$
+    \FOR{each KV head $h$}
+        \STATE $\mathcal{T}_q \gets \text{TopK}(\mathbf{A}_\ell[q,:], K)$ for each query $q$
+        \STATE $\mathcal{U}_h \gets \bigcup_q \mathcal{T}_q$ \COMMENT{Union via voting}
+        \STATE $p_h \gets \frac{1}{GB}\sum_q \sum_{i \in \mathcal{U}_h} \mathbf{A}_\ell[q, i]$ \COMMENT{Coverage}
+    \ENDFOR
+    \STATE $s_\ell \gets \max_h |\mathcal{U}_h| \cdot (1 - \log p_h)$ \COMMENT{Adjusted score}
+\ENDFOR
+\STATE \textit{\textcolor{gray}{// Phase 2: Index Selection}}
+\FOR{each layer $\ell$, each KV head $h$}
+    \STATE $K^\ell \gets \max\left(K_{\min}, \lfloor \frac{s_\ell}{\sum_{\ell'} s_{\ell'}} \cdot K \cdot L \rfloor\right)$
+    \STATE $\mathbf{T}_{\ell,h} \gets \text{SelectTopK}(\mathcal{U}_h, K^\ell)$ \COMMENT{From union}
+\ENDFOR
+\STATE \textit{\textcolor{gray}{// Phase 3: Sparse Denoising ($t=2$ to $T$)}}
+\FOR{$t = 2$ to $T$}
+    \FOR{each layer $\ell \geq 2$}
+        \STATE $\mathbf{o}_{\ell} \gets \text{SparseAttn}(\mathbf{Q}, \mathcal{C}[\mathbf{T}_{\ell}])$
+    \ENDFOR
+    \STATE Unmask high-confidence positions
+\ENDFOR
+\STATE $\mathcal{C} \leftarrow \mathcal{C} \,\Vert\, \text{KV}(\mathbf{x})$ \COMMENT{Update KV cache}
+\STATE \textbf{return} $\mathbf{x}$
+\end{algorithmic}
+\end{algorithm}

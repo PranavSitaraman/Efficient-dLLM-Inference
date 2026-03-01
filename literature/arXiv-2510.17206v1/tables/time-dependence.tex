@@ -1,0 +1,17 @@
+\begin{table}[h!]
+\centering
+\begin{tabular}{ccccc}
+\toprule
+     & No FT & \multicolumn{3}{c}{33.5k FT steps}      \\\cmidrule(r){2-2}\cmidrule(r){3-5}
+    & \multicolumn{2}{c}{Binary feedback} & \multicolumn{2}{c}{SM feedback with TD} \\\cmidrule(r){1-1}\cmidrule(r){2-3}\cmidrule(r){4-5}
+Task & -                & -                & Binary$\rightarrow$SM  & SM$\rightarrow$Binary \\\cmidrule(r){1-1}\cmidrule(r){2-3}\cmidrule(r){4-5}
+Humaneval & $18.9$& $19.0_{(\pm 1.7)}$& $17.4_{(\pm 0.9)}$& $\mathbf{24.8}_{(\pm 1.1)}$\\
+MBPP      & $26.6$& $27.0_{(\pm 1.6)}$& $25.2_{(\pm 1.3)}$& $\mathbf{30.9}_{(\pm 0.5)}$\\
+GSM8k     & $57.8$& $59.5_{(\pm 1.1)}$& $59.3_{(\pm 1.1)}$& $\mathbf{61.6}_{(\pm 2.5)}$\\
+Math-500  & $14.2$& $17.3_{(\pm 1.2)}$& $18.2_{(\pm 0.8)}$& $\mathbf{20.2}_{(\pm 1.9)}$\\
+ \midrule
+Avg.      & $29.4$& $31.4$&	$30.0$& $\mathbf{34.4}$\\ \bottomrule
+\end{tabular}
+\caption{Comparison of whether SM is more beneficial at the early or later stages of the denoising process. Both ablations Binary$\rightarrow$SM and SM$\rightarrow$Binary involve a denoising process in which 80\% of the steps are with SM and the remaining 20\% are with binary masking. We find that placing the SM steps at the beginning of denoising results in a much greater performance boost. These ablations are compared with our fully binary baselines. The two ablation columns are the \textit{mean} performance of the finetuned SM models with $k$=3 and a stepwise time-dependence. For each task, the best performing model is highlighted in bold. These evaluations are performed at an NFE budget of 1/4.}
+\label{tab:time_dependence}
+\end{table}

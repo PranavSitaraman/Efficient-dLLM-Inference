@@ -1,0 +1,94 @@
+# ============================================================
+# AOAE — Any-Order Adaptive Editing  (default / LLaDA-8B)
+#
+# Primary config for training and evaluation.  Uses the 8B
+# dense model with the HuggingFace backend (no vLLM/TP needed).
+# Matches paper §3.7: "LLaDA 2.1-Instruct (8B, frozen)".
+#
+# For the 100B MoE model, see configs/default_large.yaml.
+# ============================================================
+
+# ---- Base model (frozen) -----------------------------------
+base_model:
+  name_or_path: "GSAI-ML/LLaDA-8B-Instruct"
+  torch_dtype: "bfloat16"
+  mask_token_id: 126336                          # [M] in LLaDA vocab
+  backend: "hf"
+
+# ---- Soft-masked state (Eq. softmask + gating) -------------
+soft_mask:
+  top_k: 5                     # K in Eq. softmask
+  omega_s_init: 0.8            # initial scale for gating sigmoid
+  omega_a_init: 1.0            # slope parameter
+  omega_b_init: 2.0            # bias / shift
+
+# ---- AOAE policy network -----------------------------------
+policy:
+  d_model: 128                 # hidden dimension d_pi
+  n_layers: 1                  # N_pi transformer layers (paper §3.4)
+  n_heads: 4                   # attention heads
+  dropout: 0.0
+
+# ---- PRISM adapter ------------------------------------------
+prism:
+  hidden_dim: 256
+  threshold: 0.5               # delta — quality score threshold
+  train_samples: 10000         # number of (corrupted, clean) pairs
+  epochs: 3
+  lr: 1.0e-3
+  batch_size: 4
+
+# ---- dKV-Cache ----------------------------------------------
+cache:
+  enabled: true
+
+# ---- GRPO training ------------------------------------------
+grpo:
+  group_size: 8                # G trajectories per prompt (paper §3.7)
+  clip_eps: 0.2                # epsilon for clipping (paper §3.5)
+  alpha: 1.0                   # speed bonus weight (paper §3.5)
+  beta: 0.1                    # cache-thrashing penalty weight (paper §3.5)
+  lr: 3.0e-4
+  weight_decay: 0.01
+  epochs: 5
+  max_steps: 50000
+  batch_size: 4                # prompts per batch
+  grad_accum_steps: 4
+  warmup_steps: 200
+  max_grad_norm: 1.0
+  policy_temperature: 1.0      # tau_pi during training (1.0 = untempered)
+
+# ---- Diffusion inference ------------------------------------
+inference:
+  steps: 64                    # T diffusion steps
+  gen_length: 256              # max response tokens
+  temperature: 0.0             # base-model sampling temp (0 = greedy)
+  fallback_unmask: true        # unmask highest-confidence when u_t = 0
+  block_length: 32             # semi-AR block length
+  compose_gamma: 0.5           # Composed prediction strength (paper §3.6)
+
+# ---- Data ---------------------------------------------------
+data:
+  train_dataset: "nvidia/OpenMathInstruct-2"
+  train_split: "train"
+  train_max_samples: 50000
+  eval_dataset: "openai/gsm8k"
+  eval_split: "test"
+  eval_max_samples: 1319       # full GSM8K test set
+  max_prompt_len: 512
+  max_answer_len: 256
+
+# ---- Logging / checkpointing -------------------------------
+logging:
+  project: "aoae"
+  run_name: "default"
+  log_every: 50
+  eval_every: 500
+  save_every: 500
+  output_dir: "outputs/default/"
+  use_wandb: false
+
+# ---- Hardware -----------------------------------------------
+hardware:
+  seed: 42
+  bf16: true

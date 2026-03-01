@@ -1,0 +1,437 @@
+\begin{thebibliography}{67}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Allal et~al.(2025)Allal, Lozhkov, Bakouch, Blázquez, Penedo, Tunstall, Marafioti, Kydlíček, Lajarín, Srivastav, Lochner, Fahlgren, Nguyen, Fourrier, Burtenshaw, Larcher, Zhao, Zakka, Morlon, Raffel, von Werra, and Wolf]{smol_2025}
+Loubna~Ben Allal, Anton Lozhkov, Elie Bakouch, Gabriel~Martín Blázquez, Guilherme Penedo, Lewis Tunstall, Andrés Marafioti, Hynek Kydlíček, Agustín~Piqueres Lajarín, Vaibhav Srivastav, Joshua Lochner, Caleb Fahlgren, Xuan-Son Nguyen, Clémentine Fourrier, Ben Burtenshaw, Hugo Larcher, Haojun Zhao, Cyril Zakka, Mathieu Morlon, Colin Raffel, Leandro von Werra, and Thomas Wolf.
+\newblock {SmolLM2}: When smol goes big -- data-centric training of a small language model.
+\newblock \emph{arXiv preprint arXiv:2502.02737}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2502.02737}.
+
+\bibitem[Arriola et~al.(2024)Arriola, Gokaslan, Chiu, Yang, Qi, Han, Sahoo, and Kuleshov]{arriola_block_2024}
+Marianne Arriola, Aaron Gokaslan, Justin~T. Chiu, Zhihan Yang, Zhixuan Qi, Jiaqi Han, Subham~Sekhar Sahoo, and Volodymyr Kuleshov.
+\newblock Block {Diffusion}: {Interpolating} {Between} {Autoregressive} and {Diffusion} {Language} {Models}.
+\newblock In \emph{The {Thirteenth} {International} {Conference} on {Learning} {Representations} ({ICLR})}, October 2024.
+\newblock URL \url{https://openreview.net/forum?id=tyEyYT267x}.
+
+\bibitem[Austin et~al.(2021{\natexlab{a}})Austin, Johnson, Ho, Tarlow, and Berg]{austin_structured_2021}
+Jacob Austin, Daniel~D. Johnson, Jonathan Ho, Daniel Tarlow, and Rianne van~den Berg.
+\newblock Structured {Denoising} {Diffusion} {Models} in {Discrete} {State}-{Spaces}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems} ({NeurIPS})}, volume~35, November 2021{\natexlab{a}}.
+\newblock URL \url{https://openreview.net/forum?id=h7-XixPCAL}.
+
+\bibitem[Austin et~al.(2021{\natexlab{b}})Austin, Odena, Nye, Bosma, Michalewski, Dohan, Jiang, Cai, Terry, Le, and Sutton]{mbpp_2021}
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, and Charles Sutton.
+\newblock Program synthesis with large language models.
+\newblock \emph{arXiv preprint arXiv:2108.07732}, 2021{\natexlab{b}}.
+\newblock URL \url{https://arxiv.org/abs/2108.07732}.
+
+\bibitem[Black et~al.(2023)Black, Janner, Du, Kostrikov, and Levine]{black_training_2023}
+Kevin Black, Michael Janner, Yilun Du, Ilya Kostrikov, and Sergey Levine.
+\newblock Training {Diffusion} {Models} with {Reinforcement} {Learning}.
+\newblock In \emph{The {Twelfth} {International} {Conference} on {Learning} {Representations} ({ICLR})}, October 2023.
+\newblock URL \url{https://openreview.net/forum?id=YCWjhGrJFD}.
+
+\bibitem[Brown et~al.(2020)Brown, Mann, Ryder, Subbiah, Kaplan, Dhariwal, Neelakantan, Shyam, Sastry, Askell, Agarwal, Herbert-Voss, Krueger, Henighan, Child, Ramesh, Ziegler, Wu, Winter, Hesse, Chen, Sigler, Litwin, Gray, Chess, Clark, Berner, McCandlish, Radford, Sutskever, and Amodei]{brown_language_2020}
+Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared~D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel Ziegler, Jeffrey Wu, Clemens Winter, Chris Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei.
+\newblock Language {Models} are {Few}-{Shot} {Learners}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems} ({NeurIPS})}, volume~33, 2020.
+\newblock URL \url{https://proceedings.neurips.cc/paper_files/paper/2020/file/1457c0d6bfcb4967418bfb8ac142f64a-Paper.pdf}.
+
+\bibitem[Campbell et~al.(2022)Campbell, Benton, and Bortoli]{campbell_continuous_2022}
+Andrew Campbell, Joe Benton, and Valentin~De Bortoli.
+\newblock A {Continuous} {Time} {Framework} for {Discrete} {Denoising} {Models}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems} ({NeurIPS})}, volume~35, 2022.
+
+\bibitem[Chao et~al.(2025)Chao, Sun, Liang, Lee, and Krishnan]{chao_beyond_2025}
+Chen-Hao Chao, Wei-Fang Sun, Hanwen Liang, Chun-Yi Lee, and Rahul~G. Krishnan.
+\newblock Beyond {Masked} and {Unmasked}: {Discrete} {Diffusion} {Models} via {Partial} {Masking}.
+\newblock \emph{arXiv preprint arXiv:2505.18495}, May 2025.
+\newblock \doi{10.48550/arXiv.2505.18495}.
+\newblock URL \url{http://arxiv.org/abs/2505.18495}.
+
+\bibitem[Chen et~al.(2021)Chen, Tworek, Jun, Yuan, Pinto, Kaplan, Edwards, Burda, Joseph, Brockman, Ray, Puri, Krueger, Petrov, Khlaaf, Sastry, Mishkin, Chan, Gray, Ryder, Pavlov, Power, Kaiser, Bavarian, Winter, Tillet, Such, Cummings, Plappert, Chantzis, Barnes, Herbert-Voss, Guss, Nichol, Paino, Tezak, Tang, Babuschkin, Balaji, Jain, Saunders, Hesse, Carr, Leike, Achiam, Misra, Morikawa, Radford, Knight, Brundage, Murati, Mayer, Welinder, McGrew, Amodei, McCandlish, Sutskever, and Zaremba]{chen_evaluating_2021}
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de~Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, Alex Ray, Raul Puri, Gretchen Krueger, Michael Petrov, Heidy Khlaaf, Girish Sastry, Pamela Mishkin, Brooke Chan, Scott Gray, Nick Ryder, Mikhail Pavlov, Alethea Power, Lukasz Kaiser, Mohammad Bavarian, Clemens Winter, Philippe Tillet, Felipe~Petroski Such, Dave Cummings, Matthias Plappert, Fotios Chantzis, Elizabeth Barnes, Ariel Herbert-Voss, William~Hebgen Guss, Alex Nichol, Alex Paino, Nikolas Tezak, Jie Tang, Igor Babuschkin, Suchir Balaji, Shantanu Jain, William Saunders, Christopher Hesse, Andrew~N. Carr, Jan Leike, Josh Achiam, Vedant Misra, Evan Morikawa, Alec Radford, Matthew Knight, Miles Brundage, Mira Murati, Katie Mayer, Peter Welinder, Bob McGrew, Dario Amodei, Sam McCandlish, Ilya Sutskever, and Wojciech Zaremba.
+\newblock Evaluating {Large} {Language} {Models} {Trained} on {Code}.
+\newblock \emph{arXiv preprint arXiv:2107.03374}, July 2021.
+\newblock \doi{10.48550/arXiv.2107.03374}.
+\newblock URL \url{http://arxiv.org/abs/2107.03374}.
+
+\bibitem[Chen et~al.(2023)Chen, Zhang, and Hinton]{chen_analog_2023}
+Ting Chen, Ruixiang Zhang, and Geoffrey Hinton.
+\newblock Analog {Bits}: {Generating} {Discrete} {Data} using {Diffusion} {Models} with {Self}-{Conditioning}.
+\newblock In \emph{The {Eleventh} {International} {Conference} on {Learning} {Representations} ({ICLR})}, 2023.
+\newblock URL \url{https://openreview.net/forum?id=3itjR9QxFw}.
+
+\bibitem[Cobbe et~al.(2021)Cobbe, Kosaraju, Bavarian, Chen, Jun, Kaiser, Plappert, Tworek, Hilton, Nakano, Hesse, and Schulman]{cobbe_training_2021}
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman.
+\newblock Training {Verifiers} to {Solve} {Math} {Word} {Problems}.
+\newblock \emph{arXiv preprint arXiv:2110.14168}, November 2021.
+\newblock \doi{10.48550/arXiv.2110.14168}.
+\newblock URL \url{http://arxiv.org/abs/2110.14168}.
+
+\bibitem[Codefuse \& Team(2025)Codefuse and Team]{codefuse2025samplemattersleveragingmixtureofexperts}
+Codefuse and Ling Team.
+\newblock Every sample matters: Leveraging mixture-of-experts and high-quality data for efficient and accurate code {LLM}.
+\newblock \emph{arXiv preprint arXiv:2503.17793}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2503.17793}.
+
+\bibitem[DeepMind(2025)]{deepmind_gemini_2025}
+DeepMind.
+\newblock Gemini {Diffusion}, 2025.
+\newblock URL \url{https://deepmind.google/models/gemini-diffusion/}.
+
+\bibitem[Dieleman et~al.(2022)Dieleman, Sartran, Roshannai, Savinov, Ganin, Richemond, Doucet, Strudel, Dyer, Durkan, Hawthorne, Leblond, Grathwohl, and Adler]{dieleman_continuous_2022}
+Sander Dieleman, Laurent Sartran, Arman Roshannai, Nikolay Savinov, Yaroslav Ganin, Pierre~H. Richemond, Arnaud Doucet, Robin Strudel, Chris Dyer, Conor Durkan, Curtis Hawthorne, Rémi Leblond, Will Grathwohl, and Jonas Adler.
+\newblock Continuous diffusion for categorical data.
+\newblock \emph{arXiv preprint arXiv:2211.15089}, December 2022.
+\newblock \doi{10.48550/arXiv.2211.15089}.
+\newblock URL \url{http://arxiv.org/abs/2211.15089}.
+
+\bibitem[Geiping et~al.(2025)Geiping, McLeish, Jain, Kirchenbauer, Singh, Bartoldson, Kailkhura, Bhatele, and Goldstein]{geiping_scaling_2025}
+Jonas Geiping, Sean McLeish, Neel Jain, John Kirchenbauer, Siddharth Singh, Brian~R. Bartoldson, Bhavya Kailkhura, Abhinav Bhatele, and Tom Goldstein.
+\newblock Scaling up {Test}-{Time} {Compute} with {Latent} {Reasoning}: {A} {Recurrent} {Depth} {Approach}.
+\newblock In \emph{{ES}-{FoMo} {III}: 3rd {Workshop} on {Efficient} {Systems} for {Foundation} {Models}}, 2025.
+\newblock URL \url{https://openreview.net/forum?id=D6o6Bwtq7h}.
+
+\bibitem[Gokaslan \& Cohen(2019)Gokaslan and Cohen]{Gokaslan2019OpenWeb}
+Aaron Gokaslan and Vanya Cohen.
+\newblock Openwebtext corpus.
+\newblock \url{http://Skylion007.github.io/OpenWebTextCorpus}, 2019.
+
+\bibitem[Gong et~al.(2022)Gong, Li, Feng, Wu, and Kong]{gong_diffuseq_2022}
+Shansan Gong, Mukai Li, Jiangtao Feng, Zhiyong Wu, and Lingpeng Kong.
+\newblock {DiffuSeq}: {Sequence} to {Sequence} {Text} {Generation} with {Diffusion} {Models}.
+\newblock In \emph{The {Eleventh} {International} {Conference} on {Learning} {Representations} ({ICLR})}, September 2022.
+\newblock URL \url{https://openreview.net/forum?id=jQj-_rLVXsj}.
+
+\bibitem[Gong et~al.(2023)Gong, Li, Feng, Wu, and Kong]{gong_diffuseq-v2_2023}
+Shansan Gong, Mukai Li, Jiangtao Feng, Zhiyong Wu, and Lingpeng Kong.
+\newblock {DiffuSeq}-v2: {Bridging} {Discrete} and {Continuous} {Text} {Spaces} for {Accelerated} {Seq2Seq} {Diffusion} {Models}.
+\newblock In \emph{Findings of the {Association} for {Computational} {Linguistics}: {EMNLP} 2023}, December 2023.
+\newblock \doi{10.18653/v1/2023.findings-emnlp.660}.
+\newblock URL \url{https://aclanthology.org/2023.findings-emnlp.660/}.
+
+\bibitem[Gong et~al.(2025{\natexlab{a}})Gong, Agarwal, Zhang, Ye, Zheng, Li, An, Zhao, Bi, Han, Peng, and Kong]{gong_scaling_2025}
+Shansan Gong, Shivam Agarwal, Yizhe Zhang, Jiacheng Ye, Lin Zheng, Mukai Li, Chenxin An, Peilin Zhao, Wei Bi, Jiawei Han, Hao Peng, and Lingpeng Kong.
+\newblock Scaling {Diffusion} {Language} {Models} via {Adaptation} from {Autoregressive} {Models}.
+\newblock In \emph{The {Thirteenth} {International} {Conference} on {Learning} {Representations} ({ICLR})}, May 2025{\natexlab{a}}.
+\newblock URL \url{https://openreview.net/forum?id=j1tSLYKwg8}.
+
+\bibitem[Gong et~al.(2025{\natexlab{b}})Gong, Zhang, Zheng, Gu, Jaitly, Kong, and Zhang]{gong_diffucoder_2025}
+Shansan Gong, Ruixiang Zhang, Huangjie Zheng, Jiatao Gu, Navdeep Jaitly, Lingpeng Kong, and Yizhe Zhang.
+\newblock {DiffuCoder}: {Understanding} and {Improving} {Masked} {Diffusion} {Models} for {Code} {Generation}.
+\newblock \emph{arXiv preprint arXiv:2506.20639}, June 2025{\natexlab{b}}.
+\newblock \doi{10.48550/arXiv.2506.20639}.
+\newblock URL \url{http://arxiv.org/abs/2506.20639}.
+
+\bibitem[Gulrajani \& Hashimoto(2023)Gulrajani and Hashimoto]{gulrajani_likelihood-based_2023}
+Ishaan Gulrajani and Tatsunori Hashimoto.
+\newblock Likelihood-{Based} {Diffusion} {Language} {Models}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems} ({NeurIPS})}, volume~37, November 2023.
+\newblock URL \url{https://openreview.net/forum?id=e2MCL6hObn&noteId=ueUWS1aqtE}.
+
+\bibitem[Guo et~al.(2025)Guo, Yang, Zhang, Song, Wang, Zhu, Xu, Zhang, Ma, Bi, Zhang, Yu, Wu, Wu, Gou, Shao, Li, Gao, et~al.]{deepseekai2025short}
+Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu~Wu, Z.~F. Wu, Zhibin Gou, Zhihong Shao, Zhuoshu Li, Ziyi Gao, et~al.
+\newblock {DeepSeek}-{R1} incentivizes reasoning in {LLMs} through reinforcement learning.
+\newblock \emph{Nature}, 645\penalty0 (8081):\penalty0 633--638, September 2025.
+\newblock ISSN 1476-4687.
+\newblock \doi{10.1038/s41586-025-09422-z}.
+\newblock URL \url{https://doi.org/10.1038/s41586-025-09422-z}.
+
+\bibitem[Hao et~al.(2024)Hao, Sukhbaatar, Su, Li, Hu, Weston, and Tian]{hao_training_2024}
+Shibo Hao, Sainbayar Sukhbaatar, DiJia Su, Xian Li, Zhiting Hu, Jason Weston, and Yuandong Tian.
+\newblock Training {Large} {Language} {Models} to {Reason} in a {Continuous} {Latent} {Space}.
+\newblock \emph{arXiv preprint arXiv:2412.06769}, December 2024.
+\newblock \doi{10.48550/arXiv.2412.06769}.
+\newblock URL \url{http://arxiv.org/abs/2412.06769}.
+
+\bibitem[Ho et~al.(2020)Ho, Jain, and Abbeel]{ho_denoising_2020}
+Jonathan Ho, Ajay Jain, and Pieter Abbeel.
+\newblock Denoising {Diffusion} {Probabilistic} {Models}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems} ({NeurIPS})}, volume~34, 2020.
+\newblock URL \url{https://proceedings.neurips.cc/paper/2020/file/4c5bcfec8584af0d967f1ab10179ca4b-Paper.pdf}.
+
+\bibitem[Hui et~al.(2024)Hui, Yang, Cui, Yang, Liu, Zhang, Liu, Zhang, Yu, Lu, Dang, Fan, Zhang, Yang, Men, Huang, Zheng, Miao, Quan, Feng, Ren, Ren, Zhou, and Lin]{hui_qwen25-coder_2024}
+Binyuan Hui, Jian Yang, Zeyu Cui, Jiaxi Yang, Dayiheng Liu, Lei Zhang, Tianyu Liu, Jiajun Zhang, Bowen Yu, Keming Lu, Kai Dang, Yang Fan, Yichang Zhang, An~Yang, Rui Men, Fei Huang, Bo~Zheng, Yibo Miao, Shanghaoran Quan, Yunlong Feng, Xingzhang Ren, Xuancheng Ren, Jingren Zhou, and Junyang Lin.
+\newblock Qwen2.5-{Coder} {Technical} {Report}.
+\newblock \emph{arXiv preprint arXiv:2409.12186}, November 2024.
+\newblock \doi{10.48550/arXiv.2409.12186}.
+\newblock URL \url{http://arxiv.org/abs/2409.12186}.
+
+\bibitem[Inception et~al.(2025)Inception, Khanna, Kharbanda, Li, Varma, Wang, Birnbaum, Luo, Miraoui, Palrecha, Ermon, Grover, and Kuleshov]{inception_mercury_2025}
+Labs Inception, Samar Khanna, Siddhant Kharbanda, Shufan Li, Harshit Varma, Eric Wang, Sawyer Birnbaum, Ziyang Luo, Yanis Miraoui, Akash Palrecha, Stefano Ermon, Aditya Grover, and Volodymyr Kuleshov.
+\newblock Mercury: {Ultra}-{Fast} {Language} {Models} {Based} on {Diffusion}.
+\newblock \emph{arXiv preprint arXiv:2506.17298}, 2025.
+\newblock \doi{10.48550/arXiv.2506.17298}.
+\newblock URL \url{http://arxiv.org/abs/2506.17298}.
+
+\bibitem[Jin et~al.(2025)Jin, Wang, Gao, Wen, Qi, Liu, and Zhang]{jin_thinking_2025}
+Xiangqi Jin, Yuxuan Wang, Yifeng Gao, Zichen Wen, Biqing Qi, Dongrui Liu, and Linfeng Zhang.
+\newblock Thinking {Inside} the {Mask}: {In}-{Place} {Prompting} in {Diffusion} {LLMs}.
+\newblock \emph{arXiv preprint arXiv:2508.10736}, August 2025.
+\newblock \doi{10.48550/arXiv.2508.10736}.
+\newblock URL \url{http://arxiv.org/abs/2508.10736}.
+
+\bibitem[Lambert et~al.(2025)Lambert, Morrison, Pyatkin, Huang, Ivison, Brahman, Miranda, Liu, Dziri, Lyu, Gu, Malik, Graf, Hwang, Yang, Bras, Tafjord, Wilhelm, Soldaini, Smith, Wang, Dasigi, and Hajishirzi]{tulu3_2025}
+Nathan Lambert, Jacob Morrison, Valentina Pyatkin, Shengyi Huang, Hamish Ivison, Faeze Brahman, Lester James~V. Miranda, Alisa Liu, Nouha Dziri, Shane Lyu, Yuling Gu, Saumya Malik, Victoria Graf, Jena~D. Hwang, Jiangjiang Yang, Ronan~Le Bras, Oyvind Tafjord, Chris Wilhelm, Luca Soldaini, Noah~A. Smith, Yizhong Wang, Pradeep Dasigi, and Hannaneh Hajishirzi.
+\newblock Tulu 3: Pushing frontiers in open language model post-training.
+\newblock \emph{arXiv preprint arXiv:2411.15124}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2411.15124}.
+
+\bibitem[{LCM Team} et~al.(2024){LCM Team}, Barrault, Duquenne, Elbayad, Kozhevnikov, Alastruey, Andrews, Coria, Couairon, Costa-jussà, Dale, Elsahar, Heffernan, Janeiro, Tran, Ropers, Sánchez, Roman, Mourachko, Saleem, and Schwenk]{lcm_large_2024}
+{LCM Team}, Loïc Barrault, Paul-Ambroise Duquenne, Maha Elbayad, Artyom Kozhevnikov, Belen Alastruey, Pierre Andrews, Mariano Coria, Guillaume Couairon, Marta~R. Costa-jussà, David Dale, Hady Elsahar, Kevin Heffernan, João~Maria Janeiro, Tuan Tran, Christophe Ropers, Eduardo Sánchez, Robin~San Roman, Alexandre Mourachko, Safiyyah Saleem, and Holger Schwenk.
+\newblock Large {Concept} {Models}: {Language} {Modeling} in a {Sentence} {Representation} {Space}.
+\newblock \emph{arXiv preprint arXiv:2412.08821}, December 2024.
+\newblock \doi{10.48550/arXiv.2412.08821}.
+\newblock URL \url{http://arxiv.org/abs/2412.08821}.
+
+\bibitem[Li et~al.(2022)Li, Thickstun, Gulrajani, Liang, and Hashimoto]{li_diffusion-lm_2022}
+Xiang~Lisa Li, John Thickstun, Ishaan Gulrajani, Percy Liang, and Tatsunori Hashimoto.
+\newblock Diffusion-{LM} {Improves} {Controllable} {Text} {Generation}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems} ({NeurIPS})}, volume~36, October 2022.
+\newblock URL \url{https://openreview.net/forum?id=3s9IrEsjLyk}.
+
+\bibitem[Lightman et~al.(2024)Lightman, Kosaraju, Burda, Edwards, Baker, Lee, Leike, Schulman, Sutskever, and Cobbe]{lightman2024math}
+Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harrison Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe.
+\newblock Let's verify step by step.
+\newblock In \emph{The Twelfth International Conference on Learning Representations (ICLR)}, 2024.
+\newblock URL \url{https://openreview.net/forum?id=v8L0pN6EOi}.
+
+\bibitem[Liu et~al.(2023)Liu, Xia, Wang, and Zhang]{evalplus_2023}
+Jiawei Liu, Chunqiu~Steven Xia, Yuyao Wang, and Lingming Zhang.
+\newblock Is your code generated by chat{GPT} really correct? rigorous evaluation of large language models for code generation.
+\newblock In \emph{Thirty-seventh Conference on Neural Information Processing Systems (NeurIPS)}, 2023.
+\newblock URL \url{https://openreview.net/forum?id=1qvx610Cu7}.
+
+\bibitem[Liu et~al.(2024)Liu, Wang, Yin, Molchanov, Wang, Cheng, and Chen]{shih_dora_2024}
+Shih-Yang Liu, Chien-Yi Wang, Hongxu Yin, Pavlo Molchanov, Yu-Chiang~Frank Wang, Kwang-Ting Cheng, and Min-Hung Chen.
+\newblock {DoRA}: Weight-decomposed low-rank adaptation.
+\newblock \emph{arXiv preprint arXiv:2402.09353}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2402.09353}.
+
+\bibitem[Liu et~al.(2025)Liu, Yang, Zhang, Chen, Zou, Wei, Wang, and Zhang]{liu_dllm-cache_2025}
+Zhiyuan Liu, Yicun Yang, Yaojie Zhang, Junjie Chen, Chang Zou, Qingyuan Wei, Shaobo Wang, and Linfeng Zhang.
+\newblock {dLLM}-{Cache}: {Accelerating} {Diffusion} {Large} {Language} {Models} with {Adaptive} {Caching}.
+\newblock \emph{arXiv preprint arXiv:2506.06295}, May 2025.
+\newblock \doi{10.48550/arXiv.2506.06295}.
+\newblock URL \url{http://arxiv.org/abs/2506.06295}.
+
+\bibitem[Lou et~al.(2024)Lou, Meng, and Ermon]{lou_discrete_2024}
+Aaron Lou, Chenlin Meng, and Stefano Ermon.
+\newblock Discrete diffusion modeling by estimating the ratios of the data distribution.
+\newblock In \emph{Proceedings of the 41st {International} {Conference} on {Machine} {Learning} ({ICML})}, volume 235, July 2024.
+\newblock URL \url{https://openreview.net/forum?id=CNicRIVIPA}.
+
+\bibitem[Ni(2025)]{ni_diffusion_2025}
+Jinjie Ni.
+\newblock Diffusion {Language} {Models} are {Super} {Data} {Learners}, 2025.
+\newblock URL \url{https://jinjieni.notion.site/Diffusion-Language-Models-are-Super-Data-Learners-239d8f03a866800ab196e49928c019ac}.
+\newblock Notion Blog.
+
+\bibitem[Nie et~al.(2025)Nie, Zhu, You, Zhang, Ou, Hu, Zhou, Lin, Wen, and Li]{nie_large_2025}
+Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li.
+\newblock Large {Language} {Diffusion} {Models}.
+\newblock In \emph{{ICLR} 2025 {Workshop} on {Deep} {Generative} {Model} in {Machine} {Learning}: {Theory}, {Principle} and {Efficacy}}, February 2025.
+\newblock \doi{10.48550/arXiv.2502.09992}.
+\newblock URL \url{https://openreview.net/forum?id=wzl61tIUj6}.
+
+\bibitem[OpenAI(2024)]{openai_learning_2024}
+OpenAI.
+\newblock Learning to reason with {LLMs}, September 2024.
+\newblock URL \url{https://openai.com/index/learning-to-reason-with-llms/}.
+\newblock https://openai.com/index/learning-to-reason-with-llms/.
+
+\bibitem[Ou et~al.(2024)Ou, Nie, Xue, Zhu, Sun, Li, and Li]{ou_your_2024}
+Jingyang Ou, Shen Nie, Kaiwen Xue, Fengqi Zhu, Jiacheng Sun, Zhenguo Li, and Chongxuan Li.
+\newblock Your {Absorbing} {Discrete} {Diffusion} {Secretly} {Models} the {Conditional} {Distributions} of {Clean} {Data}.
+\newblock October 2024.
+\newblock URL \url{https://openreview.net/forum?id=sMyXP8Tanm}.
+
+\bibitem[Peebles \& Xie(2023)Peebles and Xie]{peebles_scalable_2023}
+William Peebles and Saining Xie.
+\newblock Scalable {Diffusion} {Models} with {Transformers}.
+\newblock pp.\  4195--4205, 2023.
+\newblock URL \url{https://openaccess.thecvf.com/content/ICCV2023/html/Peebles_Scalable_Diffusion_Models_with_Transformers_ICCV_2023_paper.html}.
+
+\bibitem[Pillutla et~al.(2021)Pillutla, Swayamdipta, Zellers, Thickstun, Welleck, Choi, and Harchaoui]{pillutla2021mauve}
+Krishna Pillutla, Swabha Swayamdipta, Rowan Zellers, John Thickstun, Sean Welleck, Yejin Choi, and Zaid Harchaoui.
+\newblock {MAUVE}: Measuring the gap between neural text and human text using divergence frontiers.
+\newblock In A.~Beygelzimer, Y.~Dauphin, P.~Liang, and J.~Wortman Vaughan (eds.), \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2021.
+\newblock URL \url{https://openreview.net/forum?id=Tqx7nJp7PR}.
+
+\bibitem[Qwen et~al.(2025)Qwen, Yang, Yang, Zhang, Hui, Zheng, Yu, Li, Liu, Huang, Wei, Lin, Yang, Tu, Zhang, Yang, Yang, Zhou, Lin, Dang, Lu, Bao, Yang, Yu, Li, Xue, Zhang, Zhu, Men, Lin, Li, Tang, Xia, Ren, Ren, Fan, Su, Zhang, Wan, Liu, Cui, Zhang, and Qiu]{qwen_qwen25_2025}
+Qwen, An~Yang, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo~Zheng, Bowen Yu, Chengyuan Li, Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jingren Zhou, Junyang Lin, Kai Dang, Keming Lu, Keqin Bao, Kexin Yang, Le~Yu, Mei Li, Mingfeng Xue, Pei Zhang, Qin Zhu, Rui Men, Runji Lin, Tianhao Li, Tianyi Tang, Tingyu Xia, Xingzhang Ren, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yu~Wan, Yuqiong Liu, Zeyu Cui, Zhenru Zhang, and Zihan Qiu.
+\newblock Qwen2.5 {Technical} {Report}.
+\newblock \emph{arXiv preprint arXiv:2412.15115}, January 2025.
+\newblock \doi{10.48550/arXiv.2412.15115}.
+\newblock URL \url{http://arxiv.org/abs/2412.15115}.
+
+\bibitem[{Qwen Team}(2024)]{qwen_qwq_2024}
+{Qwen Team}.
+\newblock {QwQ}: {Reflect} {Deeply} on the {Boundaries} of the {Unknown}, November 2024.
+\newblock URL \url{https://qwenlm.github.io/blog/qwq-32b-preview/}.
+\newblock https://qwenlm.github.io/blog/qwq-32b-preview/.
+
+\bibitem[Radford et~al.(2019)Radford, Wu, Child, Luan, Amodei, and Sutskever]{radford_2019_gpt2}
+Alec Radford, Jeff Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever.
+\newblock Language models are unsupervised multitask learners, 2019.
+\newblock URL \url{https://storage.prod.researchhub.com/uploads/papers/2020/06/01/language-models.pdf}.
+
+\bibitem[Rütte et~al.(2025)Rütte, Fluri, Ding, Orvieto, Schölkopf, and Hofmann]{rutte_generalized_2025}
+Dimitri~von Rütte, Janis Fluri, Yuhui Ding, Antonio Orvieto, Bernhard Schölkopf, and Thomas Hofmann.
+\newblock Generalized {Interpolating} {Discrete} {Diffusion}.
+\newblock \emph{arXiv preprint arXiv:2503.04482}, June 2025.
+\newblock \doi{10.48550/arXiv.2503.04482}.
+\newblock URL \url{http://arxiv.org/abs/2503.04482}.
+
+\bibitem[Sahoo et~al.(2024)Sahoo, Arriola, and Schiff]{sahoo_simple_2024}
+Subham~Sekhar Sahoo, Marianne Arriola, and Yair Schiff.
+\newblock Simple and {Effective} {Masked} {Diffusion} {Language} {Models}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems} ({NeurIPS})}, volume~38, 2024.
+\newblock URL \url{https://openreview.net/forum?id=L4uaAR4ArM}.
+
+\bibitem[Sahoo et~al.(2025)Sahoo, Deschenaux, Gokaslan, Wang, Chiu, and Kuleshov]{sahoo_diffusion_2025}
+Subham~Sekhar Sahoo, Justin Deschenaux, Aaron Gokaslan, Guanghan Wang, Justin Chiu, and Volodymyr Kuleshov.
+\newblock The {Diffusion} {Duality}.
+\newblock \emph{arXiv preprint arXiv:2506.10892}, June 2025.
+\newblock \doi{10.48550/arXiv.2506.10892}.
+\newblock URL \url{http://arxiv.org/abs/2506.10892}.
+
+\bibitem[Shi et~al.(2024)Shi, Han, Wang, Doucet, and Titsias]{shi_simplified_2024}
+Jiaxin Shi, Kehang Han, Zhe Wang, Arnaud Doucet, and Michalis~K Titsias.
+\newblock Simplified and {Generalized} {Masked} {Diffusion} for {Discrete} {Data}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems} ({NeurIPS})}, 2024.
+\newblock URL \url{https://openreview.net/forum?id=xcqSOfHt4g}.
+
+\bibitem[Sohl-Dickstein et~al.(2015)Sohl-Dickstein, Weiss, Maheswaranathan, and Ganguli]{sohl-dickstein_deep_2015}
+Jascha Sohl-Dickstein, Eric Weiss, Niru Maheswaranathan, and Surya Ganguli.
+\newblock Deep {Unsupervised} {Learning} using {Nonequilibrium} {Thermodynamics}.
+\newblock In \emph{Proceedings of the 32nd {International} {Conference} on {Machine} {Learning} ({ICML})}, volume~32, June 2015.
+\newblock URL \url{https://proceedings.mlr.press/v37/sohl-dickstein15.html}.
+\newblock ISSN: 1938-7228.
+
+\bibitem[Song et~al.(2020)Song, Sohl-Dickstein, Kingma, Kumar, Ermon, and Poole]{song_score-based_2020}
+Yang Song, Jascha Sohl-Dickstein, Diederik~P. Kingma, Abhishek Kumar, Stefano Ermon, and Ben Poole.
+\newblock Score-{Based} {Generative} {Modeling} through {Stochastic} {Differential} {Equations}.
+\newblock In \emph{International {Conference} on {Learning} {Representations} ({ICLR})}, October 2020.
+\newblock URL \url{https://openreview.net/forum?id=PxTIG12RRHS}.
+
+\bibitem[Strudel et~al.(2022)Strudel, Tallec, Altché, Du, Ganin, Mensch, Grathwohl, Savinov, Dieleman, Sifre, and Leblond]{strudel_self-conditioned_2022}
+Robin Strudel, Corentin Tallec, Florent Altché, Yilun Du, Yaroslav Ganin, Arthur Mensch, Will Grathwohl, Nikolay Savinov, Sander Dieleman, Laurent Sifre, and Rémi Leblond.
+\newblock Self-conditioned {Embedding} {Diffusion} for {Text} {Generation}.
+\newblock \emph{arXiv preprint arXiv:211.04236}, November 2022.
+\newblock \doi{10.48550/arXiv.2211.04236}.
+\newblock URL \url{http://arxiv.org/abs/2211.04236}.
+
+\bibitem[Tack et~al.(2025)Tack, Lanchantin, Yu, Cohen, Kulikov, Lan, Hao, Tian, Weston, and Li]{tack_llm_2025}
+Jihoon Tack, Jack Lanchantin, Jane Yu, Andrew Cohen, Ilia Kulikov, Janice Lan, Shibo Hao, Yuandong Tian, Jason Weston, and Xian Li.
+\newblock {LLM} {Pretraining} with {Continuous} {Concepts}.
+\newblock \emph{arXiv preprint arXiv:2502.08524}, February 2025.
+\newblock \doi{10.48550/arXiv.2502.08524}.
+\newblock URL \url{http://arxiv.org/abs/2502.08524}.
+
+\bibitem[Tang et~al.(2025)Tang, Wu, Yang, Xie, Chen, Chen, Zhang, Cai, Lu, and Han]{tang_hart_2025}
+Haotian Tang, Yecheng Wu, Shang Yang, Enze Xie, Junsong Chen, Junyu Chen, Zhuoyang Zhang, Han Cai, Yao Lu, and Song Han.
+\newblock {HART}: {Efficient} {Visual} {Generation} with {Hybrid} {Autoregressive} {Transformer}.
+\newblock In \emph{The {Thirteenth} {International} {Conference} on {Learning} {Representations} ({ICLR})}, 2025.
+\newblock URL \url{https://openreview.net/forum?id=q5sOv4xQe4}.
+
+\bibitem[Vaswani et~al.(2017)Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, and Polosukhin]{vaswani_attention_2017}
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan~N. Gomez, Lukasz Kaiser, and Illia Polosukhin.
+\newblock Attention {Is} {All} {You} {Need}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems} ({NeurIPS})}, volume~30, 2017.
+\newblock URL \url{https://proceedings.neurips.cc/paper_files/paper/2017/file/3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf}.
+
+\bibitem[Wang et~al.(2025)Wang, Schiff, Sahoo, and Kuleshov]{wang_remasking_2025}
+Guanghan Wang, Yair Schiff, Subham~Sekhar Sahoo, and Volodymyr Kuleshov.
+\newblock Remasking {Discrete} {Diffusion} {Models} with {Inference}-{Time} {Scaling}.
+\newblock \emph{arXiv preprint arXiv:2503.00307}, May 2025.
+\newblock \doi{10.48550/arXiv.2503.00307}.
+\newblock URL \url{http://arxiv.org/abs/2503.00307}.
+
+\bibitem[Wei et~al.(2022)Wei, Wang, Schuurmans, Bosma, Ichter, Xia, Chi, Le, and Zhou]{wei_chain--thought_2022}
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed~H. Chi, Quoc~V. Le, and Denny Zhou.
+\newblock Chain-of-{Thought} {Prompting} {Elicits} {Reasoning} in {Large} {Language} {Models}.
+\newblock In \emph{Advances in {Neural} {Information} {Processing} {Systems} ({NeurIPS})}, volume~36, October 2022.
+\newblock URL \url{https://openreview.net/forum?id=_VjQlMeSB_J}.
+
+\bibitem[Wei et~al.(2025)Wei, Zhang, Liu, Liu, and Zhang]{wei_accelerating_2025}
+Qingyan Wei, Yaojie Zhang, Zhiyuan Liu, Dongrui Liu, and Linfeng Zhang.
+\newblock Accelerating {Diffusion} {Large} {Language} {Models} with {SlowFast} {Sampling}: {The} {Three} {Golden} {Principles}.
+\newblock \emph{arXiv preprint arXiv:2506.10848}, June 2025.
+\newblock \doi{10.48550/arXiv.2506.10848}.
+\newblock URL \url{http://arxiv.org/abs/2506.10848}.
+
+\bibitem[Wu et~al.(2025{\natexlab{a}})Wu, Zhang, Xue, Liu, Diao, Zhu, Luo, Han, and Xie]{wu_fast-dllm_2025}
+Chengyue Wu, Hao Zhang, Shuchen Xue, Zhijian Liu, Shizhe Diao, Ligeng Zhu, Ping Luo, Song Han, and Enze Xie.
+\newblock Fast-{dLLM}: {Training}-free {Acceleration} of {Diffusion} {LLM} by {Enabling} {KV} {Cache} and {Parallel} {Decoding}.
+\newblock \emph{arXiv preprint arXiv:2505.22618}, July 2025{\natexlab{a}}.
+\newblock \doi{10.48550/arXiv.2505.22618}.
+\newblock URL \url{http://arxiv.org/abs/2505.22618}.
+
+\bibitem[Wu et~al.(2025{\natexlab{b}})Wu, Teng, and Tu]{wu_parallel_2025}
+Haoyi Wu, Zhihao Teng, and Kewei Tu.
+\newblock Parallel {Continuous} {Chain}-of-{Thought} with {Jacobi} {Iteration}, June 2025{\natexlab{b}}.
+\newblock URL \url{http://arxiv.org/abs/2506.18582}.
+\newblock arXiv:2506.18582 [cs].
+
+\bibitem[Xie et~al.(2025)Xie, Ye, Zheng, Gao, Dong, Wu, Zhao, Gong, Jiang, Li, and Kong]{xie_dream-coder_2025}
+Zhihui Xie, Jiacheng Ye, Lin Zheng, Jiahui Gao, Jingwei Dong, Zirui Wu, Xueliang Zhao, Shansan Gong, Xin Jiang, Zhenguo Li, and Lingpeng Kong.
+\newblock Dream-{Coder} {7B}: {An} {Open} {Diffusion} {Language} {Model} for {Code}.
+\newblock \emph{arXiv preprint arXiv:2509.01142}, September 2025.
+\newblock \doi{10.48550/arXiv.2509.01142}.
+\newblock URL \url{http://arxiv.org/abs/2509.01142}.
+
+\bibitem[Ye et~al.(2024)Ye, Gong, Chen, Zheng, Gao, Shi, Wu, Jiang, Li, Bi, and Kong]{ye_diffusion_2024}
+Jiacheng Ye, Shansan Gong, Liheng Chen, Lin Zheng, Jiahui Gao, Han Shi, Chuan Wu, Xin Jiang, Zhenguo Li, Wei Bi, and Lingpeng Kong.
+\newblock Diffusion of {Thought}: {Chain}-of-{Thought} {Reasoning} in {Diffusion} {Language} {Models}.
+\newblock \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 37, December 2024.
+\newblock URL \url{https://proceedings.neurips.cc/paper_files/paper/2024/hash/be30024e7fa2c29cac7a6dafcbb8571f-Abstract-Conference.html}.
+
+\bibitem[Ye et~al.(2025)Ye, Xie, Zheng, Gao, Wu, Jiang, Li, and Kong]{ye_dream_2025}
+Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Lingpeng Kong.
+\newblock Dream {7B}: {Diffusion} {Large} {Language} {Models}.
+\newblock \emph{arXiv preprint arXiv:2508.15487}, August 2025.
+\newblock \doi{10.48550/arXiv.2508.15487}.
+\newblock URL \url{http://arxiv.org/abs/2508.15487}.
+
+\bibitem[Zhang et~al.(2025)Zhang, He, Yan, Shen, Zhao, Wang, Shen, and Wang]{zhang_soft_2025}
+Zhen Zhang, Xuehai He, Weixiang Yan, Ao~Shen, Chenyang Zhao, Shuohang Wang, Yelong Shen, and Xin~Eric Wang.
+\newblock Soft {Thinking}: {Unlocking} the {Reasoning} {Potential} of {LLMs} in {Continuous} {Concept} {Space}.
+\newblock \emph{arXiv preprint arXiv:2505.15778}, May 2025.
+\newblock \doi{10.48550/arXiv.2505.15778}.
+\newblock URL \url{http://arxiv.org/abs/2505.15778}.
+
+\bibitem[Zhao et~al.(2025)Zhao, Gupta, Zheng, and Grover]{zhao_d1_2025}
+Siyan Zhao, Devaansh Gupta, Qinqing Zheng, and Aditya Grover.
+\newblock d1: {Scaling} {Reasoning} in {Diffusion} {Large} {Language} {Models} via {Reinforcement} {Learning}.
+\newblock \emph{arXiv preprint arXiv:2504.12216}, June 2025.
+\newblock \doi{10.48550/arXiv.2504.12216}.
+\newblock URL \url{http://arxiv.org/abs/2504.12216}.
+
+\bibitem[Zhu et~al.(2025{\natexlab{a}})Zhu, Wang, Nie, Zhang, Wu, Hu, Zhou, Chen, Lin, Wen, and Li]{zhu_llada_2025}
+Fengqi Zhu, Rongzhen Wang, Shen Nie, Xiaolu Zhang, Chunwei Wu, Jun Hu, Jun Zhou, Jianfei Chen, Yankai Lin, Ji-Rong Wen, and Chongxuan Li.
+\newblock {LLaDA} 1.5: {Variance}-{Reduced} {Preference} {Optimization} for {Large} {Language} {Diffusion} {Models}.
+\newblock \emph{arXiv preprint arXiv:2505.19223}, May 2025{\natexlab{a}}.
+\newblock \doi{10.48550/arXiv.2505.19223}.
+\newblock URL \url{http://arxiv.org/abs/2505.19223}.
+
+\bibitem[Zhu et~al.(2025{\natexlab{b}})Zhu, Hao, Hu, Jiao, Russell, and Tian]{zhu_reasoning_2025}
+Hanlin Zhu, Shibo Hao, Zhiting Hu, Jiantao Jiao, Stuart Russell, and Yuandong Tian.
+\newblock Reasoning by {Superposition}: {A} {Theoretical} {Perspective} on {Chain} of {Continuous} {Thought}.
+\newblock \emph{arXiv preprint arXiv:2505.12514}, May 2025{\natexlab{b}}.
+\newblock \doi{10.48550/arXiv.2505.12514}.
+\newblock URL \url{http://arxiv.org/abs/2505.12514}.
+
+\bibitem[Zhuang et~al.(2025)Zhuang, Liu, Singh, Shang, and Gao]{zhuang_text_2025}
+Yufan Zhuang, Liyuan Liu, Chandan Singh, Jingbo Shang, and Jianfeng Gao.
+\newblock Text {Generation} {Beyond} {Discrete} {Token} {Sampling}.
+\newblock \emph{arXiv preprint arXiv:2505.14827}, May 2025.
+\newblock \doi{10.48550/arXiv.2505.14827}.
+\newblock URL \url{http://arxiv.org/abs/2505.14827}.
+
+\end{thebibliography}

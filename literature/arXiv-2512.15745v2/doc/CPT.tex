@@ -1,0 +1,94 @@
+\newtcolorbox{takeaway}[1][]{
+  enhanced,
+  arc=3mm,
+  boxrule=0.5pt,
+  colback=myBlueBase!10!white,
+  colframe=myBlueBase!80!black,
+  sharp corners=south,
+  fonttitle=\bfseries,
+  coltitle=white, 
+before title={\textcolor{yellow!30!white}{\faLightbulb}~~},
+  attach boxed title to top left={xshift=2mm, yshift=-2mm},
+  boxed title style={
+    arc=3mm,
+    boxrule=0.3pt, 
+    colback=myBlueBase!90!white,
+    colframe=myBlueBase!80!black, 
+    width=\dimexpr\linewidth-2*0.5pt-2*4mm\relax*0.7, %
+  },
+  drop shadow={black!20!white},
+  #1
+}
+
+\section{Continual Pre-training via Warmup-Stable-Decay (WSD)}
+
+\begin{takeaway}[title={Takeaway}]
+\begin{itemize}[leftmargin=2em]
+    \item[(1)] \textbf{Warmup-Stable-Decay} enables a smooth and data-efficient conversion from AR to dLLMs.
+    \item[(2)] The \textbf{document-level attention mask} ensures coherent bidirectional modeling within semantic boundaries.
+    \item[(3)] \textbf{Top-k Checkpoint Merge} enhances performance and generalization by averaging the top k model checkpoints.
+\end{itemize}
+\end{takeaway}
+
+Converting a pre-trained AR language model into a high-performance diffusion language model is fundamentally challenging due to the misalignment in architectural inductive biases and training objectives. While AR models generate tokens sequentially from left to right, diffusion-based models rely on bidirectional context and learn to reconstruct corrupted sequences in arbitrary unmasking orders. A direct objective switch often leads to unstable optimization and severe degradation of pretrained knowledge.
+
+To address this gap, we propose a \textbf{Warmup–Stable–Decay} (WSD) continual pre-training strategy that enables a smooth, stable, and effective transition from AR to dLLM. WSD decomposes the conversion into three coordinated phases: 
+\begin{itemize}[leftmargin=2em]
+    \item \textbf{Warmup}: Progressively increase the block size in block diffusion language models (BDLM) to gradually transform the AR model into a full-sequence masked diffusion language model (MDLM).
+    \item \textbf{Stable}: Stabilize and enrich the model's understanding of diffusion dynamics through large-scale training under the MDLM paradigm.
+    \item \textbf{Decay}: Revert back to a compact BDLM with smaller block sizes to achieve better speed-efficiency trade-offs during inference.
+\end{itemize}
+This progressive schedule preserves the AR model’s priors while steadily adapting it to the structural requirements of diffusion modeling.
+
+Moreover, the \textbf{document-level attention mask} is applied throughout training to all input sequences. This mechanism is crucial for handling packed heterogeneous documents, preventing the model from forming spurious connections across unrelated texts, thereby ensuring semantic coherence and improving learning stability within each document. In addition, we adopt a \textbf{top-k checkpoint merging} strategy~\citep{tian2025wsm}, to enhance generalization by averaging the parameters of the best-performing checkpoints, smoothing the parameter landscape, and yielding a more robust final model with boosted performance. 
+
+
+\subsection{Warmup-Stable-Decay Conversion Strategy}\label{sec:warmup} We begin with the AR base models \texttt{Ling-mini-2.0} and \texttt{Ling-flash-2.0} ~\citep{lingv2}, which can be viewed as a special case of BDLM with block size 1. This perspective allows us to treat AR models as the initial BDLM configuration with minimal granularity.
+
+\paragraph{Phase-1: Progressive Block Size Warmup} The core idea of the warmup phase is to \emph{gradually increase the block size}, thereby expanding the receptive field within which the model performs joint denoising. Starting from block size $L_B = 1$, we incrementally scale it up to 4, 32, then 64, and ultimately reach $L_B = 4096$ — at which point the entire sequence is treated as one single block. To avoid fragmented blocks, we require the sequence length to be divisible by the current block size. At the final enlargement, the BDLM becomes equivalent to a standard MDLM that operates over fully masked sequences with global attention. Crucially, each block-size transition is trained on moderate-scale data to ensure smooth adaptation. This progressive enlargement allows the model to smoothly adapt its internal representations to handle larger contextual spans and more complex masking patterns.
+
+\paragraph{Phase-2: Large Scale Stable Training} Once the block size reaches 4096 and the model transitions to the MDLM pattern, the ``clean'' part of the attention computation (see Figure~\ref{fig:llada2_paradigm}) no longer needs to be maintained. This significantly reduces the computational cost of attention, allowing data to be processed far more efficiently under the MDLM paradigm. With the model now fully adapted to this regime, the stable training phase focuses on deepening its understanding of diffusion dynamics through extensive training on large-scale corpora. At this stage, the block size is fixed at 4096, effectively making every input a single-block sequence, equivalent to the classical MDLM setting.
+
+\paragraph{Phase-3: Block Size Decay} Finally, after large-scale MDLM training, we gradually reduce the block size from 4096 to a small block size (e.g., 32) to convert the model back into an efficient BDLM. This decay process distills the global contextual knowledge learned during MDLM into a compact blockwise structure. By decreasing the block size step-by-step (e.g., starting from 4096 to 2048) rather than abruptly, the model smoothly adapts from global to local conditioning, preserving its semantic understanding while regaining BDLM’s practical benefits such as KV-cache reuse and fast variable-length generation.
+
+\paragraph{Overall Training Objective} The optimization objective of BDLM~\citep{Blockdiffusion2025}  is designed to enable the model to accurately reconstruct the original, uncorrupted tokens within these designated masked blocks using a standard cross-entropy loss. Specifically, we define the training loss during  warmup and decay phases (phase-1\&3) under the BDLM paradigm as:
+\begin{equation}\label{eq:bdlm}
+    \mathcal{L}_{\text{BDLM}}(\theta) = - \mathbb{E}_{t, \bm{x}_0, \bm{x_t}} \left[ \frac{\alpha_{t}'}{1-\alpha_{t}}\sum_{k=1}^{K} \sum_{i=1}^{L_B} \mathbb{1}[x_{t,k}^i=\text{[MASK]}] \log p_{\theta}(\bm{x}_{0,k}^i | \bm{x}_{0,<k}, \bm{x}_{t,k}) \right],
+\end{equation}
+where the expectation is over timestep \(t\), the clean sequence \(\bm{x}_0\), and its corrupted version \(\bm{x}_t\) (tokens masked with probability \(1-\alpha_t\)). Indicator $\mathbb{1}[\cdot]$ ensures predictions are made only for masked tokens, and \(-\alpha_t'/(1-\alpha_t)\) is the diffusion‑derived time weight. Here \(K=L_{\text{total}}/L_B\) is the number of blocks, \(L_B\) the block size, \(x_{t,k}^i\) the \(i\)-th token in block \(k\), \(\bm{x}_{0,<k}\) the preceding clean blocks, and \(\bm{x}_{t,k}\) the noisy version of the current block.
+
+During the stable training (phase-2) of MDLM (i.e., K=1), the objective simplifies to:
+\begin{equation}\label{eq:mdlm}
+    \mathcal{L}_{\text{MDLM}}(\theta) = - \mathbb{E}_{t,\bm{x}_0,\bm{x}_t} [\frac{\alpha'_t}{1-\alpha_t}\sum_{i=1}^{L}\mathbb{1}[x_t^i=\text{[MASK]}]\log p_{\theta}(x^i_0 | \bm{x}_{t})].
+\end{equation}
+
+\subsection{Document-level Attention Mask}
+Our training sequences are formed by packing heterogeneous documents into fixed-length segments to maximize throughput. However, this introduces artificial long-range dependencies across semantically unrelated texts. Without careful handling, standard attention would incorrectly attend across document boundaries, leading to contextual confusion and significantly hindering the model's ability to perform robust bidirectional modeling crucial for denoising.
+
+To mitigate this fundamental challenge and preserve semantic coherence, we redefine the attention mechanism with a specialized \textbf{block-wise document-level attention mask}. This mask ensures that attention operates strictly within document boundaries, preventing cross-document contamination and allowing the model to fully leverage bidirectional context for accurate reconstruction of corrupted blocks. The native Block Diffusion vectorizes the training process to achieve parallel training of blocks, and this mask is applied accordingly.
+Specifically, for a concatenated sequence $x_{full}$ of length $2L$ (comprising $x_t$ followed by $x_0$), and assuming tokens $i$ and $j$ are already confined to the same document segment (as enforced by the initial document-level mask), the attention mask $\bm{M}\in\{0,1\}^{2L\times 2L}$ is constructed by dividing each sequence ($x_t$ and $x_0$) into contiguous blocks. Let $b(k) = \lfloor k / L_B \rfloor$ denote the block index for token $k$ given a block size $L_B$. The mask is defined as:
+\begin{equation}
+\bm{M}_{ij} =
+\begin{cases}
+    \mathbb{1}_{b(i) = b(j)} & \text{if } i \in x_t \text{ and } j \in x_t \\
+    \mathbb{1}_{b(i) > b(j-L)} & \text{if } i \in x_t \text{ and } j \in x_0 \\
+    \mathbb{1}_{b(i-L) \ge b(j-L)} & \text{if } i \in x_0 \text{ and } j \in x_0 \\
+    0 & \text{otherwise}
+\end{cases}
+\end{equation}
+Where $i, j \in \{0, 1, \dots, 2L-1\}$ are the indices in the full sequence. The first condition ($\mathbb{1}_{b(i) = b(j)}$) implements block-diagonal attention within the noisy sequence $x_t$. The second ($\mathbb{1}_{b(i) > b(j-L)}$) enables cross-attention from $x_t$ to $x_0$, but only from blocks in $x_t$ to earlier blocks in $x_0$. The third ($\mathbb{1}_{b(i-L) \ge b(j-L)}$) imposes a causal block attention pattern within the clean sequence $x$, allowing a block to attend to itself and all preceding blocks. The "otherwise" condition corresponds to a zero matrix, explicitly preventing attention from queries in $x_0$ to keys in $x_t$. 
+This allows each block to leverage context from relevant blocks (according to the mask) for reconstruction, capturing inter-block dependencies while maintaining the causal and block-diagonal principles essential for stable diffusion training. During our exploration, we also experimented with other tricks like random-length~\citep{xie_dream-coder_2025} and CART~\citep{Dream7B2025}. However, the results demonstrate that the document-level attention mask is more fundamental in CPT training compared to these techniques, and it consistently achieves superior performance. As illustrated in Figure~\ref{fig:llada2_paradigm}, this forms a structured attention layout that balances locality and global document coherence.
+
+For MDLM, the document-level attention mask simplifies to $\bm{M}\in\{0,1\}^{L\times L}$, where:
+\begin{equation}
+\bm{M}_{ij} = 
+\begin{cases}
+1, & \text{if $i,j$ belong to the same document}, \\
+0, & \text{otherwise}.
+\end{cases}
+\end{equation}
+
+\subsection{Top-k Checkpoint Merge}
+To further enhance the generalization and robustness of our Block Diffusion Language Model, we employ a top-k checkpoint merging strategy.
+Upon completion of BDLM pre-training, we identify the top $k$ best-performing model checkpoints, typically selected based on validation metrics like perplexity. The parameters (weights and biases) of these $k$ checkpoints are then arithmetically averaged to form a single, unified BDLM. Based on WSM scheduler~\citep{tian2025wsm}, this merge strategy can effectively ensemble diverse ''knowledge" captured by the model at various optimal or near-optimal training states. This smooths the parameter landscape, mitigates overfitting, and yields a more stable and generalizable model. A key advantage of the WSM approach is its optimizer-agnostic nature, allowing seamless integration without altering the underlying training pipeline.
+Crucially, this post-training Top-k Merge fundamentally differs from the Exponential Moving Average (EMA). While EMA is an in-training technique that continuously smooths parameters, merging is an offline procedure. It explicitly selects and averages distinct, high-performing model states, consolidating their strengths rather than merely smoothing the final training step.

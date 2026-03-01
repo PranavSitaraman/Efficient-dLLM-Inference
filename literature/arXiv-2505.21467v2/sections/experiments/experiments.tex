@@ -1,0 +1,458 @@
+\section{Experiments}\label{sec:res}
+We evaluated the proposed method against a wide range of benchmarks across different types of tasks.
+Due to the limited option of DLM models with multi-billion parameters, we choose Dream-Instruct-7B~\cite{dream2025} as the selected SoTA model to validate the proposed method. 
+To fully solidify the effectiveness of our work, both question-answer~(QA) and reasoning tasks are solved via multi-sentence and multi-step text-based diffusion, instead of directly outputting the final answer. 
+The detailed experimental setup and data pre-processing are summarized in the supplemantary. 
+
+\textbf{Metrics and Baselines.}The performance of the proposed method and other baselines are evaluated based on accuracy and wall clock latency for solving each problem.
+We first compare the performance of the proposed method against the vanilla Dream model~\cite{dream2025}. On top of that, we evaluate the proposed method with the comparison of the mainstream auto-regressive models. 
+
+\begin{table}[t!]
+\centering
+\caption{Outstanding acceleration achieved by the proposed methods with negligible accuracy drop on Dream-7B-Instruct~\cite{dream2025}. The latency value represents the end-to-end problem solving time per problem.}
+\resizebox{\linewidth}{!}{%
+\begin{tabular}{ccc|ccc}
+\toprule
+                                &                & \textbf{Vanilla DLM}           & \multicolumn{3}{c}{\textbf{Dream-Instruct-7B with Guided Diffusion (This Work)}}                                           \\ 
+\midrule
+                                &                & Baseline Dream-Instruct-7B & FreeCache Only & FreeCache + QWen-1.5B-Instruct & FreeCache + QWen-7B-Instruct    \\ 
+\midrule
+\multirow{3}{*}{\textbf{MMLU-PRO}}       
+                                & Acc. (\%) &   46.92                & 45.18              & 46.64                     & 48.20                       \\ 
+\cmidrule{2-6} 
+                                & Latency (s)    &  20.73                 & \textbf{6.68}              &  \textbf{1.66}                    & \textbf{2.77}                       \\ 
+\cmidrule{2-6} 
+                                & Speedup (s)    &  1$\times$                 & \cellcolor{ora}\textbf{3.11}$\times$              &  \cellcolor{ora}\textbf{12.48}$\times$                    & \cellcolor{ora}\textbf{7.48}$\times$                       \\ 
+\midrule\midrule
+\multirow{4}{*}{\textbf{GSM8K (8-shot)}} 
+                                & Acc. (\%)      & 79.68             & 77.40         & 80.33                & 81.41                  \\ 
+\cmidrule{2-6} 
+                                & Latency (s)    & 48.05             & \textbf{10.87}         & \textbf{2.70}        & \textbf{2.74}          \\ 
+\cmidrule{2-6} 
+                                & Speedup        & 1$\times$         & \cellcolor{ora}\textbf{4.42}$\times$   & \cellcolor{ora}\textbf{17.80}$\times$       & \cellcolor{ora}\textbf{17.53}$\times$         \\ 
+\midrule\midrule
+\multirow{4}{*}{\textbf{PiQA}}           
+                                & Acc. (\%)      & 85.56             & 84.83         & 85.15                & 85.85                  \\ 
+\cmidrule{2-6} 
+                                & Latency (s)    & 14.62             & \textbf{4.21}          & \textbf{0.43}        & \textbf{1.05}          \\ 
+\cmidrule{2-6} 
+                                & Speedup        & 1$\times$         & \cellcolor{ora}\textbf{3.47}$\times$   & \cellcolor{ora}\textbf{34.1}$\times$       & \cellcolor{ora}\textbf{13.92}$\times$ \\ 
+\midrule\midrule
+\multirow{4}{*}{\textbf{ARC-C}}          
+                                & Acc. (\%)      & 80.87             & 80.61         & 80.89                & 80.72                  \\ 
+\cmidrule{2-6} 
+                                & Latency (s)    & 10.64             & \textbf{4.25}          & \textbf{3.12}        & \textbf{4.58}          \\ 
+\cmidrule{2-6} 
+                                & Speedup        & 1$\times$         & \cellcolor{ora}\textbf{2.50}$\times$   & \cellcolor{ora}\textbf{3.41}$\times$       & \cellcolor{ora}\textbf{2.32}$\times$           \\ 
+\midrule\midrule
+\multirow{4}{*}{\textbf{ARC-E}}          
+                                & Acc. (\%)      & 87.53             & 86.24         & 87.50                & 87.44                  \\ 
+\cmidrule{2-6} 
+                                & Latency (s)    & 10.59             & \textbf{5.54}          & \textbf{3.25}        & \textbf{5.03}          \\ 
+\cmidrule{2-6} 
+                                & Speedup        & 1$\times$         & \cellcolor{ora}\textbf{1.91}$\times$   & \cellcolor{ora}\textbf{3.26}$\times$       & \cellcolor{ora}\textbf{2.11}$\times$           \\ 
+\midrule\midrule
+% HellaSwag
+% \multirow{4}{*}{\textbf{Hellaswag}}      
+%                                 & Acc. (\%)      & 80.43             & %77.37  (16 tokens)
+%                                 64.93
+%                                 & 76.73                & 76.84                  \\ 
+% \cmidrule{2-6} 
+%                                 & Latency (s)    & 0.83              & % 0.48  (16 tokens)
+%                                 10.22
+%                                 & \textbf{2.47}        & \textbf{3.31}          \\ 
+% \cmidrule{2-6} 
+%                                 & Speedup        & 1$\times$         & \cellcolor{ora}\textbf{1.72}$\times$   &                      &                        \\ 
+% \midrule\midrule
+% \multirow{4}{*}{\textbf{HellaSwag}}      
+%                                 & Acc. (\%)      & 73.30             & —         & \textbf{76.63}        & \textbf{76.84}                  \\ 
+% \cmidrule{2-6} 
+%                                 & Latency (s)    & 21.99             & —          & \textbf{2.46}        & \textbf{3.31}          \\ 
+% \cmidrule{2-6} 
+%                                 & Speedup        & 1$\times$         & —   & \cellcolor{ora}\textbf{8.94}$\times$       & \cellcolor{ora}\textbf{6.64}$\times$         \\ 
+% \midrule\midrule
+\multirow{4}{*}{\textbf{GPQA}}      
+                                & Acc. (\%)      & 39.29             & 43.30         & 49.55                &       49.33            \\ 
+\cmidrule{2-6} 
+                                & Latency (s)    &     21.50          & \textbf{9.91}         & \textbf{12.02}        &       \textbf{15.26}    \\ 
+\cmidrule{2-6} 
+                                & Speedup        & 1$\times$         &  \cellcolor{ora}\textbf{2.12}$\times$   &  \cellcolor{ora}\textbf{1.78}$\times$   &     
+                                \cellcolor{ora}\textbf{1.41}$\times$
+                                
+                                \\ \bottomrule
+\end{tabular}}
+\label{tbl:res_vs_vanilla}
+\end{table}
+
+% \subsection{Ablation Study on FreeCache Block Size}
+% We study the effect of the \texttt{block\_size} used by FreeCache. Smaller blocks reduce per-step compute but may degrade accuracy due to stronger K/V approximation; larger blocks better preserve accuracy at the cost of slightly higher latency.
+
+% \begin{table}[t!]
+%   \centering
+%   \small
+%   \caption{Ablation on FreeCache block size. Accuracy and end-to-end latency are reported on GSM8K (8-shot).}
+%   \resizebox{0.6\linewidth}{!}{%
+%   \begin{tabular}{ccc}
+%     \toprule
+%     \textbf{Block Size} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} \\
+%     \midrule
+%     8   &  &  \\
+%     16  &  &  \\
+%     32  &  &  \\
+%     64  &  &  \\
+%     128 &  &  \\
+%     256 &  &  \\
+%     \bottomrule
+%   \end{tabular}%
+%   }
+%   \label{tab:ablation_block_size}
+% \end{table}
+
+% As shown in Table~\ref{tab:ablation_block_size}, there is a clear trade-off between block size and accuracy. Smaller caching blocks reduce the cost of attention computation but can lead to inaccurate key–value approximation and degraded accuracy. Enlarging the block size stabilizes the long-term estimation of the key–value projection, recovering accuracy at the cost of slightly higher latency. We chose a block size of 256 for our main experiments as it offered the best accuracy.
+
+
+\textbf{Experimental Setup.}The models are deployed on a single NVIDIA RTX 6000 Ada GPU~(48GB). The latency is measured directly via \texttt{torch.cuda.Event} across each benchmark dataset. 
+
+\textbf{Long-context Diffusion.}
+For all the tasks, we intentionally encourage the model to generate the complete reasoning process, followed by the indication of the final answer. 
+We would like to highlight the long context response is critical for problem solving and question-answering due to the widely adopted reasoning-based response in the SoTA LLM models. 
+For all the selected reasoning, math problems, and question-answering, we set the \texttt{max\_new\_tokens} to 1024. The final answers are extracted after the dedicated prompt trigger. 
+
+\subsection{Comparison with the baseline diffusion language model}
+Compared to the vanilla Dream-7B-Instruct model, the proposed method achieves consistent and outstanding speedup across all the tasks from different domains. 
+For the complex reasoning tasks~(e.g., MMLU-PRO, GPQA), the proposed \texttt{FreeCache} first induces 3.11$\times$ speedup with minimal quality degradation. Rewarded by the guided diffusion method, the overall system can achieve an average of \textbf{12.48}$\times$ speedup with negligible accuracy degradation.
+For the tasks with long-context input prompt~(e.g., GSM8K with 8-shot), the proposed method accelerates the diffusion process with \textbf{34.1}$\times$ end-to-end average speedup on all the math problems, as presented in Table~\ref{tbl:res_vs_vanilla}. 
+
+With guided unmasking, the diffusion model exhibits stronger reasoning power with recovered accuracy. More importantly, the existence of the lightweight autoregressive model recovers the accuracy degradation caused by the approximated cache, even with the long-context generation~(e.g., 1024 tokens). 
+As introduced in Section~\ref{alg:guided_diffusion}, the guided diffusion process exclude the ``correction'' step. As a result, increasing the size of the guider model~(e.g., from 1.5B to 7B) only leads to marginal accuracy improvements, with the cost of minimal latency overhead. 
+
+Empowered by \texttt{Guided Diffusion}, diffusion model is compatible with different variants of the AR model guider in different domains of knowledge. By employing a dedicated auto-regressive LLM for math~(e.g., Qwen-2.5-Math-1.5B), the performance of the Dream-Instruct-7B model can be further facilitated with better reasoning ability on the GSM8K dataset. 
+In addition to the experimental results in Table~\ref{tbl:res_vs_vanilla}, we present the evaluation results with other benchmarks in the supplementary. 
+
+\subsection{Comparison with the Vanilla Autoregressive LLM models}
+The strong speedup achieved by the proposed method allows us to compare the diffusion model against the conventional autoregressive LLM models. 
+% As shown in Table~\ref{tab:gsm8k_all_with_ar}, the proposed method achieves comparable or even better latency in comparison to the vanilla Auto-regressive LLM models on the GSM8K dataset with the standard 8-shot chain-of-thought prompt. 
+
+Table~\ref{tab:gsm8k_all_with_ar} shows the  comparison between Guided Diffusion and vanilla Auto-regressive on the GSM8K dataset with the standard 8-shot chain-of-thought prompt. 
+Crucially, the quality of generation is governed by the DLM’s reasoning capacity. This ensures that accuracy is maintained regardless of guider competence, with latency remaining on par with autoregressive models. Admittedly, Dream-7B-Instruct and LLaDA-8B currently exhibit weaker reasoning ability compared to some state-of-the-art autoregressive models of similar size (e.g., Qwen2.5-7B-Instruct). Nevertheless, Guided Diffusion provides significant acceleration, and as future work continues to enhance the reasoning ability of diffusion models, its benefits are expected to become even more pronounced.
+
+% \begin{table}[t!]
+%   \centering
+%   \small
+%   \caption{GSM8K~(8-shot) results of Dream-v0-Instruct-7B~\cite{dream2025} with different guider models, ordered by model size (ascending) and then alphabetically.}
+%   \resizebox{\linewidth}{!}{%
+%   \begin{tabular}{ccccc}
+%     \toprule
+%     \textbf{Guider Model Variant} &
+%     \multicolumn{2}{c}{\textbf{Autoregressive LM Model-guidance}} &
+%     \multicolumn{2}{c}{\textbf{Autoregressive LM Model-guidance + correction}} \\
+%     \cmidrule(lr){2-3}\cmidrule(lr){4-5}
+%      & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} \\
+%     \midrule
+%     % ---------- 0.5 B ----------
+%     Qwen2.5-0.5B                         & 78.0  & 2.66  & N/A   & N/A    \\
+%     Qwen2.5-0.5B-Instruct               & 79.7  & 2.61  & N/A   & N/A    \\
+%     \midrule
+%     % ---------- 1.5 B ----------
+%     Qwen2.5-1.5B                        & 80.6  & 2.58  & N/A   & N/A    \\
+%     Qwen2.5-1.5B-Instruct               & 80.3  & 2.55  & N/A   & N/A    \\
+%     Qwen2.5-Math-1.5B                   & 80.6  & 2.43  & N/A   & N/A    \\
+%     Qwen2.5-Math-1.5B-Instruct          & 82.9  & 3.19  & N/A   & N/A    \\
+%     \midrule
+%     % ---------- 3 B ----------
+%     Qwen2.5-3B                          & 81.9  & 4.76  & 78.8  & 2.09   \\
+%     Qwen2.5-3B-Instruct                & 82.6  & 3.35  & 83.2  & 3.42   \\
+%     \midrule
+%     % ---------- 7 B ----------
+%     % DeepSeek-R1-Distill-Qwen2.5-7B     & N/A   & N/A   & 88.8  & 2.08   \\
+%     Qwen2.5-7B                         & 81.4  & 10.13 & 85.6  & 2.27   \\
+%     Qwen2.5-7B-Instruct               & 82.3  & 3.43  & 89.8  & 3.44   \\
+%     Qwen2.5-Math-7B                    & 82.6  & 5.78  & 83.5  & 1.93 \\
+%     Qwen2.5-Math-7B-Instruct           & 83.5  & 2.91  & 92.2  & 4.16   \\
+%     \midrule
+%     % ---------- 8 B ----------
+%     % Llama3.1-8B                        & 80.3  & 22.74 & 5.5   & 14.04  \\
+%     Llama3.1-8B-Instruct               & 81.5  & 6.51  & N/A   & N/A    \\
+%     \midrule
+%     % ---------- 14 B ----------
+%     Qwen2.5-14B                        & 83.2  & 4.19  & 87.9  & 2.23   \\
+%     Qwen2.5-14B-Instruct              & 83.7  & 4.07  & 94.3 & 3.39   \\
+%     \bottomrule
+%   \end{tabular}}
+%   \label{tab:gsm8k_all_sorted}
+% \end{table}
+
+
+% \vspace{-10pt}
+% \begin{table}[t!]
+%   \centering
+%   \small
+%   \caption{Performance comparison between Dream-v0-Instruct-7B~\cite{dream2025} and off-the-shelf autoregressive LLM model on GSM8K dataset.}
+%   \resizebox{\linewidth}{!}{%
+%   \begin{tabular}{ccccccc}
+%     \toprule
+%     \textbf{Model Variant} &
+%     \multicolumn{2}{c}{\textbf{Autoregressive LM}} &
+%     \multicolumn{2}{c}{\textbf{Autoregressive LM guidance}} &
+%     \multicolumn{2}{c}{\textbf{Autoregressive LM guidance + correction}} \\
+%     \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+%      & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} \\
+%     \midrule
+%     % 0.5 B
+%     % Qwen2.5-0.5B                   & N/A   & N/A  & 78.0  & 2.66  & N/A   & N/A   \\
+%     % Qwen2.5-0.5B-Instruct          & N/A   & N/A  & 79.7  & 2.61  & N/A   & N/A   \\
+%     % \midrule
+%     % % 1.5 B
+%     % Qwen2.5-1.5B                   & N/A   & N/A  & 80.6  & 2.58  & N/A   & N/A   \\
+%     Qwen2.5-1.5B-Instruct          & 68.54 & 2.26 & 80.3  & 2.55  & N/A   & N/A   \\
+%     % Qwen2.5-Math-1.5B              & N/A   & N/A  & 80.6  & 2.43  & N/A   & N/A   \\
+%     Qwen2.5-Math-1.5B-Instruct     & 78.24 & 1.59 & 82.9  & 3.19  & N/A   & N/A   \\
+
+%     % \midrule
+%     % 3 B
+%     % Qwen2.5-3B                     & N/A   & N/A  & 81.9  & 4.76  & 78.8  & 2.09  \\
+%     Qwen2.5-3B-Instruct            & 84.15 & 2.72 & 82.6  & 3.35  & 83.2  & 3.42  \\
+%     \midrule
+%     % 7 B
+%     % DeepSeek-R1-Distill-Qwen2.5-7B & N/A   & N/A  & N/A   & N/A   & 88.8  & 2.08  \\
+%     Qwen2.5-7B                     & 76.42 & 7.27 & 81.4  & 10.13 & 85.6  & 2.27  \\
+%     Qwen2.5-7B-Instruct            & 91.13 & 3.23 & 82.3  & 3.43  & 89.8  & 3.44  \\
+%     Qwen2.5-Math-7B                & 84.08 & 2.36 & 82.6  & 5.78  & 83.5  & 1.93  \\
+%     Qwen2.5-Math-7B-Instruct       & 92.04 & 2.93 & 83.5  & 2.91  & 92.2  & 4.16  \\
+%     \midrule
+%     % 8 B
+%     %Llama3.1-8B                    & N/A   & N/A  & 80.3  & 22.74 & N/A  & N/A \\
+%     Llama3.1-8B-Instruct           & 84.56   & 3.63  & 81.5  & 6.51  & N/A   & N/A   \\
+%     \midrule
+%     % 14 B
+%     Qwen2.5-14B                    & N/A   & N/A  & 83.2  & 4.19  & 87.9  & 2.23  \\
+%     Qwen2.5-14B-Instruct           & 93.40 & 6.32 & 83.7  & 4.07  & 94.3  & 3.39  \\
+%     \bottomrule
+%   \end{tabular}}
+%   \label{tab:gsm8k_all_with_ar}
+% \end{table}
+
+% \begin{table}[h!]
+%   \centering
+%   \small
+%   \caption{GSM8K~(8-shot) results of Dream-v0-Instruct-7B~\cite{dream2025} with different guider models, ordered by model size (ascending) and then alphabetically.}
+%   \begin{tabular}{ccc}
+%     \toprule
+%     \textbf{Guider Model Variant} &
+%     \multicolumn{2}{c}{\textbf{Autoregressive LM Model-guidance}} \\
+%     \cmidrule(lr){2-3}
+%      & \textbf{Accuracy (\%)} & \textbf{Latency (s)} \\
+%     \midrule
+%     % ---------- 0.5 B ----------
+%     Qwen2.5-0.5B                       & 78.0  & 2.66   \\
+%     Qwen2.5-0.5B-Instruct              & 79.7  & 2.61   \\
+%     \midrule
+%     % ---------- 1.5 B ----------
+%     Qwen2.5-1.5B                       & 80.6  & 2.58   \\
+%     Qwen2.5-1.5B-Instruct              & 80.3  & 2.55   \\
+%     Qwen2.5-Math-1.5B                  & 80.6  & 2.43   \\
+%     Qwen2.5-Math-1.5B-Instruct         & 82.9  & 3.19   \\
+%     \midrule
+%     % ---------- 3 B ----------
+%     Qwen2.5-3B                         & 81.9  & 4.76   \\
+%     Qwen2.5-3B-Instruct                & 82.6  & 3.35   \\
+%     \midrule
+%     % ---------- 7 B ----------
+%     Qwen2.5-7B                         & 81.4  & 10.13  \\
+%     Qwen2.5-7B-Instruct                & 82.3  & 3.43   \\
+%     Qwen2.5-Math-7B                    & 82.6  & 5.78   \\
+%     Qwen2.5-Math-7B-Instruct           & 83.5  & 2.91   \\
+%     \midrule
+%     % ---------- 8 B ----------
+%     Llama3.1-8B-Instruct               & 81.5  & 6.51   \\
+%     \midrule
+%     % ---------- 14 B ----------
+%     Qwen2.5-14B                        & 83.2  & 4.19   \\
+%     Qwen2.5-14B-Instruct               & 83.7  & 4.07   \\
+%     \bottomrule
+%   \end{tabular}
+%   \label{tab:gsm8k_all_sorted}
+% \end{table}
+
+% \begin{table}[t!]
+%   \centering
+%   \small
+%   \caption{Performance comparison between Dream-v0-Instruct-7B~\cite{dream2025} and off-the-shelf autoregressive LLM model on GSM8K dataset.}
+%   \resizebox{\linewidth}{!}{%
+%   \begin{tabular}{ccccc}
+%     \toprule
+%     \textbf{Model Variant} &
+%     \multicolumn{2}{c}{\textbf{Autoregressive LM}} &
+%     \multicolumn{2}{c}{\textbf{Autoregressive LM guidance}} \\
+%     \cmidrule(lr){2-3}\cmidrule(lr){4-5}
+%      & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} \\
+%     \midrule
+%     Qwen2.5-1.5B-Instruct        & 68.54 & 2.26 & 80.3  & 2.55  \\
+%     Qwen2.5-Math-1.5B-Instruct   & 78.24 & 1.59 & 82.9  & 3.19  \\
+%     Qwen2.5-3B-Instruct          & 84.15 & 2.72 & 82.6  & 3.35  \\
+%     \midrule
+%     Qwen2.5-7B                   & 76.42 & 7.27 & 81.4  & 10.13 \\
+%     Qwen2.5-7B-Instruct          & 91.13 & 3.23 & 82.3  & 3.43  \\
+%     Qwen2.5-Math-7B              & 84.08 & 2.36 & 82.6  & 5.78  \\
+%     Qwen2.5-Math-7B-Instruct     & 92.04 & 2.93 & 83.5  & 2.91  \\
+%     \midrule
+%     Llama3.1-8B-Instruct         & 84.56 & 3.63 & 81.5  & 6.51  \\
+%     \midrule
+%     Qwen2.5-14B                  & N/A   & N/A  & 83.2  & 4.19  \\
+%     Qwen2.5-14B-Instruct         & 93.40 & 6.32 & 83.7  & 4.07  \\
+%     \bottomrule
+%   \end{tabular}}
+%   \label{tab:gsm8k_all_with_ar}
+% \end{table}
+
+\begin{table}[H]
+  \centering
+  \small
+  \caption{Comprehensive performance comparison on the GSM8K dataset, showing both standard autoregressive (AR) and AR-guided results for various models.}
+  \resizebox{\linewidth}{!}{%
+  \begin{tabular}{ccccccc}
+    \toprule
+    \textbf{Models / Guiders} &
+    \multicolumn{2}{c}{\textbf{Stand-alone AR LLM}} &
+    \multicolumn{2}{c}{\textbf{Guided Diffusion (w/ Dream-7B-Instruct)}} & \multicolumn{2}{c}{\textbf{Guided Diffusion (w/ LLaDA-8B-Instruct)}} \\
+    \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}
+     & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} & \textbf{Accuracy (\%)} & \textbf{Latency (s)} \\
+    \midrule
+    
+    % ---------- 0.5 B ----------
+    % Qwen2.5-0.5B                       & N/A   & N/A  & \textbf{78.0}  & 2.66  \\
+    % Qwen2.5-0.5B-Instruct              & N/A   & N/A  & \textbf{79.7}  & 2.61  \\
+    % \midrule
+    % ---------- 1.5 B ----------
+    % Qwen2.5-1.5B                       & N/A   & N/A  & \textbf{80.6}  & 2.58  \\
+    Qwen2.5-1.5B-Instruct              & 68.54 & 2.26 & 80.3  & 2.55 & 79.91 & 4.29 \\
+    % Qwen2.5-Math-1.5B                  & N/A   & N/A  & \textbf{80.6}  & 2.43  \\
+    Qwen2.5-Math-1.5B-Instruct         & 78.24 & 1.59 & 82.9  & 3.19 & 81.96 & 5.31  \\
+    % \midrule
+    % ---------- 3 B ----------
+    % Qwen2.5-3B                         & N/A   & N/A  & \textbf{81.9}  & 4.76  \\
+    % Qwen2.5-3B-Instruct                & 84.15 & 2.72 & 82.6  & 3.35  \\
+    % \midrule
+    % ---------- 7 B ----------
+    % Qwen2.5-7B                         & 76.42 & 7.27 & 81.4  & 10.13 & 79.68 & 4.42 \\
+    Qwen2.5-7B-Instruct              & 91.13 & 3.23 & 82.3  & 3.43 & 79.68 & 4.42 \\
+    % Qwen2.5-Math-7B                  & 84.08 & 2.36 & 82.6  & 5.78  \\
+    % Qwen2.5-Math-7B-Instruct         & 92.04 & 2.93 & 83.5  & 2.91  \\
+    % \midrule
+    % % ---------- 8 B ----------
+    % Llama3.1-8B-Instruct             & 84.56 & 3.63 & 81.5  & 6.51  \\
+    % \midrule
+    % % ---------- 14 B ----------
+    % Qwen2.5-14B                      & N/A   & N/A  & 83.2  & 4.19  \\
+    % Qwen2.5-14B-Instruct             & 93.40 & 6.32 & 83.7  & 4.07  \\
+    \bottomrule
+  \end{tabular}}
+  \label{tab:gsm8k_all_with_ar}
+\end{table}
+
+\subsection{Model GPU Memory Usage}\label{sec:memory}
+
+Table~\ref{tab:memory-llada} and Table~\ref{tab:memory-dream} show the GPU memory usage (in Gigabytes) of the proposed method with LLaDA-8B-Instruct and Dream-7B-Instruct as diffusion models, respectively.
+The GPU memory is recorded directly via \texttt{torch.cuda.max\_memory\_allocated()}. As shown in the tables, the proposed guided unmasking scheme introduces minimal memory overhead compared to the combined memory consumption of the single auto-regressive and baseline diffusion models.
+
+\begin{minipage}{0.45\linewidth}
+\captionof{table}{LLaDA-8B-Instruct Guided Diffusion Memory Usage (GB).}
+\centering
+\resizebox{\linewidth}{!}{\begin{tabular}{lccc}
+\toprule
+\textbf{AR Guider} & \textbf{DLM} & \textbf{Guide} & \textbf{Total} \\
+                   & \textbf{(GB)}  & \textbf{(GB)}  & \textbf{(GB)} \\
+\midrule
+% None          & \multirow{5}{*}{20.7} & --   & 20.7 \\
+Qwen2.5-1.5B-Instruct  &  \multirow{2}{*}{20.7}                      & 4.1  & 24.8 \\
+Qwen2.5-7B-Instruct    &                        & 17.3 & 38.0 \\
+\bottomrule
+\end{tabular}}
+\label{tab:memory-llada}
+\end{minipage}
+\hfill
+\begin{minipage}{0.45\linewidth}
+\captionof{table}{Dream-Instruct-7B Guided Diffusion Memory Usage (GB).}
+\centering
+\resizebox{\linewidth}{!}{\begin{tabular}{lccc}
+\toprule
+\textbf{AR Guider} & \textbf{DLM} & \textbf{Guide} & \textbf{Total} \\
+                   & \textbf{(GB)}  & \textbf{(GB)}  & \textbf{(GB)} \\
+\midrule
+% None          & \multirow{5}{*}{14.6} & --   & 14.6 \\
+% Qwen2.5-0.5B  &   \multirow{4}{*}{14.6} & 1.9  & 16.5 \\
+Qwen2.5-1.5B-Instruct  & \multirow{2}{*}  {14.6}                     & 4.1  & 18.7 \\
+Qwen2.5-7B-Instruct    &                        & 17.3 & 31.9 \\
+\bottomrule
+\end{tabular}}
+\label{tab:memory-dream}
+\end{minipage}
+
+
+
+% \section{Conclusion and Discussion}
+% This paper presents a novel method designed for diffusion language models. The proposed \texttt{FreeCache} enables training-free caching with an off-the-shelf diffusion model. On top of that, \texttt{Guided Diffusion} facilitates the quality of diffusion by guiding the direct diffusion process with outstanding speedup. 
+% Different from prior works that relies on training or additional finetuning effort, the proposed method enables the end-to-end speedup by using the off-the-shelf diffusion model only. More importantly, for the first time, our method enables diffusion model to achieve the comparable and even better performance compared to the autoregressive language models while maintaining the similar accuracy. 
+% Admittedly the proposed method is mainly evaluated on the Dream-v0-Instruct-7B model due to the limited availability of the off-the-shelf diffusion LM models, the extension of the proposed method toward other diffusion model architecture will be investigated in future works. 
+
+
+
+% We evaluate our proposed acceleration methods for diffusion language models on GSM8K 8-shot, a long-context benchmark where the average prompt length exceeds 1,200 tokens. We focus on three metrics: (1) generation latency, (2) answer accuracy, and (3) overall generation efficiency.
+
+% \subsection{Experimental Setup}
+
+% All experiments were conducted using a single NVIDIA RTX 6000 Ada GPU with 48GB of memory. We evaluate Dream-v0-Instruct-7B with the following variants:
+% \begin{itemize}
+%     \item \textbf{Baseline:} Standard Dream 7B diffusion inference with heuristic token unmasking. (Experimented with different heuristics and temperatures)
+%     \item \textbf{Optimized Cached:} Includes KV approximation caching.
+%     \item \textbf{AR-assisted:} Uses a lightweight autoregressive model to guide unmasking.
+%     \item \textbf{Speculative Decoding:} Combines a fast draft model with AR verification.
+% \end{itemize}
+
+% Each configuration is evaluated with varying denoising strides (number of tokens unmasked per step) and context lengths from 32 to 512.
+
+% \subsection{Pareto Efficiency of Latency–Accuracy}
+
+% We visualize latency–accuracy tradeoffs across model variants using Pareto curves. The goal is to determine which configurations are both fast and accurate. Figure~\ref{fig:pareto_combined} shows:
+
+% \begin{itemize}
+%     \item (a) Baseline performance without caching or early stopping.
+%     \item (b) Optimized caching with early stopping significantly improves latency.
+%     \item (c) Direct overlay of baseline and optimized curves.
+%     \item (d) Highlighted star points representing optimal latency–accuracy tradeoffs.
+% \end{itemize}
+
+% \begin{figure}[t]
+%     \centering
+
+%     % % Subplot 1
+%     % \begin{subcaptionbox}{Baseline Dream 7B (no caching).\label{fig:pareto_baseline}}[0.45\linewidth]
+%     %     {\includegraphics[width=\linewidth]{figures/paretos/pareto_baseline.pdf}}
+%     % \end{subcaptionbox}
+%     % \hfill
+
+%     % % Subplot 2
+%     % \begin{subcaptionbox}{Optimized Dream 7B with KV caching and early stopping.\label{fig:pareto_cached}}[0.45\linewidth]
+%     %     {\includegraphics[width=\linewidth]{figures/paretos/pareto_early_stop_block_cached.pdf}}
+%     % \end{subcaptionbox}
+
+%     % \vskip\baselineskip
+%     % Subplot 3
+%     \begin{subcaptionbox}{Overlay of baseline vs. optimized cached (Pareto frontier).\label{fig:overlay_cached}}[0.6\linewidth]
+%         {\includegraphics[width=\linewidth]{figures/paretos/overlay_baseline_vs_optimized_cached.pdf}}
+%     \end{subcaptionbox}
+
+%     \caption{Latency–accuracy tradeoffs for Dream 7B diffusion inference. Optimized caching yields significant efficiency gains while preserving accuracy.}
+%     \label{fig:pareto_combined}
+% \end{figure}
+
+% \subsection{Generation Length and Unmasking Configuration}
+
+% To interpret individual points on each curve, we include a two-column legend in Figure~\ref{fig:legend}. Each Pareto point corresponds to a specific pair of:
+% \begin{itemize}
+%     \item Generation window size (context length)
+%     \item Number of tokens unmasked per denoising step
+% \end{itemize}
+
+\input{sections/experiments/ablation_table1}
+\input{sections/experiments/ablation_table2}

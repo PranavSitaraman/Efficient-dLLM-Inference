@@ -1,0 +1,191 @@
+\section{Details for Section~\ref{sec:FlexMDM_inference}}
+\label{sec:appendix_theory_inference}
+
+\subsection{Precise detail on the inference algorithms}
+In this section, we provide details on the unmasking steps of vanilla and adaptive inference for FlexMDM, summarized in Algorithm~\ref{alg:inference}, Subroutine 2. Suppose at inference time we are given the discretization step size $\tau$, a partially observed sequence $X_{t_k}$, and the current time step $t_{k}$.
+
+\paragraph{Vanilla inference.} 
+For each masked position $i$ (i.e., $X_{t_k}^i = \mask$) and each clean token $v \in \Sigma$, we sample unmasking events from a Poisson distribution $\mathrm{Poisson}(R_v \tau)$, where $R_v$ is the unmasking rate toward token $v$. 
+Concretely, $R_v = \frac{\dot{\beta}_{t_k}}{1-\beta_{t_k}} \cdot f_\theta(X_{t_k}, t_k)[i,v]$,
+so that the event count is distributed as
+$k_v \sim \mathrm{Poi}\left(\tau \cdot \tfrac{\dot{\beta}_{t_k}}{1-\beta_{t_k}} \cdot f_\theta(X_{t_k}, t_k)[i,v]\right)$. A masked position is unmasked only if \emph{exactly one} token $v$ produces a count $k_v = 1$ while all others produce zero. This tau-leaping scheme batches all events that occur within the interval $[t_k, t_k+\tau]$.
+
+\paragraph{Adaptive inference.} 
+We first draw the number of tokens to unmask, denoted by an integer $K$. While Proposition~\ref{thm:inference} (Theorem~\ref{thm:anyorder}) shows that the choice of $K$ does not affect the theoretical guarantees, in practice, we set $K$ to match the expected number of unmasked tokens under vanilla inference yields stable behavior. Accordingly, we sample
+$K \sim \mathrm{Poi}\!\left(\tau \cdot \tfrac{\dot{\beta}_{t_k}}{1-\beta_{t_k}} \cdot \#\{\text{masked tokens in } X_{t_k}\}\right)$.
+
+
+Next, we compute a confidence score for each masked position, based on heuristics such as:
+\begin{itemize}[leftmargin=*,itemsep=0pt,topsep=0pt]
+    \item \underline{Top-K probability}~\citep{chang2022maskgit,zheng2024masked}: For state $x$ at time $t$, the confidence at position $i$ is given by $\max_{v \in \Sigma} f_\theta(x, t)[i,v]$.
+    \item \underline{Top-K probability with sliding window}: We further restrict sampling to the leftmost $L$ tokens, where
+    \[
+    L = \min(\lfloor \gamma_1 \cdot L \rfloor, \gamma_2),
+    \]
+    with $\gamma_1$ and $\gamma_2$ hyperparameters. This approach is related to semi-autoregressive strategies used in \citet{nie2025large}.
+\end{itemize}
+
+Finally, we select the subset of positions to unmask as the Top-K masked indices with the highest confidence scores.
+
+
+\subsection{Proof of FlexMDM's any-order inference capability}
+\subsubsection{Proof preliminaries} \label{sec:appendix_unmasking_posterior}
+\paragraph{Form of posterior.}
+We first compute, for each $x_t^i$, the probabilities of being masked or deleted in equation~\eqref{eqn::FlexMDM_interpolant}. This follows from a straightforward calculation using the joint distribution of $(T_1^i,T_2^i)$:
+\begin{align*}
+    p(x_t^i=\text{(empty)}) &= p(T_1^i>t) = 1-\alpha_t, \\
+    p(x_t^i=\mask) &= p(T_1^i \le t, T_2^i>t) =\int_{t}^1 \int_{0}^t\left( \frac{\dot{\beta}_s}{1-\beta_u} \times \dot{\alpha}_s\right) ds du =\colon 1-\gamma_t  .
+\end{align*}
+Here we define $\gamma_t$ as $1-p(x_t^i=\mask)$. Therefore, the process in equation~\eqref{eqn::FlexMDM_interpolant} is equivalent to observing a partially masked subsequence $x_t$ obtained by sampling $x_1 \sim p$ and, for each position of $x_1$, independently deleting it with probability $1-\alpha_t$, masking it with probability $1-\gamma_t$, or leaving it unchanged with probability $\alpha_t+\gamma_t-1$. Note that $\alpha_t$ and $\gamma_t$ both increase from $0$ to $1$ as $t$ increases from $0$ to $1$.
+
+The posterior is given by
+\begin{align*}
+    \MoveEqLeft p(x_1 = x^*\mid x_t = x) \\
+    &\propto p(x^*) \cdot p(x_t = x \mid x_1 = x^*) \\
+    &= p(x^*) \cdot (1 - \alpha_t)^{\length{x^*} - \length{x}} (1 - \gamma_t)^{\#\mathrm{mask}(x)} (\alpha_t + \gamma_t - 1)^{\#\mathrm{unmask}(x)} \cdot \#\{s: x \subseteq x^*|_s\} \\
+    &\propto p(x^*) \cdot (1 - \alpha_t)^{\length{x^*}-\length{x}} \cdot \#\{s: x\subseteq x^*|_s\}\,. \label{eq:posterior}
+\end{align*}
+
+Importantly, as in the vanilla MDM setting, the posterior does not depend on the unmasking schedule $(\gamma_t)$ (thus $\beta_t$), which will enable us to perform unmasking in adaptively chosen positions. Note also that if all sequences in the support of $p$ were of the same length, this posterior would also be independent of $(\alpha_t)$; while we do not prove it, in this case this would allow us to choose an arbitrary order of unmaskings and insertions.
+
+\paragraph{Extension of posterior to $t = 1$.}
+
+Motivated by the form of the posterior above, we define the following:
+\begin{equation}
+    q_t(x^* \mid x) \propto \begin{cases}
+        p(x^*) \cdot \mathbf{1}_{x\subseteq x^*} & \text{if} \ t = 1 \\
+        p(x^*) \cdot (1 - \alpha_t)^{\length{x^*} - \length{x}}\cdot \#\{s: x\subseteq x^*|_s\} & \text{otherwise} 
+    \end{cases}
+\end{equation}
+Note that for $t < 1$, this is the same as $p(x_1 = x \mid x_t = x)$. We will denote the marginals of $q_t(\cdot \mid x)$ by $q^i_t(\cdot \mid x)$ for $v\in \Sigma$. The reason for extending the definition of the posterior to $t = 1$ is that in an adaptive FlexMDM sampler (see Definition~\ref{def:adaptive}), because we are entirely decoupling unmasking from the schedule of insertions, after the final insertion step the time parameter $t$ may be $1$ even though there are still tokens left to unmask. We will assume oracle access to $q_1(\cdot \mid x)$ as in practice these are simply the any-order marginals for $p$, and furthermore in practice these are already well-approximated by the learned posterior marginals $p(x^i_1\cdot \mid x_{1 - \delta} = x)$ for arbitrarily small $\delta > 0$.
+
+
+\paragraph{Index-tracking variable.} Recall that in the definition of the joint interpolant we defined an index-tracking variable $s_t$ which essentially tracked which indices of $x_1$ correspond to the tokens in $x_t$. While our analysis below will not use the language of stochastic interpolants, we will still use the idea of tracking $s_t$, with slightly modified notation. Specifically, for any $0 \le t < 1$, we will use the notation $\Pr_{(x_1, s) \mid x_t = x}$ and $\E_{(x_1, s) \mid x_t = x}$ to denote probability and expectation with respect to the distribution given by sampling $x_1$ from $q_t(\cdot \mid x)$, and then sampling $s$ uniformly random from subsets for which $x\subseteq (x_1)|_s$. When we only care about the marginal distribution over $s$, we write $\Pr_{s\mid x_t = x}$ and $\E_{s\mid x_t = x}$. Given such a subset $s$ and $i\in\{0,\ldots,|s|-1\}$, we use $s_i$ to denote its $i$-th element in sorted order; as before, we also define the boundary values $s_{-1} = -1$ and $s_{\mathrm{len}(s)} = \mathrm{len}(x_1)$. The insertion expectations which we had denoted by $\E[s_t[i] - s_t[i-1] - 1]$ in the main body are thus given by $\E_{s\mid x_t = x}[s_i - s_{i-1} - 1]$ in the notation of this section.
+
+\subsection{Formal guarantee for adaptive inference}
+
+\begin{appdefinition}\label{def:adaptive}
+    Given query access to the posterior marginals $q^i_t(\cdot \mid x_t = x)$ and to the insertion expectations $\E_{s\mid x_t = x}[s_i - s_{i-1} -1]$, an \emph{adaptive FlexMDM sampler} is any algorithm which produces a sequence of iterates $\hat{x}_{t_1},\ldots,\hat{x}_{t_n}$, where $0 = t_1 < \cdots < t_n = 1$, by starting at $\hat{x}_{t_1} = \varepsilon$ and arbitrarily alternating between steps of the following form:
+    \begin{itemize}[leftmargin=*]
+        \item \underline{\emph{Any-order} unmasking step}: Starting from $\hat{x}_{t_j}$, if $\mathrm{mask}(\hat{x}_{t_j})$ is nonempty, pick an arbitrary index $i$ therein (possibly probabilistically), sample $v$ from $q^i_{t_j}(\cdot \mid  \hat{x}_{t_j})$, and set $\hat{x}_{t_j} \gets \hat{x}_{t_j}[\hat{x}_{t_j}^i \gets v]$.
+        \item \underline{Insertion step}: Starting from $\hat{x}_{t_j}$, run the CTMC with rate matrix
+        \begin{equation}
+            R^{\rm ins}_t(x,y) = \begin{cases} \E_{s\mid x_t = x}[s_i - s_{i-1} - 1]\cdot \frac{\dot{\alpha}_t}{1 - \alpha_t} & \text{if} \ y = \insertat{x}{i}{\mask} \\
+            -\sum^{\length{x}}_{i=0} R^{\rm ins}_t(x,\insertat{x}{i}{\mask}) & \text{if} \ y = x \\
+            0 & \text{otherwise}
+            \end{cases} \label{eq:insrate}
+        \end{equation} for $t_j \le t \le t_{j+1}$ to obtain $\hat{x}_{t_{j+1}}$. If $t_{j+1} = 1$, then apply any-order unmasking until $\mathrm{mask}(\hat{x}_{t_{j+1}})$ is empty, and terminate.
+    \end{itemize}
+\end{appdefinition}
+
+Note that the rate matrix in the second bullet point above is identical to the one in the main body except that we only consider transitions given by insertions.
+
+Formally, we will show the following:
+
+\begin{appthm}\label{thm:anyorder}
+    Any adaptive FlexMDM sampler for $p$ will generate a sequence of iterates $\hat{x}_{t_1},\ldots,\hat{x}_{t_n}$ such that $\hat{x}_{t_n}$ is exactly a sample from $p$.
+\end{appthm}
+
+\subsection{Proof of Theorem~\ref{thm:anyorder}}
+
+To show that adaptive sampling works, we inductively prove an even stronger statement: at any intermediate step of the sampler after it has produced $\hat{x}_{t_j}$, the final output $\hat{x}_{t_n}$ is a sample from $q_{t_j}(\cdot \mid \hat{x}_{t_j})$.
+
+The following two lemmas provide the inductive steps for unmasking and insertion respectively:
+
+\begin{applem}[Inductive step for unmasking]\label{lem:unmasking_step}
+    Let $0 \le t \le 1$ and let $x$ be a partially unmasked subsequence of length $m$. Let $\pi = (\pi_i)_{i\in \mathrm{mask}(x)}$ denote any distribution over masked indices of $x$.
+    Suppose that one runs the following:
+    \begin{enumerate}[leftmargin=*,itemsep=0pt,topsep=0pt]
+        \item Sample index $i$ from $\pi$ 
+        \item Sample $v$ from the posterior marginal $q^i_t(\cdot \mid x_t = x)$
+        \item Sample from $q_t(\cdot \mid x[x^i\gets v])$.
+    \end{enumerate}
+    The output of this procedure is a sample $x^*$ from $q_t(\cdot \mid x)$.
+\end{applem}
+
+\begin{applem}[Inductive step for insertion]\label{lem:insertion_step}
+    Let $0 \le t < 1$ and let $x$ be a partially unmasked subsequence of length $m$. Let $0\le h \le 1 - t$ be any duration of time. Suppose that one runs the following:
+    \begin{enumerate}[leftmargin=*,itemsep=0pt,topsep=0pt] 
+        \item Starting from $x$, run the CTMC with rate matrix
+        given by Eq.~\eqref{eq:insrate} for time $h$ to obtain $x'$
+        \item Sample from $q_{t+h}(\cdot \mid x')$.
+    \end{enumerate}
+    The output of this procedure is a sample from the posterior $q_t(\cdot \mid x)$.
+\end{applem}
+
+\noindent We defer the proofs of these to Sections~\ref{sec:unmasking_step} and~\ref{sec:insertion_step} below. The idea for the former is identical to the proof of the folklore fact that vanilla MDMs can sample in any order~\citep{kim2025train}. The proof for the latter is more involved and involves explicitly verifying that the Kolmogorov \emph{backward} equation is satisfied by the rate matrix we have constructed.
+
+Here we verify that these Lemmas are enough to establish Theorem~\ref{thm:anyorder}.
+
+\begin{proof}[Proof of Theorem~\ref{thm:anyorder}]
+    We show more generally that starting from any intermediate time step $\hat{x}_{t_j}$ (not just $j = 1$), any adaptive FlexMDM sampler outputs a sample from $q_{t_j}(\cdot \mid \hat{x}_{t_j})$. We do this by inducting on the total number of insertion steps that remain.
+    
+    As the base case for the induction, if no more insertion steps remain, then we must have $t_j = 1$. In this case, we can further induct on the number of unmasking steps and apply Lemma~\ref{lem:unmasking_step} with $t$ therein set to $1$ to conclude that the final output is a sample from $q_1(\cdot \mid \hat{x}_{t_j})$.
+
+    For the inductive step, we have $t_j < 1$ and suppose we have shown that for any FlexMDM sampler that makes at most $m$ insertion steps, starting from any $\hat{x}_{t_j}$ at intermediate time $t_j$, it samples from $q_{t_j}(\cdot\mid \hat{x}_{t_j})$. Now consider a FlexMDM sampler that makes at most $m + 1$ insertion steps starting from $\hat{x}_{t_j}$ at intermediate time $t_j$. If in the next step it performs an insertion step, i.e. it runs the CTMC with rate matrix defined above for total time $h = t_{j+1} - t_j$, then by Lemma~\ref{lem:insertion_step} and the inductive hypothesis, it samples from $q_{t_j}(\cdot \mid \hat{x}_{t_j})$. Alternatively, suppose the sampler performs some sequence of $\ell$ unmasking steps before performing an insertion step. Then by further inducting on $\ell$, we conclude by Lemma~\ref{lem:unmasking_step} that the sampler eventually outputs a sample from $q_{t_j}(\cdot \mid \hat{x}_{t_j})$.
+
+    Finally, the theorem follows from the special case where $t_j = 0$ and $\hat{x}_{t_j} = \varepsilon$.
+\end{proof}
+
+
+\subsection{Proof of Lemma~\ref{lem:unmasking_step}}
+\label{sec:unmasking_step}
+
+
+\begin{proof}
+    Fix any index $i \in \mathrm{mask}(x)$. The marginal $q^i_t(\cdot\mid x)$ is given by
+    \begin{equation}
+    \Pr_{(x_1,S)\mid x_t=x}[(x_1)|_{s_i} = v] = \frac{\sum_{x_1, S: (x_1)|_{s_i} = v} p(x) \cdot (1 - \alpha_t)^{\length{x_1} - \length{x}}\cdot \#\{S: x\subseteq (x_1)|_S\}}{\sum_{x_1} p(x_1) (1 - \alpha_t)^{\length{x_1} - \length{x}} \cdot \#\{S: x\subseteq (x_1)|_S\}}\,. \label{eq:marg}
+    \end{equation}
+    The posterior $q_t(\cdot \mid x[x^i\gets v])$ is given by
+    \begin{equation}
+        q_t(x^*\mid x[x^i\leftarrow v]) = \frac{p(x^*) \cdot (1 - \alpha_t)^{\length{x^*} - \length{x}}\cdot \#\{S: x[x^i\leftarrow v]\subseteq x^*|_S\}}{\sum_{x_1} p(x_1) \cdot (1 - \alpha_t)^{\length{x_1} - \length{x}}\cdot \#\{S: x[x^i\leftarrow v]\subseteq (x_1)|_S\}}\,. \label{eq:posteriorunmask}
+    \end{equation}
+    Note that the numerator of Eq.~\eqref{eq:marg} and the denominator of Eq.~\eqref{eq:posteriorunmask} are the same. So conditioned on unmasking index $i$, the above procedure outputs $x^*$ with probability
+    \begin{align*}
+        \MoveEqLeft \sum_z \Pr_{(x_1,S)\mid x_t = x}[(x_1)|_{s_i} = v]\cdot q_t(x^* \mid x[x^i\leftarrow v]) \\
+        &= \frac{p(x^*) \cdot (1 - \alpha_t)^{\length{x^*} - \length{x}} \cdot \sum_z \#\{S: x[x^i\gets v]\subseteq x^*|_S\}}{\sum_{x_1} p(x_1) (1 - \alpha_t)^{\length{x_1} - \length{x}} \cdot \#\{S: x\subseteq (x_1)|_S\}} \\
+        &= q_t(x^*\mid x)\,.
+    \end{align*}
+    This holds conditioned on unmasking any $i \in\mathrm{mask}(x)$, so regardless of the choice of $\pi$ over such positions, we will sample from the correct distribution $q_t(\cdot\mid x)$.
+\end{proof}
+
+
+\subsection{Proof of Lemma~\ref{lem:insertion_step}}
+\label{sec:insertion_step}
+
+\begin{proof}
+    It suffices to show that the rate matrix satisfies the Kolmogorov \emph{backward} equation
+    \begin{equation}
+        \partial_t q_t(x^*\mid x) = -\sum^{\length{x}}_{i=0} R^{\rm ins}_t(x,\insertat{x}{i}{\mask}) q_t(x^*\mid \insertat{x}{i}{\mask}) - R^{\rm ins}_t(x,x) q_t(x^*\mid x)\,. \label{eq:kbe}
+    \end{equation}
+    First note that the rate $R^{\rm ins}_t(x, \insertat{x}{i}{\mask})$ can be expressed as 
+    \begin{equation}
+        \frac{\sum_{x_1} p(x_1) \cdot (1 - \alpha_t)^{\length{x_1} - \length{x}}\cdot \sum_{S: x\subseteq (x_1)|_S} (s_i - s_{i-1} - 1)}{\sum_{x_1} p(x_1) \cdot (1 - \alpha_t)^{\length{x_1} - \length{x}} \cdot \#\{S: x\subseteq (x_1)|_S\}}\cdot \frac{\dot{\alpha}_t}{1 - \alpha_t}\,.
+    \end{equation}
+    Furthermore, $\sum_i (s_i - s_{i-1} - 1) = \length{x_1} - \length{x}$, so
+    \begin{multline}
+        \sum_i R^{\rm ins}_t(x,\insertat{x}{i}{\mask}) \\
+        = \frac{\sum_{x_1} p(x_1) \cdot (1 - \alpha_t)^{\length{x_1} - \length{x}}\cdot\#\{S: x\subseteq (x_1)|_S\}\cdot (\length{x_1} - \length{x})}{\sum_{x_1} p(x_1) \cdot (1 - \alpha_t)^{\length{x_1} - \length{x}} \cdot \#\{S: x\subseteq (x_1)|_S\}}\cdot \frac{\dot{\alpha}_t}{1 - \alpha_t}\,. \label{eq:sumrates}
+    \end{multline}
+    Let us compute $\partial_t q_t(x^*\mid x)$:
+    \begin{align}
+        \MoveEqLeft -\frac{p(x^*)\cdot (1 - \alpha_t)^{\length{x^*} - \length{x}}\cdot \#\{S: x\subseteq x^*|_S\}\cdot (\length{x^*}-\length{x})}{\sum_{x_1} p(x_1)\cdot (1 - \alpha_t)^{\length{x_1} - \length{x}}\cdot \#\{S: x\subseteq (x_1)|_S\}}\cdot \frac{\dot{\alpha}_t}{1 - \alpha_t} \nonumber \\ 
+        \MoveEqLeft + \Bigl[\frac{\sum_{x_1} p(x_1) \cdot (1 - \alpha_t)^{\length{x_1}-\length{x}} \cdot \#\{S: x \subseteq (x_1)|_S\}\cdot (\length{x_1}-\length{x})}{\sum_{x_1} p(x_1) \cdot (1 - \alpha_t)^{\length{x_1}-\length{x}} \cdot \#\{S: x \subseteq (x_1)|_S\}}\cdot \frac{\dot{\alpha}_t}{1 - \alpha_t} \nonumber \\
+        &\qquad\times \frac{p(x^*) \cdot (1 - \alpha_t)^{\length{x^*} - \length{x}} \cdot \#\{S: x \subseteq x^*|_S\}}{\sum_{x_1} p(x_1) \cdot (1 - \alpha_t)^{\length{x_1}-\length{x}} \cdot \#\{S: x \subseteq (x_1)|_S\}} \Bigr]\label{eq:partialtp}
+    \end{align}
+    Note that by Eq.~\eqref{eq:sumrates}, the term in the parentheses in Eq.~\eqref{eq:partialtp} is exactly 
+    \begin{equation}
+        \sum^{\length{x}}_{i=0} R^{\rm ins}_t(x, \insertat{x}{i}{\mask}) q_t(x^* \mid x) = -R^{\rm ins}_t(x, x) q_t(x^*\mid x)\,,
+    \end{equation}
+    It remains to verify that the first term in Eq.~\eqref{eq:partialtp} is equal to $-\sum_i R^{\rm ins}_t(x,\insertat{x}{i}{\mask}) q_t(x^* \mid \insertat{x}{i}{\mask})$. To that end, we must show that
+    \begin{multline}
+        \sum^{\length{x}}_{i=0} \frac{\sum_{x_1} p(x_1) (1 - \alpha_t)^{\length{x_1} - \length{x}} \cdot \sum_{S: x\subseteq (x_1)|_S} (s_i - s_{i-1} - 1)}{\sum_{x_1} p(x_1) (1 - \alpha_t)^{\length{x_1} - \length{x}} \cdot \#\{S: \insertat{x_t}{i}{\mask}\subseteq (x_1)|_S\}}\cdot \#\{S: \insertat{x}{i}{\mask}\subseteq x^*|_S\} \\
+        =  \#\{S: x\subseteq (x^*)|_S\} \cdot (\length{x^*} - \length{x}) \label{eq:mainequality}
+    \end{multline}
+    The key combinatorial step is as follows. For any $x_1$ in the support of $p$, consider a subset $S$ for which $x \subseteq (x_1)|_S$. Note that for every such $S$, we can uniquely associate exactly $s_i - s_{i-1} - 1$ different subsets $S'$ of size $|S| + 1$ for which $\insertat{x}{i}{\mask} \subseteq (x_1)|_{S'}$. Therefore, $\sum_{S: x\subseteq (x_1)|_S} (s_i - s_{i-1} - 1) = \#\{S: \insertat{x}{i}{\mask}\subseteq (x_1)|_S\}$, and the left-hand side of Eq.~\eqref{eq:mainequality} thus becomes
+    \begin{equation}
+        \sum^{\length{x}}_{i=0} \#\{S: \insertat{x}{i}{\mask} \subseteq x^*|_S\} = \sum^{\length{x}}_{i=0} \sum_{S: x\subseteq x^*|_S} (s_i - s_{i-1} - 1) = \sum_{S: x\subseteq (x_1)|_S} (\length{x^*} - \length{x_t})\,,
+    \end{equation}
+    which completes the proof of Eq.~\eqref{eq:mainequality}.
+\end{proof}

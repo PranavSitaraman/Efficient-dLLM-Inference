@@ -1,0 +1,47 @@
+% \section*{Outline}
+
+% \begin{itemize}
+%     \item \textbf{Overall contribution:}
+%     \begin{enumerate}
+%         \item Diffusion model is slow / no caching considering
+%         \begin{itemize}
+%             \item[1.a:] Proposed Cached Strategy $\rightarrow$ Part of clean tokens.
+%             \item[1.b:] Compared to other works? Training Free speedup, direct apply (simple but effective).
+%         \end{itemize}
+
+%         \item Resource efficient Guided Unmasking (no speculation):
+%         \begin{itemize}
+%             \item[2.a:] Parallel generation.
+%             \item[2.b:] Long context friendly.
+%             \item[2.c:] Reasoning compatible $\rightarrow$ Insights for future COT + Diffusion model.
+%         \end{itemize}
+
+%         \item Partial results: Friendly for long context generation. When diffusion model is incompatible for long context.
+
+%         \item Ablation:
+%         \begin{itemize}
+%             \item[3.a:] Guided unmasking + Correction $\rightarrow$ Even better accuracy.
+%             \item[3.b:] Support domain specific AR model (e.g., MATH).
+%             \item[3.c:] Hyper parameter impact.
+%         \end{itemize}
+
+%         \item Main results.
+%         \begin{itemize}
+%             \item[4.a:] Baseline Diffusion
+%             \item[4.b:] Cached Diffusion.
+%             \item[4.c:] Cached + Guided.
+%             \item[4.d:] Overall Latency and Speedup.
+%         \end{itemize}
+%     \end{enumerate}
+
+%     \item \textbf{Benchmarks:}
+%     \begin{itemize}
+%         \item GSM8K
+%         \item MMLU-PRO (if available)
+%         \item PiQA
+%         \item Winogrande
+%         \item ARC-C
+%         \item ARC-E
+%         \item Hellaswag
+%     \end{itemize}
+% \end{itemize}

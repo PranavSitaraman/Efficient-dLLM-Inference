@@ -1,0 +1,334 @@
+\section{Notation}
+In this section, we reiterate the notations used in the main body and introduce auxiliary notations that are used in the proofs of the appendix.
+
+\paragraph{Strings.} Let $\varepsilon$ denote the empty string, $\Sigma$ a vocabulary of words, $\mask$ a special mask token. We write $x^i$ the $i$-th element of $x$ with 0-baesd indexing, $x|_S$ the string indexed by an index set, e.g. $abc[\{0, 2\}]=ac$. To insert a token $v$ before position $i$ in string $x$, we write $\insertat{x}{i}{v}$, e.g., to prepend a token $\insertat{abc}{0}{d} = dabc$ and to append a token $\insertat{abc}{3}{d}=abcd$. To replace the $i$-th token in $x$ with $v$, we write $\replaceat{x}{i}{v}$. As much of the work involves masking, we write $x \subseteq y$ if $x$ can be constructed by partially masking $y$. We write $\mathrm{mask}(x), \mathrm{unmask}(x) \subseteq[\length{x}]$ for the set of indices corresponding to mask and clean tokens.
+
+
+\section{Discrete Stochastic Interpolants: Definitions and Propositions for Section~\ref{sec:pre}} 
+\label{sec:appendix_theory_interpolant}
+
+In continuous spaces, a common approach to define generative transport is the stochastic interpolant framework, which implicitly defines the interpolation distribution $p_t$ by specifying an interpolant $\{x_t\}_{t\in[0,1]}$ and regressing the required quantities to realize the transport.
+
+In the section \ref{ref:discrete-interpolant}, we introduce a discrete analogue of the stochastic interpolant. To illustrate this framework, we reformulate the widely used masked diffusion model for sequences of length $n$ within our setup. Briefly, masked diffusion defines the interpolation $p_t$ by progressively unmasking tokens in sentences drawn from the data distribution. At time $t=0$, all tokens are masked, so $p_0$ is a point mass at the fully masked sequence, the $\mask$ token repeated $n$ times. The transition rates driving the generative transport can be characterized as functions of per-token posterior probabilities conditioned on time $t$. These are typically learned by minimizing a variational objective in the form of a weighted cross-entropy loss.
+
+
+\subsection{Discrete Stochastic Interpolant} \label{ref:discrete-interpolant}
+To obtain the target rate matrix, the discrete stochastic interpolant relies on an interpolating rate matrix that drives a sample from a sample drawn from a sample from $p_0$ to a sample from $p_1$, defined as follows:
+\begin{appdefinition}[Discrete Stochastic Interpolant and Interpolating Rate]
+Let \( x_0 \sim p_0 \) and \( x_1 \sim p_1 \). A \textbf{discrete stochastic interpolant} is a family of random variables \( \{x_t\}_{t \in [0,1]} \), defined on a common probability space and satisfying the boundary conditions \( x_{t=0} = x_0 \) and \( x_{t=1} = x_1 \), for which there exists a continuous-time Markov chain with bounded, time-dependent transition rate matrix \( K_t^{x_0, x_1} \) such that, for each \( t \in [0,1] \), $\text{Law}(x_t \mid x_0, x_1)$ coincides with the marginal distribution at time $t$ of that Markov chain started at $X_0$. We refer to \( K_t^{x_0, x_1} \) as an \textbf{interpolating rate matrix}.
+\end{appdefinition}
+With an interpolating rate of an interpolant, the target rate matrix can then be obtained through Proposition \ref{prop:target-rate}
+\begin{appprop}[Target Rate]\label{prop:target-rate}
+Given a discrete stochastic interpolant $x_t$ and an interpolating rate matrix $K_t^{x_0, x_1}$, the continuous-time Markov chain with initial distribution $p_0$ and target transition rate matrix $R_t$ defined as,
+\begin{align*}
+    R_t(x, y) = \mathbb{E}_{x_0,x_1}[K_t^{x_0,x_1}(x, y) | x_t = x]
+\end{align*}
+has marginals equal to $\text{Law}(x_t)$.
+\end{appprop}
+\begin{proof}
+Writing $p_t$ a probability mass function (pmf) of $x_t$ and $p_t(\cdot | x_0, x_1)$ a pmf of $x_t$ conditioned on $x_0, x_1$. We further write $q(x_0, x_1)$ the joint pmf of $x_0$ and $x_1$ and $q_t(x_0, x_1 | x_t)$ to be the joint pmf conditioned on $x_t$.
+
+It suffices to show $R_t$ satisfies the Kolmogorov Forward Equation with pmf $p_t$ as follows:
+\begin{align*}
+    \sum_y R_t(y, x) p_t(y) &= \sum_y \mathbb{E}_{x_0,x_1}[K_t^{x_0,x_1}(x, y) | x_t = y] p_t(y) \\
+    &= \sum_y \sum_{x_0, x_1}K_t^{x_0,x_1}(y, x) q_t(x_0, x_1|y) p_t(y) \\ 
+    &= \sum_y \sum_{x_0, x_1}K_t^{x_0,x_1}(y, x) p_t(y | x_0, x_1) q(x_0, x_1) \\
+    &= \mathbb{E}_{x_0,x_1} \left[ \sum_y K_t^{x_0,x_1}(y, x) p_t(y | x_0, x_1) \right] \\ 
+    &= \mathbb{E}_{x_0, x_1} \left[\partial_t p_t(y | x_0, x_1)\right] \\ 
+    &= \partial_t p_t(x)
+\end{align*}
+This concludes the proof.
+\end{proof}
+
+\paragraph{Remarks.} While written considerably differently, the framework is mathematically equivalent to discrete flow matching \cite{gat2024discrete}. The difference is only philosophical: discrete flow matching relies on the notion of a conditional probability path that the interpolating rate should induce, whereas we define such a probability path only implicitly through the definition of the interpolant.
+
+\subsection{The Masked Diffusion Interpolant} \label{sec:masked-diffusion-interpolant}
+As a concrete example of the discrete stochastic interpolant, we reformulate the masked diffusion model and its learning in the framework. As masked diffusion starts from a point mass, we drop the dependence of $x_0$ in writing.
+
+\begin{appdefinition}[The Masked Diffusion Interpolant]
+Let $x_1 \sim p_1$ be a sentence of length $n$ drawn from the data and $\alpha_t$ a smooth unmasking schedule that interpolates from $\alpha_{t=0}=0$ to $\alpha_{t=1}=1$. Define the unmasking times $\{T^i\}_{i\in[0, \dots, n-1]}$ as:
+\begin{align}
+    \forall i \in \{0, \dots, n-1\}: \quad T^i \sim \dot{\alpha_t} \; dt,
+\end{align}
+Then, the masked diffusion interpolant is defined as:
+\begin{align}
+    x_t = \begin{cases}
+        \mask & \text{if } t < T_i, \\
+        x_1^i & \text{if } t \geq T_i.
+    \end{cases} 
+\end{align}
+\end{appdefinition}
+In other words, at each time $t$, $x_t$ reveals a subset of the tokens of $x_1$, with each token $x_1^i$ independently unmasked at its associated time $T^i$. \begin{appprop}[The Masked Diffusion Interpolating Rate] \label{prop:interpolating-rate}
+One interpolating rate $K_t^{x_1}$ of the masked diffusion interpolant $x_t$ is given by:
+\begin{align}
+   \forall x \subseteq x_1, v \in \Sigma, x^i=\mask: \quad  K_t(x, \replaceat{x}{i}{v}) = \frac{\dot{\alpha_t}}{1-\alpha_t} \mathbf{1}\{v = x_1^i\}.
+\end{align}
+\end{appprop}
+\begin{proof}
+Let $p_t(\cdot | x_1)$ as the pmf of $x_t$ conditioned on $x_1$. From the definition of the interpolant, we notice that:
+\begin{align*}
+    p_t(x | x_1) = \prod_{i=0}^{\text{len}(x_1)-1} \left[(1-\alpha_t) \mathbf{1}\{x^i = \mask\} + \alpha_t \mathbf{1}\{x^i = x_1^i\}\right]
+\end{align*}
+
+We verify that $K_t$ satisfies the Kolmogorov Forward Equation  (\ref{eq:kfe}) under the conditioned pmf as follows,
+\begin{align*}
+     &\text{L.H.S} \\
+     &= \partial_t p_t(x|x_1)\\
+     &= \partial_t \left[\prod_{i=0}^{\text{len}(x_1)-1} (1-\alpha_t) \mathbf{1}\{x^i = \mask\} + \alpha_t \mathbf{1}\{x^i = x_1^i\}\right] \\ 
+     &= \sum_{i=0}^{\text{len}(x_1)-1} \left(-\dot{\alpha_t} \mathbf{1}\{x^i = \mask\} + \dot{\alpha_t} \mathbf{1}\{x^i = x_1^i\}\right) \cdot \prod_{j\neq i}(1-\alpha_t) \mathbf{1}\{x^j = \mask\} +\alpha_t \mathbf{1}\{x^j = x_j^i\},\\
+    &\text{R.H.S} \\
+    &= \sum_{i=0}^{\text{len}(x_t)-1} \mathbf{1}\{x^i=x_1^i\} \frac{\dot{\alpha_t}}{1-\alpha_t} p_t(\replaceat{x}{i}{\mask}|x_1) -  \mathbf{1}\{x^i=\mask\} \frac{\dot{\alpha_t}}{1-\alpha_t}  p_t(x|x_1) \\
+    &= \sum_{i=0}^{\text{len}(x_t)-1} \mathbf{1}\{x^i=x_1^i\} \frac{\dot{\alpha_t}}{1-\alpha_t} (1-\alpha_t) \prod_{j\neq i}(1-\alpha_t) \mathbf{1}\{x^j = \mask\} +\alpha_t \mathbf{1}\{x^j = x_j^i\} \\& \quad\quad -\sum_{i=0}^{\text{len}(x_t)-1}  \mathbf{1}\{x^i=\mask\} \frac{\dot{\alpha_t}}{1-\alpha_t} (1-\alpha_t) \prod_{j}(1-\alpha_t) \mathbf{1}\{x^j = \mask\} +\alpha_t \mathbf{1}\{x^j = x_j^i\}) \\
+    &= \text{L.H.S}.
+\end{align*}
+This concludes the proof.
+\end{proof}
+Note that since each $T^i$ is sampled independently from a continuous distribution, the probability that two unmasking times coincide is zero. Thus, only a single token is unmasked in any infinitesimal transition almost surely.
+
+
+\begin{proposition}[The Masked Diffusion Target Rate] \label{masked-diffusion-target-rate}
+By proposition \ref{prop:target-rate}, a target rate $R_t$ that induces $\text{Law}(x_t)$ is:
+\begin{align}
+   \forall x \subseteq x_1, v \in \Sigma, x^i=\mask: \quad  R_t(x, \replaceat{x}{i}{v}) = \frac{\dot{\alpha_t}}{1-\alpha_t}\mathbb{P}(x_1^i = v | x_t = x).
+\end{align}
+\end{proposition}
+\begin{proof}
+Following proposition \ref{prop:interpolating-rate}, the result follows from invoking proposition \ref{prop:target-rate}.
+\end{proof}
+To learn an approximation to $R_t$, we now parameterize an approximate target rate of the form  $
+\hat{R}_t(x, \replaceat{x}{i}{v}):=\frac{\dot{\alpha}_t}{1 - \alpha_t} \, f_\theta(x, t)[i,v]$
+where $f_\theta(x, t)[i,v]$ is a learned approximation to the posterior \(\mathbb{P}(x_1^i = v \mid x_t = x)\).
+
+The target rate can then be characterized by a variational objective that measures the discrepancy between the true and approximate path measures.
+\begin{proposition}[Variational Loss for Masked Diffusion]
+The loss function is defined as:
+\begin{align}
+L[\hat{R}_t]  &= \int_0^1\mathbb{E}_{x_1, x_t} \left[
+-\frac{\dot{\alpha}_t}{1 - \alpha_t} \sum_{i=0}^{n-1} \mathbf{1}\{x_t^i = \mask\} \log f_\theta(x_t, t)[i, x_1^i]
+\right] \; dt,
+\end{align}
+is uniquely minimized when \(\hat{R}_t = R_t\), and is connected to the terminal KL-divergence by:
+\begin{align}
+\mathcal{D}_\text{KL}(p_1 || \hat{p}_1) \leq L[\hat{R}_t] - L[R_t],
+\end{align}
+where $\hat{p}_1$ is the approximate data distribution generated by $\hat{R}_t$.
+\end{proposition}
+\begin{proof}
+Let $\mathbb P$ and $\mathbb{\hat{P}}$ be the path measures associated with the continuous-time Markov chain of the target rate matrix $R_t$ in proposition \ref{prop:target-rate} and an approximation through a neural network $\hat R_t$. The variational loss follows by expanding the KL-divergence between the two path measures.
+\begin{align*}
+    \mathcal{D}_\text{KL}(\mathbb P \mid\mid \mathbb{\hat{P}})  &= \mathbb{E}_{\mathbb{P}} \left[\int_{t=0}^{t=1} R_t(x_t, x_t) - \hat{R_t}(x_t, x_t) \; dt +  \sum_{t : x_t \neq x_{t-}} \log \frac{R_t(x_{t-}, x_t)}{\hat{R_t}(x_{t-}, x_t)}\right] \\ 
+&= \int_0^{t=1} \mathbb{E}_{x_t \sim \mathbb{P}_t} \left[\sum_{y \neq x_t}\hat{R_t}(x_t, y) - R_t(x_t, y) \log \hat{R_t}(x_t, y)\right] dt+ \text{Const.} \\ 
+&= \int_0^1\mathbb{E}_{x_1, x_t} \left[
+-\frac{\dot{\alpha}_t}{1 - \alpha_t} \sum_{i=0}^{n-1} \mathbf{1}\{x_t^i = \mask\} \log f_\theta(x_t, t)[i, x_1^i]
+\right] \; dt + \text{Const.}
+\end{align*}
+where the first line takes the expectation of the Radon-Nikodym derivative between the two path measures. The statement of Radon-Nikodym derivative between two CTMCs can be found in the Appendix in \cite{campbell2024generative}. A discrete-time equivalent derivation can also be found in \cite{shaul2025flow}.
+
+The terminal KL bound then follows directly from the data processing inequality, that is:
+\begin{align*}
+    \mathcal{D}_\text{KL}(p_1 \mid\mid \hat{p}_1) \leq \mathcal{D}_\text{KL}(\mathbb{P} || \hat{\mathbb{P}})
+\end{align*}
+This technique is standard, as shown in \cite{vargas2025transportmeetsvariationalinference} for the case of path reversal-based construction of diffusion generative models, and in \cite{holderrieth2025leaps} for discrete diffusion.
+\end{proof}
+
+\section{Joint Discrete Stochastic Interpolants: Definitions and Propositions for Section \ref{sec:FlexMDM_informal}} \label{sec:app-joint-interpolant-flex-mdm}
+Building on the discrete stochastic interpolant, we proceed to construct a discrete diffusion that models a probability distribution whose supports span variable-length sequences.
+
+On a high level, we would like to define an interpolant constructed by deleting and masking sentences from the data distribution. However, the corresponding interpolating rate becomes cumbersome to characterize, as it is no longer clear what each mask token should unmask to.
+
+To this end, we introduce the \textbf{joint interpolant} that allows us to construct a broader class of interpolants and interpolating rate matrices by augmenting the interpolant with auxiliary information that allows us to specify a more flexible interpolation path. We then leverage this newfound freedom to construct the flexible-length masked diffusion model.
+
+\subsection{Joint Interpolant}
+By introducing an auxiliary variable coupled with the interpolant, the joint interpolant expands the class of interpolating rates that can be defined.
+\begin{appdefinition}[Joint Interpolant and Joint Interpolating Rate]  
+Let \( x_0 \sim p_0 \) and \( x_1 \sim p_1 \). A \textbf{joint interpolant} is a family of coupled random variables \(\{(x_t, s_t)\}_{t \in [0,1]}\) defined on a common probability space and satisfying the boundary conditions \( x_{t=0} = x_0 \) and \( x_{t=1} = x_1 \), for which there exists a continuous-time Markov chain with bounded, time-dependent transition rate matrix \( K_t^{x_0, x_1} \) on the joint state space such that, for each \( t \in [0,1] \), the conditional law \(\mathrm{Law}(x_t, s_t \mid x_0, x_1)\) coincides with the marginal distribution at time \( t \) of this Markov chain started at \((x_0, s_0)\). We call \( K_t^{x_0, x_1} \) a \textbf{joint interpolating rate matrix}.
+\end{appdefinition}
+
+\begin{appprop}[Joint Interpolant Target Rate] \label{prop:joint-target-rate}
+Let \(\{(x_t, s_t)\}_{t \in [0,1]}\) be a joint interpolant with joint interpolating rate matrix \(K_t^{x_0, x_1}\). Consider the continuous-time Markov chain with initial distribution \(p_0\) and target transition rate matrix \(R_t\) defined by
+\begin{align}
+    R_t(x, y) = \mathbb{E}_{s_t,x_0,x_1}\left[ \sum_{s' \in \mathcal{S}} K_t^{x_0, x_1} \big( (x, s_t), (y, s') \big) \mid x_t = x \right],
+\end{align}
+where \(\mathcal{S}\) denotes the discrete state space of the auxiliary variable \(s_t\). The marginal of the chain at time \(t\) is then equal to \(\mathrm{Law}(x_t)\).
+\end{appprop}
+
+We note that this result is equivalent to ``Flow Matching with Auxiliary Process" in concurrent work \cite{havasi2025edit}.
+\begin{proof}
+Let $p_t(\cdot, \cdot | x_0, x_1)$ the joint pmf of $x_t$, $s_t$ conditioned on $x_0, x_1$, let $q_t(x_0,x_1, s_t|x_t)$ to be the joint of $x_0,x_1,s_t$ conditioned on $x_t$, and let $q_t(x_0, x_1)$ to be the joint of $x_0, x_1$. We proceed to verify $R_t$ satifies the KFE as in Equation \ref{eq:kfe},
+
+\begin{align*}
+    \sum_{y} R_t(y, x) p_t(y) &= \sum_y \mathbb{E}_{s_t,x_0,x_1}\left[ \sum_{s' \in \mathcal{S}} K_t^{x_0, x_1} \big( (y, s_t), (x, s') \big) \mid x_t = y \right] p_t(y) \\
+    &= \sum_y \sum_{s_t, x_0, x_1}  \sum_{s' \in \mathcal{S}} K_t^{x_0, x_1} \big( (y, s_t), (x, s') \big) q_t(x_0, x_1, s_t | y) p_t(y) \\
+    &= \sum_y \sum_{s_t, x_0, x_1}  \sum_{s' \in \mathcal{S}} K_t^{x_0, x_1} \big( (y, s_t), (x, s') \big) q_t(x_0, x_1, s_t | y) p_t(y) \\
+    &= \sum_y \sum_{s_t, x_0, x_1}  \sum_{s' \in \mathcal{S}} K_t^{x_0, x_1} \big( (y, s_t), (x, s') \big) p_t(y, s_t | x_0, x_1) q(x_0, x_1) \\
+    &= \mathbb{E}_{x_0,x_1} \left[\sum_{s'}\partial_t p_t(x, s' | x_0, x_1)\right] \\
+    &= \partial_t p_t(x | x_0, x_1)
+\end{align*}
+This concludes the proof.
+\end{proof}
+
+\subsection{Flexible-Length Masked Diffusion}
+We then instantiate the joint interpolant to obtain the length-aware masked diffusion model, using a sorted list of indices that has been inserted. Again, we drop $x_0$ in the writing as the model interpolates between a point mass at an empty sentence to the full data distribution. We redefine the interpolant in equation~\ref{eqn::FlexMDM_interpolant} for clarity.
+
+\begin{appdefinition}[Flexible-Length Masked Diffusion Joint Interpolant] \label{def:flexmdm-interpolant-def-appendix}
+Let \(x_1 = (x_1^0, \dots, x_1^{n-1}) \sim p_1\) be a sequence of length \(n\). Let \(\alpha_t\) and \(\beta_t\) be monotone and differentiable schedules on \([0,1]\) such that \(\alpha_0 = \beta_0 = 0\) and \(\alpha_1 = \beta_1 = 1\).
+Define insertion and unmasking times \(\{T_1^i\}_{i=0}^{n-1}\), \(\{T_2^i\}_{i=0}^{n-1}\) as follows:
+\begin{align}
+    T_1^i &\sim \dot{\alpha}_t \; dt, \\
+    T_2^i &\sim \mathbf{1}\{t \geq T_1^i\} \cdot \frac{\dot{\beta}_t}{1 - \beta_{T_1^i}} \; dt.
+\end{align}
+At each time \(t \in [0,1]\), define the sorted index set $s_t$ as:
+\begin{align}
+    s_t = \{i \in \{0, \dots, n-1\} \mid t > T_1^i\},
+\end{align}
+with ascending order \(s_t[0] < \dots < s_t[\mathrm{len}(s_t)-1]\), and boundary values:
+\begin{align}
+    s_t[-1] = -1, \quad s_t[\mathrm{len}(s_t)] = n,
+\end{align}
+and define the  \textit{interpolant state} $x_t$ per-coordinate as:
+\begin{align}
+    x_t^i = 
+    \begin{cases}
+        \mask & \text{if } t < T_2^{s_t[i]}, \\
+        x_1^{s_t[i]} & \text{if } t \geq T_2^{s_t[i]}.
+    \end{cases}
+\end{align}
+The process \((s_t, x_t)_{t \in [0,1]}\) is the \textbf{flexible length masked diffusion joint interpolant}.
+\end{appdefinition}
+Here, \(s_t\) tracks the ordered set of indices whose tokens have been inserted. The interpolant \(x_t\) reveals the true token \(x^i_1\) only after both insertion and unmasking. Given access to this ordered set, one interpolating rate is:
+\begin{appprop}[FlexMDM Interpolating Rate] \label{prop:flex-mdm-interpolating-rate}
+A joint interpolating rate matrix \(Q_t^{x_0, x_1}\) for the joint interpolant above is given by:
+\begin{enumerate}[leftmargin=*,itemsep=0pt,topsep=0pt] 
+\item Unmask: For index set $s$, \(x \subseteq {x_1}|_s\), \(x^i = \mask\), and \(v \in \Sigma\):
+\begin{align}
+    Q_t^{x_1}\big((x, s), (\replaceat{x}{i}{v}, s)\big)
+    = \frac{\dot{\beta}_t}{1 - \beta_t} \cdot \mathbf{1}\{x_1^{s[i]} = v\}
+\end{align}
+
+\item Insert: For index set $s$, \(x \subseteq {x_1}|_s\), \(j \notin s\), and position \(i\) such that \(s[i{-}1] < j < s[i]\):
+\begin{align}
+    Q_t^{x_1}\big((x, s), (\insertat{x}{i}{\mask}, s \cup \{j\})\big)
+    = \frac{\dot{\alpha}_t}{1 - \alpha_t}
+\end{align}
+\end{enumerate}
+\end{appprop}
+\begin{proof}
+We first write down the $p_t(\cdot, \cdot | x_1)$ the conditioned pmf of $(s, x)$ given $x_0, x_1$. Let $n = \text{len}(x_t)$, then
+\begin{align*}
+p_t(s,x \mid x_1) &= A(t)\prod_{i\in s_t} I_i(t), \\[6pt]
+A(t) &:= (1-\alpha_t)^{n-|s|} \\[6pt]
+I_i(t) &:= \int_0^t \dot\alpha_u\left(\frac{1-\beta_t}{1-\beta_u}\mathbf{1}\{x^i=\mask\}
++ \frac{\beta_t-\beta_u}{1-\beta_u}\mathbf{1}\{x^i=x_1^i\}\right)du.
+\end{align*}
+
+Differentiate using the product rule:
+\begin{align*}
+\partial_t p_t(s,x\mid x_1)
+&=\dot A(t)\prod_{i\in s}I_i(t)
++ A(t)\sum_{j\in s}\Big(\dot I_j(t)\prod_{i\in s\setminus\{j\}}I_i(t)\Big).
+\end{align*}
+
+For \(A(t)=(1-\alpha_t)^{\,n-|s|}\) we have
+\[
+\dot A(t)=-(n-|s|)\dot\alpha_t(1-\alpha_t)^{\,n-|s|-1}
+= A(t)\Big(-\frac{(n-|s|)\dot\alpha_t}{1-\alpha_t}\Big).
+\]
+
+For each \(i\in s\) apply the Leibniz rule to \(I_i(t)\):
+\begin{align*}
+\dot I_i(t)
+&=\dot\alpha_t\,\mathbf{1}\{x^i=\mask\}
++\int_0^t \dot\alpha_u\left(
+\frac{-\dot\beta_t}{1-\beta_u}\mathbf{1}\{x^i=\mask\}
++\frac{\dot\beta_t}{1-\beta_u}\mathbf{1}\{x^i=x_1^i\}
+\right)\,du\\[6pt]
+&=\dot\alpha_t\,\mathbf{1}\{x^i=\mask\}
++\dot\beta_t\Big(-\mathbf{1}\{x^i=\mask\}+\mathbf{1}\{x^i=x_1^i\}\Big)
+\int_0^t\frac{\dot\alpha_u}{1-\beta_u}\,du.
+\end{align*}
+
+Substituting \(\dot A(t)\) and \(\dot I_i(t)\) into the product-rule expansion yields
+\[
+\begin{aligned}
+&\partial_t p_t(s,x\mid x_1)\\
+&=-(n-|s|)\dot\alpha_t(1-\alpha_t)^{\,n-|s|-1}\prod_{i\in s}I_i(t)\\[4pt]
+&\quad + (1-\alpha_t)^{\,n-|s|}\sum_{j\in s}\Bigg[
+\Big(\dot\alpha_t\mathbf{1}\{x^j=\mask\}
++\dot\beta_t\big(-\mathbf{1}\{x^j=\mask\}+\mathbf{1}\{x^j=x_1^j\}\big)
+\!\int_0^t\frac{\dot\alpha_u}{1-\beta_u}\,du\Big)\\
+&\qquad\qquad\qquad\qquad\qquad\cdot\prod_{i\in s\setminus\{j\}}I_i(t)
+\Bigg] \\ 
+&= -(n-|s|) \frac{\dot{\alpha_t}}{1-\alpha_t} A(t) \prod_{i\in s} I_i(t) - \sum_{j\in_s, x^j=\mask} \frac{\dot{\beta_t}}{1-\beta_t} A(t) \prod_{i\in s} I_i(t) \\
+&\quad\quad + \sum_{j\notin s, x^k\neq\mask} \frac{\dot{\beta_t}}{1-\beta_t} A(t) (\int_0^t \dot{\alpha_u} \frac{1-\beta_t}{1-\beta_u}du)\prod_{i\in s - \{j\}}I_i(t)
++\sum_{i\in s} \frac{\dot{\alpha_t}}{1-\alpha_t} (1-\alpha_t) A(t) \prod_{i\in s-\{j\}} I_i(t) \end{aligned}
+\]
+This can then be rewritten term by term as,
+\[
+\begin{aligned}
+    \partial_t p_t(s, x \mid x_1) &= - \sum_{i\notin s} \frac{\dot{\alpha_t}}{1-\alpha_t} p_t(s, x \mid x_1) - \sum_{x^i=\mask} \frac{\dot{\beta_t}}{1-\beta_t} p_t(s, x \mid x_1) \\ &\quad\quad+ \sum_{x^i \neq \mask} \frac{\dot{\beta_t}}{1-\beta_t} p_t(s, \replaceat{x}{i}{\mask} | x_1) + \sum_{x^i=\mask} \frac{\dot{\alpha_t}}{1-\alpha_t} p_t(s - \{s[i]\}, \text{remove}(x, i) \mid x_1)
+\end{aligned}
+\]
+where $\text{remove}(x, i)$ refers to the string constructed by removing the $i$-th element of $x$.
+
+Notice that this is equivalent to the R.H.S of the KFE (Eq. \ref{eq:kfe}) if one uses the rate matrix $Q_t^{x_1}$. The four terms correspond to \textbf{1)} Outgoing mass from insertion; \textbf{2)} Outgoing mass from unmasking; \textbf{3)} Incoming mass from unmasking; \textbf{4)} Incoming mass from insertion. This concludes the proof. 
+\end{proof}
+
+
+
+\begin{appprop}[FlexMDM Rate Matrix (Restated from Proposition \ref{prop:FlexMDM-rate})] \label{prop:appendix-flexmdm-rate}
+By Proposition~\ref{prop:joint-target-rate}, the induced marginal target rate \(R_t\) is:
+\begin{enumerate}[leftmargin=*,itemsep=0pt,topsep=0pt] 
+    \item Unmask: For \(x^i = \mask\), \(v \in \Sigma\):
+\begin{align}
+    R_t\big(x, \replaceat{x}{i}{v}\big)
+    = \frac{\dot{\beta}_t}{1 - \beta_t} \cdot 
+    \mathbb{P}(x_1^{s_t[i]} = v \mid x_t = x)
+\end{align}
+
+\item Insert: For position $i \in \{0, \dots, |x|\}$:
+\begin{align}
+    R_t\big(x, \insertat{x}{i}{\mask}\big)
+    = \frac{\dot{\alpha}_t}{1 - \alpha_t} \cdot
+    \mathbb{E}_{s_t} \left[ s_t[i] - s_t[i-1]-1 \mid x_t = x \right]
+\end{align}
+\end{enumerate}
+\end{appprop}
+\begin{proof}
+The proof follows by noting proposition \ref{prop:flex-mdm-interpolating-rate} and invoking proposition \ref{prop:joint-target-rate}.
+\end{proof}
+
+
+Performing an approximate target rate matrix $\hat{R}_t$ in terms of an approximate posterior by token $f_\theta(x, t)[i, v] \approx \mathbb{P}(x_1^{s_t[i]} = v \mid x_t = x)$ and an approximate number of insertions $g_\theta(x, t)[i] \approx \mathbb{E}_{s_t} \left[ s_t[i] - s_t[i-1]-1 \mid x_t = x \right]$. The target rate matrix can be learned by minimizing the following variational objective. Note that the variational loss objective below is the same as one we defined in equation~\ref{eq:FlexMDM_loss}.
+
+\begin{appprop}[FlexMDM Loss (Restated from Proposition \ref{prop:FlexMDM-loss})] \label{prop:flexmdm-loss-appendix}
+The loss function is defined as:
+\begin{align}
+     L[\hat{R}_t]  &= \int_0^1\mathbb{E}_{x_1, s_t, x_t} \left[
+-\frac{\dot{\beta}_t}{1 - \beta_t} \sum_{i=0}^{\mathrm{len}(x_t)-1} \mathbf{1}\{x_t^i = \mask\} \log f_\theta(x_t, t)[i, x_1^{s_t[i]}] \right] \; dt, \\ 
+&+   \int_0^1\mathbb{E}_{x_1, s_t, x_t} \left[\frac{\dot{\alpha_t}}{1-\alpha_t}\sum_{i=0}^{|x_1|} \phi(s_t[i] - s_t[i-1] - 1, g_\theta(x_t, t)[i])\right] \; dt,
+\end{align}
+where $\phi(x, y) = y - x \log {y}$, is uniquely minimized when $\hat{R}_t = R_t$ and is connected by terminal KL-divergence by:
+\begin{align}
+    \mathcal{D}_\text{KL}(p_1 || \hat{p}_1) \leq L[\hat{R}_t] - L[R_t],
+\end{align}
+where $\hat{p}_1$ is the approximate data distribution induced by $\hat{R}_t$.
+\end{appprop}
+\begin{proof}
+Let $\mathbb{P}$ and $\mathbb{\hat{P}}$ be the path measure of a continuous time Markov chain starting with the empty string with rate matrix $R_t$ and $\hat{R_t}$, respectively.
+
+Consider the KL-divergence between path measures $\mathbb P$ and $\mathbb{\hat{P}}$,
+\begin{align*}
+\mathcal{D}_\text{KL}(\mathbb P \mid\mid \mathbb{\hat{P}})  &= \mathbb{E}_{\mathbb{P}} \left[\int_{t=0}^{t=1} R_t(x_t, x_t) - \hat{R_t}(x_t, x_t) \; dt +  \sum_{t : x_t \neq x_{t-}} \log \frac{R_t(x_{t-}, x_t)}{\hat{R_t}(x_{t-}, x_t)}\right] \\ 
+&= \int_0^{t=1} \mathbb{E}_{x_t} \left[\sum_{y \neq x_t}\hat{R_t}(x_t, y) - R_t(x_t, y) \log \hat{R_t}(x_t, y)\right] dt+ \text{Const.} \\ 
+&=  \int_0^{t=1} \mathbb{E}_{x_t} \left[\sum_{y \neq x_t}\hat{R_t}(x_t, y) - R_t(x_t, y) \log \hat{R_t}(x_t, y)\right] dt+ \text{Const.} \\ 
+&= \int_0^1\mathbb{E}_{x_1, s_t, x_t} \left[
+-\frac{\dot{\beta}_t}{1 - \beta_t} \sum_{i=0}^{\mathrm{len}(x_t)-1} \mathbf{1}\{x_t^i = \mask\} \log f_\theta(x_t, t)[i, x_1^{s_t[i]}] \right] \; dt \\ 
+&\quad\quad+ \int_0^1\mathbb{E}_{x_1, s_t, x_t} \left[\frac{\dot{\alpha_t}}{1-\alpha_t}\sum_{i=0}^{|x_1|} \phi(s_t[i] - s_t[i-1] - 1, g_\theta(x_t, t)[i])\right] \; dt + \text{Const.}
+\end{align*}
+
+
+The terminal KL-bound then follows from the data processing inequality, that is:
+\begin{align*}
+    \mathcal{D}_\text{KL}(p_1||\hat{p}_1) \leq \mathcal{D}_\text{KL}(\mathbb{P} || \mathbb{\hat{P}})
+\end{align*}
+\end{proof}

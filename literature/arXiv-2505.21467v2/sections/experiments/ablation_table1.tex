@@ -1,0 +1,41 @@
+% ---------------------------------------------------------
+% GSM8K RESULTS — ALL MODELS (SIZE-SORTED)
+% ---------------------------------------------------------
+
+
+% % ---------------------------------------------------------
+% % GSM8K RESULTS — COMPLETE (BOTH METHODS PRESENT, SIZE-SORTED)
+% % ---------------------------------------------------------
+% \begin{table}[t]
+%   \centering
+%   \small
+%   \resizebox{\linewidth}{!}{%
+%   \begin{tabular}{lcccc}
+%     \toprule
+%     \textbf{Model Variant} &
+%     \multicolumn{2}{c}{\textbf{AR-guidance}} &
+%     \multicolumn{2}{c}{\textbf{AR-guidance + correction}} \\
+%     \cmidrule(lr){2-3}\cmidrule(lr){4-5}
+%      & \textbf{Acc} & \textbf{Lat (s)} & \textbf{Acc} & \textbf{Lat (s)} \\
+%     \midrule
+%     % ---------- 3 B ----------
+%     Qwen2.5-3B                        & 81.9  & 4.76  & 78.8  & 2.09   \\
+%     Qwen2.5-3B-Instruct              & 82.6  & 3.35  & 83.2  & 3.42   \\
+%     \midrule
+%     % ---------- 7 B ----------
+%     Qwen2.5-7B                        & 81.4  & 10.13 & 85.6  & 2.27   \\
+%     Qwen2.5-7B-Instruct              & 82.3  & 3.43  & 89.8  & 3.44   \\
+%     Qwen2.5-Math-7B                   & 82.6  & 5.78  & 83.5  & 1.93 \\
+%     Qwen2.5-Math-7B-Instruct          & 83.5  & 2.91  & 92.2  & 4.16   \\
+%     \midrule
+%     % ---------- 8 B ----------
+%     Llama3.1-8B                      & 80.3  & 22.74 & 5.5   & 14.04  \\
+%     \midrule
+%     % ---------- 14 B ----------
+%     Qwen2.5-14B                      & 83.2  & 4.19  & 87.9  & 2.23   \\
+%     Qwen2.5-14B-Instruct             & 83.7  & 4.07  & \textbf{94.3} & 3.39   \\
+%     \bottomrule
+%   \end{tabular}}
+%   \caption{GSM8K results where both AR-guidance and AR-guidance + correction are available, sorted by model size then name. \textbf{Bold} indicates the best overall accuracy and latency.}
+%   \label{tab:gsm8k_complete_sorted}
+% \end{table}

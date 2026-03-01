@@ -1,0 +1,59 @@
+\documentclass{article}
+\newcommand{\iclrflag}{}
+\input{preamble/branch}
+\input{preamble/packages}
+\input{preamble/defs}
+\input{preamble/math}
+
+\title{\papertitle}
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+\DeclareRobustCommand{\hrefmail}[2]{%
+  {\hypersetup{hidelinks}\href{mailto:#1}{#2}}%
+}
+\author{
+    Kiwhan Song\xthanks{$^\star$Equal contribution. Correspondence to: \textless\hrefmail{kiwhan@mit.edu}{kiwhan@mit.edu}, \hrefmail{jaeyeon_kim@g.harvard.edu}{jaeyeon\_kim@g.harvard.edu}\textgreater.}\xsup{$1$,$\star$}
+    \hspace{0.85em}
+    Jaeyeon Kim\xsup{$2$,$\star$}
+    \hspace{0.85em}
+    Sitan Chen\xsup{$2$}
+    \hspace{0.3em}
+    Yilun Du\xsup{$2$}
+    \hspace{0.3em}
+    Sham Kakade\xsup{$2$}
+    \hspace{0.3em}
+    Vincent Sitzmann\xsup{$1$}
+    \\[0.5ex]
+    ~$^1$MIT~$^2$Harvard~
+}
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+\iclrfinalcopy
+\begin{document}
+\maketitle
+\vspace{-0.2in}
+\begin{abstract}
+\input{sections/00_abstract}
+\end{abstract}
+\input{sections/01_introduction}
+\input{sections/02_background}
+\input{sections/03_extrapolation}
+\input{sections/04_generalization}
+\input{sections/05_performance}
+\input{sections/06_conclusion}
+% \newpage
+\bibliography{main}
+\bibliographystyle{styles/iclr2026_conference}
+\newpage
+\tableofcontents
+\newpage
+\appendix
+\input{sections/a_discussion}
+\input{sections/b_theory}
+\input{sections/c_experiment}
+
+\end{document}
+
+

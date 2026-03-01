@@ -1,0 +1,88 @@
+# ============================================================
+# AOAE — Any-Order Adaptive Editing  (mid-speed configuration)
+# Balanced runtime/quality between default and tiny debug runs.
+# ============================================================
+
+# ---- Base model (frozen) -----------------------------------
+base_model:
+  name_or_path: "GSAI-ML/LLaDA-8B-Instruct"
+  torch_dtype: "bfloat16"
+  mask_token_id: 126336
+  backend: "auto"
+
+# ---- Soft-masked state (Eq. softmask + gating) -------------
+soft_mask:
+  top_k: 5
+  omega_s_init: 0.8
+  omega_a_init: 1.0
+  omega_b_init: 2.0
+
+# ---- AOAE policy network -----------------------------------
+policy:
+  d_model: 128
+  n_layers: 1
+  n_heads: 4
+  dropout: 0.0
+
+# ---- PRISM adapter ------------------------------------------
+prism:
+  hidden_dim: 128
+  threshold: 0.5
+  train_samples: 5000
+  epochs: 3
+  lr: 1.0e-3
+  batch_size: 16
+
+# ---- dKV-Cache ----------------------------------------------
+cache:
+  enabled: true
+
+# ---- GRPO training ------------------------------------------
+grpo:
+  group_size: 3                # G trajectories per prompt (reduced for speed)
+  clip_eps: 0.2                # epsilon for clipping
+  alpha: 1.0                   # speed penalty exponent
+  beta: 0.1                    # cache-thrashing penalty weight
+  lr: 3.0e-4
+  weight_decay: 0.01
+  epochs: 2
+  max_steps: 8000
+  batch_size: 4                # prompts per batch
+  grad_accum_steps: 4
+  warmup_steps: 200
+  max_grad_norm: 1.0
+  policy_temperature: 1.0      # tau_pi during training (1.0 = untempered)
+
+# ---- Diffusion inference ------------------------------------
+inference:
+  steps: 24                    # T diffusion steps (reduced for speed)
+  gen_length: 160              # max response tokens
+  temperature: 0.0             # base-model sampling temp (0 = greedy)
+  fallback_unmask: true        # unmask highest-confidence when u_t = 0
+  compose_gamma: 0.5           # Composed prediction strength (paper §3.6)
+
+# ---- Data ---------------------------------------------------
+data:
+  train_dataset: "nvidia/OpenMathInstruct-2"
+  train_split: "train"
+  train_max_samples: 12000
+  eval_dataset: "openai/gsm8k"
+  eval_split: "test"
+  eval_max_samples: 1319
+  max_prompt_len: 512
+  max_answer_len: 256
+
+# ---- Logging / checkpointing -------------------------------
+logging:
+  project: "aoae"
+  run_name: "default-mid"
+  log_every: 50
+  eval_every: 500
+  save_every: 1000
+  output_dir: "outputs/default_mid/"
+  use_wandb: false
+
+# ---- Hardware -----------------------------------------------
+hardware:
+  seed: 42
+  bf16: true

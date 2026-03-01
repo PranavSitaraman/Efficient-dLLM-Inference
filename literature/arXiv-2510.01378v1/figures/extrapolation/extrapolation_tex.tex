@@ -1,0 +1,17 @@
+\begin{figure}
+    \centering
+    % \includegraphics[width=\textwidth,height=0.35\textwidth]{example-image-duck}
+    \begin{overpic}[width=0.64\textwidth]{figures/extrapolation/extrapolation_illust}
+    % \put(4, 49){\footnotesize\xgray{(a)}}
+    \end{overpic}
+    \hfill
+    \begin{overpic}[height=0.34\textwidth,trim={1cm 0.15cm 0 0}]{figures/extrapolation/extrapolation}
+    \end{overpic}
+    \venueifelse{\vskip -0.5\baselineskip}{\vskip -0.25\baselineskip}
+    \caption{\textbf{Selective underfitting.} (a) Training distribution concentrates in a \coloredul{xblue}{small region} of data space, where the model learns the \xxgreen{empirical score function $\rvs_\star$}. At inference, \coloredul{xred}{sampling trajectories} go beyond this region, where predictions are not directly \xxgreen{\emph{\textbf{supervised}}} and must be \xsienna{\emph{\textbf{extrapolated}}}. (b) The plotted distances reflect how far \coloredul{xred}{sampling trajectories} are from the \coloredul{xblue}{supervision region}.}
+    \label{fig:extrapolation}
+    \phantomsubcaption\label{fig:extrapolation-a}
+    \phantomsubcaption\label{fig:extrapolation-b}
+    % \neuripsonly{\vskip -0.5\baselineskip}
+    \vskip -\baselineskip
+\end{figure}

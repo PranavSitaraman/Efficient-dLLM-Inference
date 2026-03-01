@@ -1,0 +1,5 @@
+\section{Conclusion}
+This work leads to a better quality-speed trade-off for dLLM inference, narrowing the gap to state-of-the-art language models in practical generation settings. Specifically, we propose \textbf{\dawn{}}, a training-free, dependency-aware fast inference method for dLLMs.
+It is primarily motivated by the inherent challenge of nonindependent position predictions in dLLMs and mitigates this issue by adopting a positional-dependency perspective, offering a complementary approach to alleviate failures in parallel unmasking.
+Guided by a sparse directed dependency graph, \dawn{} selects unmasking positions at each iteration and enables highly parallel updates while preserving generation quality. 
+Extensive experiments across multiple models and datasets validate the effectiveness of \dawn{}, demonstrating consistent speedups while maintaining comparable quality.

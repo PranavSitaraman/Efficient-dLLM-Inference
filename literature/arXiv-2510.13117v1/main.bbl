@@ -1,0 +1,372 @@
+\begin{thebibliography}{61}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Amini et~al.(2023)Amini, Cotterell, Hewitt, Malagutti, Meister, and Pimentel]{amini-etal-2023-generating}
+Afra Amini, Ryan Cotterell, John Hewitt, Luca Malagutti, Clara Meister, and Tiago Pimentel.
+\newblock Generating text from language models.
+\newblock In \emph{ACL}, 2023.
+\newblock URL \url{https://aclanthology.org/2023.acl-tutorials.4/}.
+
+\bibitem[Arriola et~al.(2025)Arriola, Gokaslan, Chiu, Yang, Qi, Han, Sahoo, and Kuleshov]{arriola2025blockdiffusioninterpolatingautoregressive}
+Marianne Arriola, Aaron Gokaslan, Justin~T. Chiu, Zhihan Yang, Zhixuan Qi, Jiaqi Han, Subham~Sekhar Sahoo, and Volodymyr Kuleshov.
+\newblock {B}lock {D}iffusion: Interpolating between autoregressive and diffusion language models.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2503.09573}.
+
+\bibitem[Bae et~al.(2025)Bae, Kim, Bayat, Kim, Ha, Schuster, Fisch, Harutyunyan, Ji, Courville, and Yun]{bae2025mixtureofrecursionslearningdynamicrecursive}
+Sangmin Bae, Yujin Kim, Reza Bayat, Sungnyun Kim, Jiyoun Ha, Tal Schuster, Adam Fisch, Hrayr Harutyunyan, Ziwei Ji, Aaron Courville, and Se-Young Yun.
+\newblock Mixture-of-recursions: Learning dynamic recursive depths for adaptive token-level computation.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2507.10524}.
+
+\bibitem[Ben-Hamu et~al.(2025)Ben-Hamu, Gat, Severo, Nolte, and Karrer]{benhamu2025acceleratedsamplingmaskeddiffusion}
+Heli Ben-Hamu, Itai Gat, Daniel Severo, Niklas Nolte, and Brian Karrer.
+\newblock Accelerated sampling from masked diffusion models via entropy bounded unmasking.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2505.24857}.
+
+\bibitem[Benz et~al.(2025)Benz, Tsirtsis, Straitouri, Chatzi, Velasco, Thejaswi, and Rodriguez]{benz2025evaluation}
+Nina L.~Corvelo Benz, Stratis Tsirtsis, Eleni Straitouri, Ivi Chatzi, Ander~Artola Velasco, Suhas Thejaswi, and Manuel~Gomez Rodriguez.
+\newblock Evaluation of large language models via coupled token generation.
+\newblock In \emph{ICLR 2025 Workshop on Building Trust in Language Models and Applications}, 2025.
+\newblock URL \url{https://openreview.net/forum?id=FB8FMU99BC}.
+
+\bibitem[Borenstein et~al.(2024)Borenstein, Svete, Chan, Valvoda, Nowak, Augenstein, Chodroff, and Cotterell]{borenstein-etal-2024-languages}
+Nadav Borenstein, Anej Svete, Robin Chan, Josef Valvoda, Franz Nowak, Isabelle Augenstein, Eleanor Chodroff, and Ryan Cotterell.
+\newblock What languages are easy to language-model? a perspective from learning probabilistic regular languages.
+\newblock In \emph{ACL}, 2024.
+\newblock URL \url{https://aclanthology.org/2024.acl-long.807/}.
+
+\bibitem[Butoi et~al.(2025)Butoi, Khalighinejad, Svete, Valvoda, Cotterell, and DuSell]{butoi2025training}
+Alexandra Butoi, Ghazal Khalighinejad, Anej Svete, Josef Valvoda, Ryan Cotterell, and Brian DuSell.
+\newblock Training neural networks as recognizers of formal languages.
+\newblock In \emph{ICLR}, 2025.
+\newblock URL \url{https://openreview.net/forum?id=aWLQTbfFgV}.
+
+\bibitem[Chan et~al.(2025)Chan, Boumasmoud, Svete, Ren, Guo, Jin, Ravfogel, Sachan, Sch\"{o}lkopf, El-Assady, and Cotterell]{10.5555/3737916.3740249}
+Robin S.~M. Chan, Reda Boumasmoud, Anej Svete, Yuxin Ren, Qipeng Guo, Zhijing Jin, Shauli Ravfogel, Mrinmaya Sachan, Bernhard Sch\"{o}lkopf, Mennatallah El-Assady, and Ryan Cotterell.
+\newblock On affine homotopy between language encoders.
+\newblock In \emph{NeurIPS}, 2025.
+
+\bibitem[Chatzi et~al.(2024)Chatzi, Benz, Straitouri, Tsirtsis, and Rodriguez]{chatzi2024counterfactual}
+Ivi Chatzi, Nina L.~Corvelo Benz, Eleni Straitouri, Stratis Tsirtsis, and Manuel~Gomez Rodriguez.
+\newblock Counterfactual token generation in large language models.
+\newblock In \emph{Causality and Large Models Workshop @ NeurIPS 2024}, 2024.
+\newblock URL \url{https://openreview.net/forum?id=S4pwjKmLGR}.
+
+\bibitem[Chen \& Ying(2024)Chen and Ying]{chen2024convergenceanalysisdiscretediffusion}
+Hongrui Chen and Lexing Ying.
+\newblock Convergence analysis of discrete diffusion model: {E}xact implementation through uniformization.
+\newblock \emph{arXiv}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2402.08095}.
+
+\bibitem[Chiang \& Cholak(2022)Chiang and Cholak]{chiang-cholak-2022-overcoming}
+David Chiang and Peter Cholak.
+\newblock Overcoming a theoretical limitation of self-attention.
+\newblock In \emph{ACL}, 2022.
+\newblock URL \url{https://aclanthology.org/2022.acl-long.527/}.
+
+\bibitem[Cotterell et~al.(2024)Cotterell, Svete, Meister, Liu, and Du]{cotterell2024formalaspectslanguagemodeling}
+Ryan Cotterell, Anej Svete, Clara Meister, Tianyu Liu, and Li~Du.
+\newblock Formal aspects of language modeling.
+\newblock \emph{arXiv}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2311.04329}.
+
+\bibitem[Dehghani et~al.(2019)Dehghani, Gouws, Vinyals, Uszkoreit, and Łukasz Kaiser]{dehghani2019universaltransformers}
+Mostafa Dehghani, Stephan Gouws, Oriol Vinyals, Jakob Uszkoreit, and Łukasz Kaiser.
+\newblock Universal transformers.
+\newblock \emph{arXiv}, 2019.
+\newblock URL \url{https://arxiv.org/abs/1807.03819}.
+
+\bibitem[Devlin et~al.(2019)Devlin, Chang, Lee, and Toutanova]{devlin-etal-2019-bert}
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova.
+\newblock {BERT}: Pre-training of deep bidirectional transformers for language understanding.
+\newblock In \emph{NAACL}, 2019.
+\newblock URL \url{https://aclanthology.org/N19-1423/}.
+
+\bibitem[Feng et~al.(2023)Feng, Zhang, Gu, Ye, He, and Wang]{feng2023towards}
+Guhao Feng, Bohang Zhang, Yuntian Gu, Haotian Ye, Di~He, and Liwei Wang.
+\newblock Towards revealing the mystery behind chain of thought: A theoretical perspective.
+\newblock In \emph{NeurIPS}, 2023.
+\newblock URL \url{https://openreview.net/forum?id=qHrADgAdYu}.
+
+\bibitem[Feng et~al.(2025)Feng, Geng, Guan, Wu, Wang, and He]{feng2025theoreticalbenefitlimitationdiffusion}
+Guhao Feng, Yihan Geng, Jian Guan, Wei Wu, Liwei Wang, and Di~He.
+\newblock Theoretical benefit and limitation of diffusion language model.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2502.09622}.
+
+\bibitem[Furst et~al.(1984)Furst, Saxe, and Sipser]{Furst1984}
+Merrick Furst, James~B. Saxe, and Michael Sipser.
+\newblock Parity, circuits, and the polynomial-time hierarchy.
+\newblock \emph{Mathematical systems theory}, 17\penalty0 (1):\penalty0 13--27, Dec 1984.
+\newblock ISSN 1433-0490.
+\newblock \doi{10.1007/BF01744431}.
+\newblock URL \url{https://doi.org/10.1007/BF01744431}.
+
+\bibitem[Ghazvininejad et~al.(2019)Ghazvininejad, Levy, Liu, and Zettlemoyer]{ghazvininejad-etal-2019-mask}
+Marjan Ghazvininejad, Omer Levy, Yinhan Liu, and Luke Zettlemoyer.
+\newblock Mask-predict: {P}arallel decoding of conditional masked language models.
+\newblock In \emph{EMNLP-IJCNLP}, 2019.
+\newblock URL \url{https://aclanthology.org/D19-1633/}.
+
+\bibitem[Gong et~al.(2025)Gong, Zhang, Zheng, Gu, Jaitly, Kong, and Zhang]{gong2025diffucoderunderstandingimprovingmasked}
+Shansan Gong, Ruixiang Zhang, Huangjie Zheng, Jiatao Gu, Navdeep Jaitly, Lingpeng Kong, and Yizhe Zhang.
+\newblock {DiffuCoder}: {U}nderstanding and improving masked diffusion models for code generation.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2506.20639}.
+
+\bibitem[He et~al.(2023)He, Sun, Tang, Wang, Huang, and Qiu]{he-etal-2023-diffusionbert}
+Zhengfu He, Tianxiang Sun, Qiong Tang, Kuanning Wang, Xuanjing Huang, and Xipeng Qiu.
+\newblock {D}iffusion{BERT}: Improving generative masked language models with diffusion models.
+\newblock In \emph{ACL}, 2023.
+\newblock URL \url{https://aclanthology.org/2023.acl-long.248/}.
+
+\bibitem[Jerad et~al.(2025)Jerad, Svete, Li, and Cotterell]{jerad2025uniquehardattentiontale}
+Selim Jerad, Anej Svete, Jiaoda Li, and Ryan Cotterell.
+\newblock Unique hard attention: A tale of two sides.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2503.14615}.
+
+\bibitem[Kim et~al.(2025)Kim, Shah, Kontonis, Kakade, and Chen]{kim2025trainworstplanbest}
+Jaeyeon Kim, Kulin Shah, Vasilis Kontonis, Sham Kakade, and Sitan Chen.
+\newblock Train for the worst, plan for the best: Understanding token ordering in masked diffusions.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2502.06768}.
+
+\bibitem[Lanham et~al.(2023)Lanham, Chen, Radhakrishnan, Steiner, Denison, Hernandez, Li, Durmus, Hubinger, Kernion, Lukošiūtė, Nguyen, Cheng, Joseph, Schiefer, Rausch, Larson, McCandlish, Kundu, Kadavath, Yang, Henighan, Maxwell, Telleen-Lawton, Hume, Hatfield-Dodds, Kaplan, Brauner, Bowman, and Perez]{lanham2023measuringfaithfulnesschainofthoughtreasoning}
+Tamera Lanham, Anna Chen, Ansh Radhakrishnan, Benoit Steiner, Carson Denison, Danny Hernandez, Dustin Li, Esin Durmus, Evan Hubinger, Jackson Kernion, Kamilė Lukošiūtė, Karina Nguyen, Newton Cheng, Nicholas Joseph, Nicholas Schiefer, Oliver Rausch, Robin Larson, Sam McCandlish, Sandipan Kundu, Saurav Kadavath, Shannon Yang, Thomas Henighan, Timothy Maxwell, Timothy Telleen-Lawton, Tristan Hume, Zac Hatfield-Dodds, Jared Kaplan, Jan Brauner, Samuel~R. Bowman, and Ethan Perez.
+\newblock Measuring faithfulness in chain-of-thought reasoning.
+\newblock \emph{arXiv}, 2023.
+\newblock URL \url{https://arxiv.org/abs/2307.13702}.
+
+\bibitem[Leviathan et~al.(2023)Leviathan, Kalman, and Matias]{10.5555/3618408.3619203}
+Yaniv Leviathan, Matan Kalman, and Yossi Matias.
+\newblock Fast inference from transformers via speculative decoding.
+\newblock In \emph{ICML}, 2023.
+
+\bibitem[Li \& Cai(2025)Li and Cai]{li2025convergencetheorydiffusionlanguage}
+Gen Li and Changxiao Cai.
+\newblock A convergence theory for diffusion language models: {A}n information-theoretic perspective.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2505.21400}.
+
+\bibitem[Li \& Cotterell(2025)Li and Cotterell]{li2025characterizingexpressivitytransformerlanguage}
+Jiaoda Li and Ryan Cotterell.
+\newblock Characterizing the expressivity of transformer language models.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2505.23623}.
+
+\bibitem[Li et~al.(2024)Li, Liu, Zhou, and Ma]{li2024chain}
+Zhiyuan Li, Hong Liu, Denny Zhou, and Tengyu Ma.
+\newblock Chain of thought empowers transformers to solve inherently serial problems.
+\newblock In \emph{ICLR}, 2024.
+\newblock URL \url{https://openreview.net/forum?id=3EWTEy9MTM}.
+
+\bibitem[Liu et~al.(2023)Liu, Ash, Goel, Krishnamurthy, and Zhang]{liu2023transformers}
+Bingbin Liu, Jordan~T. Ash, Surbhi Goel, Akshay Krishnamurthy, and Cyril Zhang.
+\newblock Transformers learn shortcuts to automata.
+\newblock In \emph{ICLR}, 2023.
+\newblock URL \url{https://openreview.net/forum?id=De4FYqjFueZ}.
+
+\bibitem[Liu et~al.(2025{\natexlab{a}})Liu, Nam, Campbell, Stärk, Xu, Jaakkola, and Gómez-Bombarelli]{liu2025thinkgeneratediscretediffusion}
+Sulin Liu, Juno Nam, Andrew Campbell, Hannes Stärk, Yilun Xu, Tommi Jaakkola, and Rafael Gómez-Bombarelli.
+\newblock Think while you generate: {D}iscrete diffusion with planned denoising.
+\newblock \emph{arXiv}, 2025{\natexlab{a}}.
+\newblock URL \url{https://arxiv.org/abs/2410.06264}.
+
+\bibitem[Liu(2025)]{liu2025perfectdiffusionmathsftc0}
+Yuxi Liu.
+\newblock Perfect diffusion is $\mathsf{TC}^0$---{B}ad diffusion is {T}uring-complete.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2507.12469}.
+
+\bibitem[Liu et~al.(2025{\natexlab{b}})Liu, Preechakul, Kuwaranancharoen, and Bai]{liu2025serialscalinghypothesis}
+Yuxi Liu, Konpat Preechakul, Kananart Kuwaranancharoen, and Yutong Bai.
+\newblock The serial scaling hypothesis.
+\newblock \emph{arXiv}, 2025{\natexlab{b}}.
+\newblock URL \url{https://arxiv.org/abs/2507.12549}.
+
+\bibitem[London \& Kanade(2025)London and Kanade]{london2025pausetokensstrictlyincrease}
+Charles London and Varun Kanade.
+\newblock Pause tokens strictly increase the expressivity of constant-depth transformers.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2505.21024}.
+
+\bibitem[Lou et~al.(2024)Lou, Meng, and Ermon]{Lou2024DiscreteDM}
+Aaron Lou, Chenlin Meng, and Stefano Ermon.
+\newblock Discrete diffusion modeling by estimating the ratios of the data distribution.
+\newblock In \emph{ICML}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2310.16834}.
+
+\bibitem[Merrill \& Sabharwal(2023)Merrill and Sabharwal]{merrill-sabharwal-2023-parallelism}
+William Merrill and Ashish Sabharwal.
+\newblock The parallelism tradeoff: Limitations of log-precision transformers.
+\newblock \emph{TACL}, 11:\penalty0 531--545, 2023.
+\newblock URL \url{https://aclanthology.org/2023.tacl-1.31/}.
+
+\bibitem[Merrill \& Sabharwal(2024)Merrill and Sabharwal]{merrill2024the}
+William Merrill and Ashish Sabharwal.
+\newblock The expressive power of transformers with chain of thought.
+\newblock In \emph{ICLR}, 2024.
+\newblock URL \url{https://openreview.net/forum?id=NjNGlPh8Wh}.
+
+\bibitem[Merrill \& Sabharwal(2025{\natexlab{a}})Merrill and Sabharwal]{merrill2025exactexpressivepowertransformers}
+William Merrill and Ashish Sabharwal.
+\newblock Exact expressive power of transformers with padding.
+\newblock \emph{arXiv}, 2025{\natexlab{a}}.
+\newblock URL \url{https://arxiv.org/abs/2505.18948}.
+
+\bibitem[Merrill \& Sabharwal(2025{\natexlab{b}})Merrill and Sabharwal]{merrill2025littledepthgoeslong}
+William Merrill and Ashish Sabharwal.
+\newblock A little depth goes a long way: The expressive power of log-depth transformers.
+\newblock \emph{arXiv}, 2025{\natexlab{b}}.
+\newblock URL \url{https://arxiv.org/abs/2503.03961}.
+
+\bibitem[Merrill et~al.(2024)Merrill, Petty, and Sabharwal]{10.5555/3692070.3693514}
+William Merrill, Jackson Petty, and Ashish Sabharwal.
+\newblock The illusion of state in state-space models.
+\newblock In \emph{ICML}, 2024.
+
+\bibitem[Nie et~al.(2025)Nie, Zhu, You, Zhang, Ou, Hu, Zhou, Lin, Wen, and Li]{nie2025largelanguagediffusionmodels}
+Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li.
+\newblock Large language diffusion models.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2502.09992}.
+
+\bibitem[Nowak et~al.(2024)Nowak, Svete, Butoi, and Cotterell]{nowak-etal-2024-representational}
+Franz Nowak, Anej Svete, Alexandra Butoi, and Ryan Cotterell.
+\newblock On the representational capacity of neural language models with chain-of-thought reasoning.
+\newblock In \emph{ACL}, 2024.
+\newblock URL \url{https://aclanthology.org/2024.acl-long.676/}.
+
+\bibitem[Oberst \& Sontag(2019)Oberst and Sontag]{pmlr-v97-oberst19a}
+Michael Oberst and David Sontag.
+\newblock Counterfactual off-policy evaluation with {G}umbel-max structural causal models.
+\newblock In \emph{ICML}, 2019.
+\newblock URL \url{https://proceedings.mlr.press/v97/oberst19a.html}.
+
+\bibitem[Peng et~al.(2025)Peng, Bezemek, Patel, Rector-Brooks, Yao, Bose, Tong, and Chatterjee]{peng2025pathplanningmaskeddiffusion}
+Fred~Zhangzhi Peng, Zachary Bezemek, Sawan Patel, Jarrid Rector-Brooks, Sherwood Yao, Avishek~Joey Bose, Alexander Tong, and Pranam Chatterjee.
+\newblock Path planning for masked diffusion model sampling.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2502.03540}.
+
+\bibitem[P{\'e}rez et~al.(2021)P{\'e}rez, Barcel{\'o}, and Marinkovic]{JMLR:v22:20-302}
+Jorge P{\'e}rez, Pablo Barcel{\'o}, and Javier Marinkovic.
+\newblock Attention is turing-complete.
+\newblock \emph{JMLR}, 22\penalty0 (75):\penalty0 1--35, 2021.
+\newblock URL \url{http://jmlr.org/papers/v22/20-302.html}.
+
+\bibitem[Radford et~al.(2019)Radford, Wu, Child, Luan, Amodei, and Sutskever]{radford2019language}
+Alec Radford, Jeff Wu, Rewon Child, David Luan, Dario Amodei, and Ilya Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock \emph{OpenAI}, 2019.
+\newblock URL \url{https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf}.
+
+\bibitem[Ravfogel et~al.(2025)Ravfogel, Svete, Sn{\ae}bjarnarson, and Cotterell]{ravfogel2025gumbel}
+Shauli Ravfogel, Anej Svete, V{\'e}steinn Sn{\ae}bjarnarson, and Ryan Cotterell.
+\newblock Gumbel counterfactual generation from language models.
+\newblock In \emph{ICLR}, 2025.
+\newblock URL \url{https://openreview.net/forum?id=TUC0ZT2zIQ}.
+
+\bibitem[Saunshi et~al.(2025)Saunshi, Dikkala, Li, Kumar, and Reddi]{saunshi2025reasoninglatentthoughtspower}
+Nikunj Saunshi, Nishanth Dikkala, Zhiyuan Li, Sanjiv Kumar, and Sashank~J. Reddi.
+\newblock Reasoning with latent thoughts: On the power of looped transformers.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2502.17416}.
+
+\bibitem[Song et~al.(2025)Song, Zhang, Luo, Gao, Xia, Luo, Li, Yang, Yu, Qu, Fu, Su, Zhang, Huang, Wang, Yan, Jia, Liu, Ma, Zhang, Wu, and Zhou]{song2025seeddiffusionlargescalediffusion}
+Yuxuan Song, Zheng Zhang, Cheng Luo, Pengyang Gao, Fan Xia, Hao Luo, Zheng Li, Yuehang Yang, Hongli Yu, Xingwei Qu, Yuwei Fu, Jing Su, Ge~Zhang, Wenhao Huang, Mingxuan Wang, Lin Yan, Xiaoying Jia, Jingjing Liu, Wei-Ying Ma, Ya-Qin Zhang, Yonghui Wu, and Hao Zhou.
+\newblock {S}eed {D}iffusion: A large-scale diffusion language model with high-speed inference.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2508.02193}.
+
+\bibitem[Strobl et~al.(2024)Strobl, Merrill, Weiss, Chiang, and Angluin]{strobl-etal-2024-formal}
+Lena Strobl, William Merrill, Gail Weiss, David Chiang, and Dana Angluin.
+\newblock What formal languages can transformers express? a survey.
+\newblock \emph{TACL}, 12:\penalty0 543--561, 2024.
+\newblock URL \url{https://aclanthology.org/2024.tacl-1.30/}.
+
+\bibitem[Sun et~al.(2025)Sun, Hu, Zhou, Du, Lan, Wang, Zhu, Qu, Zhang, Mo, Liu, Liang, Chen, Li, and Cheng]{sunSpeedAlwaysWins2025}
+Weigao Sun, Jiaxi Hu, Yucheng Zhou, Jusen Du, Disen Lan, Kexin Wang, Tong Zhu, Xiaoye Qu, Yu~Zhang, Xiaoyu Mo, Daizong Liu, Yuxuan Liang, Wenliang Chen, Guoqi Li, and Yu~Cheng.
+\newblock Speed always wins: {A} survey on efficient architectures for large language models.
+\newblock \emph{arXiv}, August 2025.
+\newblock URL \url{https://arxiv.org/abs/2508.09834}.
+
+\bibitem[Svete \& Cotterell(2024)Svete and Cotterell]{svete-cotterell-2024-transformers}
+Anej Svete and Ryan Cotterell.
+\newblock Transformers can represent $n$-gram language models.
+\newblock In \emph{NAACL}, 2024.
+\newblock URL \url{https://aclanthology.org/2024.naacl-long.381/}.
+
+\bibitem[Svete et~al.(2024)Svete, Borenstein, Zhou, Augenstein, and Cotterell]{svete-etal-2024-transformers}
+Anej Svete, Nadav Borenstein, Mike Zhou, Isabelle Augenstein, and Ryan Cotterell.
+\newblock Can transformers learn $n$-gram language models?
+\newblock In \emph{EMNLP}, 2024.
+\newblock URL \url{https://aclanthology.org/2024.emnlp-main.550/}.
+
+\bibitem[Svete et~al.(2025)Svete, Merrill, and Sabharwal]{svete2025exactexpressivepowerfiniteprecision}
+Anej Svete, Will Merrill, and Ashish Sabharwal.
+\newblock The exact expressive power of fixed-precision looped padded transformers, 2025.
+\newblock URL \url{https://anejsvete.github.io/files/fp-lpt.pdf}.
+
+\bibitem[Vaswani et~al.(2017)Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, and Polosukhin]{NIPS2017_3f5ee243}
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan~N Gomez, {\L}ukasz Kaiser, and Illia Polosukhin.
+\newblock Attention is all you need.
+\newblock In \emph{NeurIPS}, 2017.
+\newblock URL \url{https://proceedings.neurips.cc/paper_files/paper/2017/file/3f5ee243547dee91fbd053c1c4a845aa-Paper.pdf}.
+
+\bibitem[Vollmer(1999)]{Vollmer1999}
+Heribert Vollmer.
+\newblock \emph{Introduction to Circuit Complexity: A Uniform Approach}.
+\newblock Texts in Theoretical Computer Science. An EATCS Series. Springer-Verlag, Berlin, Heidelberg, 1999.
+\newblock ISBN 978-3-540-64310-4.
+\newblock \doi{10.1007/978-3-662-03927-4}.
+
+\bibitem[von R{\"u}tte et~al.(2025)von R{\"u}tte, Fluri, Ding, Orvieto, Sch{\"o}lkopf, and Hofmann]{rutte2025generalized}
+Dimitri von R{\"u}tte, Janis Fluri, Yuhui Ding, Antonio Orvieto, Bernhard Sch{\"o}lkopf, and Thomas Hofmann.
+\newblock Generalized interpolating discrete diffusion.
+\newblock In \emph{ICML}, 2025.
+\newblock URL \url{https://openreview.net/forum?id=rvZv7sDPV9}.
+
+\bibitem[Wei et~al.(2022)Wei, Wang, Schuurmans, Bosma, Ichter, Xia, Chi, Le, and Zhou]{wei2022chainofthought}
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia, Ed~H. Chi, Quoc~V. Le, and Denny Zhou.
+\newblock Chain-of-thought prompting elicits reasoning in large language models.
+\newblock In \emph{NeurIPS}, 2022.
+
+\bibitem[Wu et~al.(2025)Wu, Zhang, Xue, Liu, Diao, Zhu, Luo, Han, and Xie]{wu2025fastdllmtrainingfreeaccelerationdiffusion}
+Chengyue Wu, Hao Zhang, Shuchen Xue, Zhijian Liu, Shizhe Diao, Ligeng Zhu, Ping Luo, Song Han, and Enze Xie.
+\newblock Fast-dllm: Training-free acceleration of diffusion llm by enabling kv cache and parallel decoding.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2505.22618}.
+
+\bibitem[Xu \& Sato(2025)Xu and Sato]{xu2025cotloopformalcomparison}
+Kevin Xu and Issei Sato.
+\newblock To {CoT} or to loop? {A} formal comparison between chain-of-thought and looped transformers.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2505.19245}.
+
+\bibitem[Yang et~al.(2024)Yang, Chiang, and Angluin]{yang2024masked}
+Andy Yang, David Chiang, and Dana Angluin.
+\newblock Masked hard-attention transformers recognize exactly the star-free languages.
+\newblock In \emph{NeurIPS}, 2024.
+\newblock URL \url{https://openreview.net/forum?id=FBMsBdH0yz}.
+
+\bibitem[Zhang et~al.(2025)Zhang, Fang, Duan, He, Pan, Xiao, Huang, Zhai, Hu, Yu, and Liu]{zhang2025surveyparalleltextgeneration}
+Lingzhe Zhang, Liancheng Fang, Chiming Duan, Minghua He, Leyi Pan, Pei Xiao, Shiyu Huang, Yunpeng Zhai, Xuming Hu, Philip~S. Yu, and Aiwei Liu.
+\newblock A survey on parallel text generation: From parallel decoding to diffusion language models.
+\newblock \emph{arXiv}, 2025.
+\newblock URL \url{https://arxiv.org/abs/2508.08712}.
+
+\bibitem[Zheng et~al.(2024)Zheng, Yuan, Yu, and Kong]{zheng2024reparameterizeddiscretediffusionmodel}
+Lin Zheng, Jianbo Yuan, Lei Yu, and Lingpeng Kong.
+\newblock A reparameterized discrete diffusion model for text generation.
+\newblock \emph{arXiv}, 2024.
+\newblock URL \url{https://arxiv.org/abs/2302.05737}.
+
+\end{thebibliography}

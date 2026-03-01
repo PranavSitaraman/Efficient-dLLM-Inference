@@ -1,0 +1,2087 @@
+
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2026_conference,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\usepackage{hyperref}
+\usepackage{url}
+% \usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{makecell}
+\usepackage[dvipsnames,table]{xcolor}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{tikz}
+\usepackage{wrapfig}
+\usepackage{adjustbox}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsthm}
+\usepackage{array}
+\usepackage{listings}
+\usepackage{etoc}
+\etocdepthtag.toc{mtchapter}
+\etocsettagdepth{mtchapter}{subsection}
+\etocsettagdepth{mtappendix}{none}
+\usepackage{pifont}
+% Define colors
+% Define colors
+\definecolor{lightred}{RGB}{255, 230, 230}
+\definecolor{lightgreen}{RGB}{230, 255, 230}
+\definecolor{darkgray}{RGB}{70, 70, 70}
+\definecolor{headercolor}{RGB}{70, 130, 180}
+
+% Configure listings
+\lstset{
+    basicstyle=\small\ttfamily,
+    breaklines=true,
+    frame=none,
+    aboveskip=2pt,
+    belowskip=2pt,
+    xleftmargin=2pt,
+    xrightmargin=2pt
+}
+
+\newcommand{\redtablecaption}{
+  \captionsetup{labelfont={color=red}, textfont={color=red}}
+}
+
+\usepackage{arydshln}
+
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{xcolor} 
+
+\usepackage[normalem]{ulem}
+
+\definecolor{lightblue}{RGB}{230, 245, 255}
+\definecolor{lightgreen}{RGB}{230, 255, 230}
+\definecolor{lightpink}{RGB}{255, 230, 240}
+\definecolor{headercolor}{RGB}{70, 130, 180}
+% Colors for the Algorithm
+
+\definecolor{cacheblue}{RGB}{28, 105, 164}
+\definecolor{actionred}{RGB}{202, 0, 32}
+\definecolor{decodeorange}{RGB}{244, 165, 130}
+\definecolor{updategreen}{RGB}{5, 113, 176}
+
+\definecolor{myorange}{HTML}{FFA500}
+\definecolor{myblue}{HTML}{0033CC}
+\definecolor{myyellow}{HTML}{FFFFCC}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+
+\DeclareMathOperator{\CosSim}{CosSim}
+\newcommand{\norm}[1]{\left\|#1\right\|}
+\newcommand{\Prob}{\mathbb{P}}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\newcommand{\szq}[1]{{\color{red}#1}}
+
+\title{Attention Is All You Need \\ for KV Cache in Diffusion LLMs}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+
+\author{Quan Nguyen-Tri$^{1,2}$\thanks{Equal contribution. $^{\dagger}$Corresponding author.}~~, Mukul Ranjan$^{1*}$, Zhiqiang Shen$^{1\dagger}$ \\
+$^1$VILA Lab, MBZUAI, Abu Dhabi, UAE~~ $^{2}$FPT AI Residency, Vietnam \\
+\texttt{\{quan.tri,mukul.ranjan,zhiqiang.shen\}@mbzuai.ac.ae} \\
+}
+\iclrfinalcopy
+
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+% \iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+
+\maketitle
+\vspace{-15pt} 
+{\small Project page: \url{https://vila-lab.github.io/elastic-cache-webpage/} \par}
+\vspace{5pt} 
+
+\begin{abstract}
+
+This work studies how to adaptively recompute key–value (KV) caches for diffusion large language models (DLMs) to maximize prediction accuracy while minimizing decoding latency. Prior methods' decoders recompute QKV for all tokens at every denoising step and layer, despite KV states changing little across most steps, especially in shallow layers, leading to substantial redundancy. We make three observations: (1) distant {\bf MASK} tokens primarily act as a length-bias and can be cached block-wise beyond the active prediction window; (2) KV dynamics increase with depth, suggesting that selective refresh starting from deeper layers is sufficient; and (3) the most-attended token exhibits the smallest KV drift, providing a conservative lower bound on cache change for other tokens. Building on these, we propose {\bf Elastic-Cache}, a training-free, architecture-agnostic strategy that jointly decides {\em when} to refresh (via an attention-aware drift test on the most-attended token) and {\em where} to refresh (via a depth-aware schedule that recomputes from a chosen layer onward while reusing shallow-layer caches and off-window MASK caches). Unlike fixed-period schemes, Elastic-Cache performs adaptive, layer-aware cache updates for diffusion LLMs, reducing redundant computation and accelerating decoding with negligible loss in generation quality.
+Experiments on LLaDA-Instruct, LLaDA-1.5, and LLaDA-V across mathematical reasoning and code generation tasks demonstrate consistent speedups: $8.7\times$ on GSM8K (256 tokens), and $45.1\times$ on longer sequences, while consistently maintaining higher accuracy than the baseline. Our method achieves significantly higher throughput ($6.8\times$ on GSM8K) than existing confidence-based approaches while preserving generation quality, enabling practical deployment of diffusion LLMs. 
+\end{abstract}
+
+\section{Introduction}
+
+Diffusion large language models (DLMs)~\citep{li2025survey} have recently emerged as a compelling alternative to autoregressive Transformers~\citep{radford2018improving,achiam2023gpt}, yet their iterative denoising procedure makes inference particularly compute-intensive. In standard implementations, each decoding step recomputes queries, keys, and values (QKV) for every token at every layer, even though the underlying key–value (KV) states change only marginally across most steps. This all-tokens, all-layers recomputation incurs substantial latency and memory traffic, ultimately limiting practical deployment. Our goal in this study is to determine {\em how and when} to adaptively recompute the KV cache during decoding so as to maximize prediction quality while minimizing wall-clock latency.
+
+A defining property of diffusion LLM decoding is the progressive unmasking of tokens under a length- and structure-aware attention pattern. This induces heterogeneous KV dynamics: shallow layers tend to stabilize quickly as they encode local lexical structure, whereas deeper layers continue to adjust global, semantic dependencies. We formalize this with a notion of KV drift: the step-to-step change in cached keys and values, and observe two consistent trends: (i) drift is small for most steps, and (ii) drift grows with layer depth. These trends suggest that indiscriminate recomputation is wasteful, and that targeted refreshes could preserve accuracy while slashing cost.
+
+Prior acceleration methods for diffusion (and related) decoders typically refresh the KV cache on a fixed schedule, e.g., every $k$ iterations without regard to instance difficulty, current attention patterns, or layerwise variability. Such fixed-period policies leave performance on the table: they recompute when nothing has changed and miss updates precisely when rapid semantic revisions occur. Moreover, by treating all layers uniformly, they over-service shallow layers whose representations have already converged, while under-servicing deeper layers where changes matter most. This motivates an adaptive, attention-aware alternative.
+
+Our approach is built on three empirical observations. First, distant MASK tokens exert negligible influence on unmasking the current token and behave primarily as a length-bias prior; thus, their KV can be block-cached outside the active prediction window to avoid redundant work. Second, KV drift increases with depth, so refreshes should start at an automatically learned boundary layer $\ell^\star$ ({determined by attention threshold and adapted to each input decoding step})  and apply only to deeper layers, reusing shallow-layer caches. Third, the most-attended token at a step typically exhibits the smallest drift, providing a conservative lower bound on KV changes across the context. Monitoring this drift yields a reliable, low-overhead trigger for deciding whether a global refresh is warranted.
+
+Based on these ideas, we propose {\bf Elastic-Cache}, a training-free, architecture-agnostic strategy that couples {\em Attention-Aware KV Cache Update} with {\em Layer-Aware KV Cache Update}. The attention-aware module computes a lightweight drift statistic on the most-attended token; if the statistic exceeds a threshold, a refresh is triggered, otherwise cached KVs are reused. The layer-aware module then refreshes only layers $\ell \ge \ell^\star$, while shallow layers retain their caches, and off-window MASK tokens remain block-cached. Together, these mechanisms align recomputation with {\em where and when} the model's beliefs actually change, minimizing unnecessary QKV work.
+
+In contrast to fixed-period baselines, our {\bf Elastic-Cache} adapts to the input, step, and layer granularity together. It reduces compute by skipping recomputation during stable phases, focuses effort on deeper layers during semantic revisions, and leverages block-wise caching for distant MASK tokens. Conceptually, the method reframes KV management as an {\bf attention-guided control problem}: attention estimates {\em which} tokens matter; drift detects {\em how much} the state has changed; and the layer boundary $\ell^\star$ encodes {\em where} updates pay off. This yields a practical pathway to low-latency diffusion LLM decoding without modifying training or the base architecture.
+
+Our contributions of this work: 
+\vspace{-0.1in}
+\begin{itemize}
+    \item We diagnose redundancy in diffusion LLM decoding and introduce KV drift as a principled signal for adaptive cache management. 
+    \item We propose {\bf Elastic-Cache}, the first (to our best knowledge) adaptive, layer-aware KV refresh policy for diffusion LLMs that jointly decides {\em when} to recompute (attention-aware drift test) and {\em where} to recompute (depth-selective updates). 
+    \item We develop {\em block-wise MASK caching} to eliminate needless updates outside the prediction window. We provide comprehensive empirical experiments and ablations showing that our {\bf Elastic-Cache} preserves generation quality while substantially reducing decoding latency across tasks and model scales.
+\end{itemize}
+\vspace{-0.15in}
+\section{Preliminary}
+\vspace{-0.05in}
+\subsection{Masked Diffusion Models}
+
+Masked Diffusion Models (MDMs), absorbing-state discrete diffusion, build on D3PM~\citep{austin2021structured} and its continuous-time variant~\citep{campbell2022continuous}, replacing tokens with a special $\text{MASK}$ along a forward process~\citep{sahoo2024simple,shi2024simplified} at timestep $t$:
+\begin{equation}\label{eq:forward_mask}
+q_{t|0}(\boldsymbol{x}_t | \boldsymbol{x}_0) = \prod_{i=1}^L q_{t|0}(x_t^i | x_0^i) = \prod_{i=1}^L \text{Cat}(x_t^i; (1-t)\delta_{x_0^i} + t \delta_{\text{MASK}})
+\end{equation}
+where $t \in [0, 1]$ controls interpolation between the original data $\boldsymbol{x}_0$ (at $t=0$) and a fully masked sequence (at $t=1$), $\text{Cat}(\cdot)$ denotes the categorical distribution. 
+A parametric model $p_{\boldsymbol{\theta}}$ learns the reverse denoising; generation starts from all $\text{MASK}$ and iteratively unmasks by sampling $p_{\boldsymbol{\theta}}(x_0^i|\boldsymbol{x}t)$. Recent theory (MDLM~\citep{shi2024simplified,sahoo2024simple}, RADD~\citep{ou2024your}) simplifies training from a variational bound to a reweighted cross-entropy over masked positions:
+\begin{equation}
+\mathcal{L}_{\text{MDM}} = \int_{0}^1 \frac{1}{t} \mathbb{E}_{q_{t|0}(\boldsymbol{x}_t | \boldsymbol{x}_0)} \left[ \sum_{i: x_t^i = \text{MASK}} -\log p_{\boldsymbol{\theta}}(x_0^i | \boldsymbol{x}_t) \right] \mathrm{d}t
+\end{equation}
+This formulation scales to LLMs as diffusion language models (DLMs), with LLaDA~\citep{nie2025largelanguagediffusionmodels} and Dream-7B~\citep{dream2025} matching autoregressive performance while enabling parallel decoding and flexible infilling.
+
+\vspace{-0.1in}
+\subsection{Key-Value Cache in Transformers}
+Transformer-based language models achieve computational efficiency during autoregressive generation through Key-Value (KV) caching~\citep{pope2023efficiently}. In causal attention, each layer projects the current hidden state $\mathbf{H}^t$ into query, key, and value representations using learned projection matrices $\mathbf{W_Q}, \mathbf{W_K}, \mathbf{W_V}$. At decoding step $t$, the attention computation for the current token follows:
+\begin{equation}
+\mathbf{A}^t_{[t]} = \text{softmax}\left(\frac{\mathbf{Q}^t_{[t]}(\mathbf{K}^t_{[1:t]})^\top}{\sqrt{d_k}}\right)\mathbf{V}^t_{[1:t]}, \quad \text{KV cache: } \left \{\begin{matrix}
+\mathbf{K}^t_{[1:t]} = \text{concat}(\mathbf{K}^{t-1}_{[1:t-1]}, \mathbf{K}^{t}_{[t]}), \\ \mathbf{V}^t_{[1:t]} = \text{concat}(\mathbf{V}^{t-1}_{[1:t-1]}, \mathbf{V}^{t}_{[t]})
+\end{matrix} \right..
+\end{equation}
+To avoid redundant computation, previous key-value pairs are cached and reused. This caching strategy is effective because in causal attention, previously computed key-value pairs remain invariant throughout decoding ($\mathbf{K}^{t-1}_{[1:t-1]} = \mathbf{K}^{t}_{[1:t-1]}$), enabling efficient reuse without affecting model output.
+
+\noindent{\bf KV-Cache in Bidirectional Attention.} However, in diffusion models, bidirectional attention allows all positions to attend to each other, invalidating the invariance assumption of traditional KV-cache. As dKV-Cache~\citep{ma2025dkv} observes, token representations evolve across denoising steps, making cached keys/values stale. This dynamic behavior necessitates rethinking caching strategies for diffusion language models.
+
+
+\begin{figure}
+    \centering
+    \includegraphics[width=1.0\linewidth]{images/motivation.pdf}
+    \vspace{-0.25in}
+    \caption{Visualization of our motivation. (a) MASK tokens located near each other receive high attention, while those situated far apart have minimal influence. (b) Over time, the representations in the KV states of cached tokens evolve, with deeper layers experiencing more substantial changes. (c) The changes in attention weights of most-attended tokens exhibit similar patterns to the changes in KV states of all cached tokens. (d) KV states of the most-attended tokens have the least changes.}
+    \vspace{-0.1in}
+    \label{fig:motivation}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1\linewidth]{images/overview.pdf}
+      \vspace{-0.2in}
+    \caption{Illustration of the Key-Value cache method for diffusion LLMs. (a) The fast-dLLM \citep{wu2025fast} block-wise decoding method caches the Key-Value of all tokens outside the current block at each step. The KV cache is updated after completing a block of decoding. (b) Our proposed method, Elastic-Cache, caches the key-value of tokens outside a sliding window that flexibly moves through the sentence from left to right at each iteration. When the attention weights corresponding to the most-attended tokens (one for each layer) change significantly at a layer $l$, we start recomputing the KV cache from layer $l+1$ to the last layer.}
+    \label{fig:overview}
+      \vspace{-0.1in}
+\end{figure}
+
+\vspace{-0.1in}
+\section{Methodology}
+\vspace{-0.05in}
+
+\subsection{Our Framework Overview and Motivation}
+
+Diffusion LLMs differ from autoregressive decoders in that their key–value (KV) states evolve across denoising steps due to bidirectional dependencies. Our objective is to adaptively decide \emph{when} and \emph{where} to recompute the KV cache to preserve accuracy while minimizing latency. Baseline decoders recompute QKV for all tokens and layers at every step, despite \emph{negligible} KV changes for most steps and especially in \emph{shallow} layers (Fig.~\ref{fig:motivation}b); deeper layers exhibit larger drift. Rather than fixed-period refreshes \citep{wu2025fast, ma2025dkv, liu2025dllm}, we propose \textbf{Elastic-Cache}, the first (to our knowledge) \emph{adaptive, layer-aware} KV update policy for diffusion LLMs that jointly optimizes timing and location of recomputation.
+
+Our design is driven by three observations. (1) Distant \texttt{MASK} tokens mainly act as a length prior and exert minimal influence on the current unmasking, we therefore block-cache their KV beyond the active prediction window (Fig.~\ref{fig:motivation}a). (2) KV drift grows with depth, refresh should start at a boundary layer and apply only to deeper layers (Fig.~\ref{fig:motivation}b). (3) The most-attended tokens typically shows the smallest KV change (Fig.~\ref{fig:motivation}d), giving a conservative lower bound for others, we use its drift as a lightweight trigger for refresh (Fig.~\ref{fig:motivation}c). Fig.~\ref{fig:overview} summarizes the pipeline.
+To the end, we proposed Elastic-Cache, a flexible method for key-value caching in diffusion large language models. Fig.~\ref{fig:overview} provides a visual representation of the overall pipeline of our proposed method.
+
+\vspace{-0.05in}
+\subsection{Sliding window decoding and KV caching}
+Formally, let $\mathcal{I} = \{1, 2, \ldots, N\}$ represent all positions. At decoding step $t$, let $\mathcal{D}^t$ denote newly decoded positions and $\mathcal{M}^t$ denote remaining masked positions, where $\mathcal{M}^{t-1} = \mathcal{M}^{t} \cup \mathcal{D}^t$. Denotes $\mathcal{D}^{<t} = \bigcup_{i} \{\mathcal{D}^{i}\}_{i=1}^t$ as the set of all decoded tokens up to time step $t$. Initially, at $t=0$ we compute the attention for each layer $l$: 
+\begin{equation}
+\label{eq:update cache}
+\mathbf{A}^{0,l}_{[\mathcal{I}]} = \text{softmax}\left(\frac{\mathbf{Q}^{0,l}_{[\mathcal{I}]}(\mathbf{K}^{0,l}_{[\mathcal{I}]})^\top}{\sqrt{d_k}}\right)\mathbf{V}^{0,l}_{[\mathcal{I}]},
+\quad \quad \quad \text{initialize KV cache: } \left \{\begin{matrix}
+\mathbf{\tilde K}^{0,l}_{[\mathcal{I}]} = \mathbf{K}^{0,l}_{[\mathcal{I}]} \\ \mathbf{\tilde V}^{0,l}_{[\mathcal{I}]} = \mathbf{V}^{0,l}_{[\mathcal{I}]}
+\end{matrix} \right..
+\end{equation}
+For each subsequence iteration $t$ ranging from 1 to $T$, The model perform prediction for newly decoded position $\mathcal{D}^{t}$ and the remaining masked position $\mathcal{M}^{t}$. To enhance efficiency, we only perform predictions for masked positions that are closest to the left and form a sliding window of size $\beta$, denoted as $\mathcal{M}^{t}_{\beta} = \mathcal{M}^{t}_{[1:\beta]}$. We also have that $\mathcal{M}^{t-1}_{\beta} = \mathcal{M}^{t}_{\beta} \cup \mathcal{D}^{t}$. We observe that masked tokens within the sliding window attend closely to one another, while those outside receive little attention. This allows safe reuse of cached KV for out-of-window MASKs without affecting current predictions. At step $t$, attention is computed only for tokens in the sliding window $\mathcal{M}^{t-1}_\beta$:
+\begin{equation}
+\label{eq:kv cache}
+\mathbf{A}^{t,l}_{[\mathcal{M}^{t-1}_{\beta}]} = \text{softmax}\left(\frac{\mathbf{Q}^{t,l}_{[ \mathcal{M}^{t-1}_\beta]}(\mathbf{\tilde K}^{t,l}_{[\mathcal{I}]})^\top}{\sqrt{d_k}}\right)\mathbf{\tilde V}^{t,l}_{[\mathcal{I}]}, \quad \text{update cache: } \left\{ \begin{matrix}
+    \mathbf{\tilde K}^{t,l}_{[\mathcal{M}^{t-1}_\beta]} &= \mathbf{K}^{t,l}_{[\mathcal{M}^{t-1}_\beta]} \\
+\mathbf{\tilde V}^{t,l}_{[\mathcal{M}^{t-1}_\beta]} &= \mathbf{V}^{t,l}_{[\mathcal{M}^{t-1}_\beta]}
+\end{matrix} \right..
+\end{equation}
+While sliding window decoding shares similarities with Fast-dLLM’s block-wise KV caching~\citep{wu2025fast} (see Fig.~\ref{fig:overview}), it offers key improvements. By predicting nearby tokens together, it reduces cache loss for distant MASK tokens. In contrast, block-wise decoding may miss MASK tokens near block ends, resulting in less efficient predictions due to overly aggressive context caching.
+
+\begin{algorithm*}[t]
+\caption{The Elastic-Cache Algorithm}
+\begin{algorithmic}[1]
+\State \textbf{Require:} Prompt $\mathbf{x}_{\text{prompt}}$, Sliding window size $\beta$, Update threshold $\gamma$, Generation length $N$.
+\State \textbf{Initialize:} $\mathbf{x}^0 \leftarrow \{\mathbf{x}_{\text{prompt}}; \texttt{[MASK]}, \dots, \texttt{[MASK]}\}$; \quad $P \leftarrow \texttt{length}(\mathbf{x}_{\text{prompt}})$;
+\State $t \leftarrow 1$; \quad $\mathcal{D}^{1} \leftarrow \{1, \dots,P\}$; \quad $\mathcal{M}^1 \leftarrow \{P+1,\dots,P+N\}$; \quad $\mathcal{T}^0 \leftarrow \emptyset $;
+\While{$\mathcal{M}^t \ne \emptyset$}
+    \State $\mathcal{M}^t_\beta \leftarrow \mathcal{M}^t_{[:\beta]}$; \quad $\mathcal{Q}^t \gets \mathcal{T}^{t-1} \cup \mathcal{M}^{t-1}_\beta$; \quad $\mathbf{H}^{t,0}_{[\mathcal{Q}^t]} \leftarrow \texttt{Embedding}(\mathbf{x}^{t}_{[\mathcal{Q}^t]})$; \quad $l^* \gets \infty$
+    \For{$l = 1, \dots, L$}
+        \If{$l > l^*$} \hfill \textcolor{updategreen}{\textit{// Cache Update}}
+            \State $\mathbf{\tilde H}^{t,l}_{[\mathcal{I}]}, \mathbf{\tilde K}^{t,l}_{[\mathcal{I}]}, \mathbf{\tilde V}^{t,l}_{[\mathcal{I}]} \gets\texttt{cache}(\mathcal{I})$; \quad $\mathbf{Q}^{t,l}_{[\mathcal{I}]}, \mathbf{K}^{t,l}_{[\mathcal{I}]}, \mathbf{V}^{t,l}_{[\mathcal{I}]} = \texttt{FFN}(\mathbf{ H}^{t,l}_{[\mathcal{I}]})$ 
+            \State $\mathbf{ H}^{t,l+1}_{[\mathcal{I}]}, \mathbf{S}^{t,l}_{[\mathcal{T}^{t-1}]} \gets \texttt{MHA}(\mathbf{Q}^{t,l}_{[\mathcal{I}]}, \mathbf{K}^{t,l}_{[\mathcal{I}]}, \mathbf{V}^{t,l}_{[\mathcal{I}]})$
+        \Else \hfill \textcolor{updategreen}{\textit{// Cache Reuse}}
+            \State $\mathbf{\tilde H}^{t,l}_{[\mathcal{Q}^t]}, \mathbf{\tilde K}^{t,l}_{[\mathcal{Q}^t]}, \mathbf{\tilde V}^{t,l}_{[\mathcal{Q}^t]} \gets\texttt{cache}(\mathcal{Q}^t)$; \quad $\mathbf{Q}^{t,l}_{[\mathcal{Q}^t]}, \mathbf{K}^{t,l}_{[\mathcal{Q}^t]}, \mathbf{V}^{t,l}_{[\mathcal{Q}^t]} = \texttt{FFN}(\mathbf{ H}^{t,l}_{[\mathcal{Q}^t]})$ 
+            \State $\mathbf{ H}^{t,l+1}_{[\mathcal{Q}^t]}, \mathbf{S}^{t,l}_{[\mathcal{T}^{t-1}]} \gets \texttt{MHA}(\mathbf{Q}^{t,l}_{[\mathcal{Q}^t]}, \mathbf{\tilde K}^{t,l}_{[\mathcal{I}]}, \mathbf{\tilde V}^{t,l}_{[\mathcal{I}]})$
+            \State $\sigma^{t,l} \gets \texttt{cosine\_similarity}(\mathbf{S}^{t-1,l}_{[\mathcal{T}^{t-1}]}, \mathbf{S}^{t,l}_{[\mathcal{T}^{t-1}]})$
+            \If{$\sigma^{t,k} < \gamma$} \hfill \textcolor{updategreen}{\textit{// Start update cache from layer $l+1$}}
+                \State $l^* \gets l$; \quad $ \mathbf{H}^{t,l+1}_{[\mathcal{I}]}\gets \texttt{get\_cached\_state}( \mathbf{H}^{t,l+1}_{[\mathcal{Q}^t]})$
+            \EndIf
+        \EndIf
+        \State Get the most-attended token: $\mathcal{T}^{t,l} \gets \arg\max_{k \in \mathcal{D}^{<t}} \sum_{q \in \mathcal{M}^{t}_\beta} \mathbf{S}^{t,l}_{[q, k]}$
+    \EndFor
+
+    \State Decode new tokens: $\mathbf{x}^{t+1},\mathcal{D}^{t+1} \leftarrow \texttt{decode}(\mathbf{x}^t, \mathcal{M}^t_\beta)$ 
+    
+    \State Update state: $\mathcal{M}^{t+1} \leftarrow \mathcal{M}^{t} \setminus \mathcal{D}^{t+1} $; \quad $\mathcal{T}^{t} = \bigcup_{l} \{\mathcal{T}^{t,l}\}_{l=1}^L$ \quad $t \gets t + 1$ \hfill \textcolor{updategreen}{\textit{// State Update}}
+\EndWhile
+\State \textbf{return} $\mathbf{x}^{t-1}$
+\end{algorithmic}
+\label{alg:elastic-cache}
+\end{algorithm*}
+
+\subsection{Attention-aware KV Cache Update}
+The most important novelty of our proposed method is to automatically determine whether to update the KV cache to preserve accuracy while minimizing latency. Our method leverages the awareness of the model's attention weights to identify when the KV cache undergoes significant changes.
+At time step $t$ and layer $l$, we determine the token that receives the most frequent attention from other tokens based on the attention weights corresponding to the current model’s prediction for $\mathcal{M}^{t}_{\beta}$. 
+\vspace{-0.1in}
+\begin{equation}
+    \mathcal{T}^{t,l} = \arg\max_{k \in \mathcal{D}^{<t}} \sum_{q \in \mathcal{M}^{t}_\beta} \mathbf{S}^{t,l}_{[q, k]},
+    \quad \quad \quad \text{where: } \mathbf{S}^{t,l}_{[\mathcal{M}^{t}_{\beta}]} = \text{softmax}\left(\frac{\mathbf{Q}^{t,l}_{[ \mathcal{M}^{t}_\beta]}(\mathbf{\tilde K}^{t,l}_{[\mathcal{I}]})^\top}{\sqrt{d_k}}\right).
+\end{equation}
+Here, we focus solely on the most-attended token among the current decoded tokens $\mathcal{D}^{<t}$. This is because the remaining MASK tokens either fall within the sliding window of predictions or have negligible influence on the unmasking tokens (Fig.~\ref{fig:motivation}a). We obtain one most-attended token per layer and compile the set of most-attended tokens, denoted as  $\mathcal{T}^{t} = \bigcup_{l} \{\mathcal{T}^{t,l}\}_{l=1}^L$. In practice, the most-attended token for a layer often overlaps with tokens from other layers, resulting in a relatively limited number of most-attended tokens being available at any given time.
+
+$\mathcal{T}^t$, besides being the tokens that have the most influence on the predictions’ outcome, also signify the least changes among the cached decoded tokens (Fig. \ref{fig:motivation}d). Therefore, we use $\mathcal{T}^t$ as a lightweight trigger for our cache update mechanism. Without updating all cached tokens, we only frequently update the most-attended tokens $\mathcal{T}^t$ to measure the degree of changes for all other cached tokens. Ideally, since $\mathcal{T}^t$ have the least change among the decoded tokens, we expect that when $\mathcal{T}^t$ change significantly, the rest of the decoded tokens will also change significantly. Therefore, we add $\mathcal{T}^{t-1}$ to the sliding window at step $t$: $\mathcal{T}^{t-1} \cup \mathcal{M}^{t-1}_{\beta}$. We then measure the changes in attention weights of $\mathcal{T}^t$ between the current and previous steps, $t$ and $t-1$, using cosine similarity.
+\begin{equation}
+ l^* = \left\{ \begin{matrix}
+     l & \text{if: }  \sigma^{t,l} < \gamma \\ 
+     \infty & \text{othewise}
+ \end{matrix} \right.,  \quad
+ \text{Cosine Similarity:} \quad \sigma^{t,l} =  \frac{\|\mathbf{S}^{t-1,l}_{[\mathcal{T}^{t-1}]} \cdot \mathbf{S}^{t,l}_{[\mathcal{T}^{t-1}]}\|}{\|\mathbf{S}^{t-1,l}_{[\mathcal{T}^{t-1}]}\| \cdot \|\mathbf{S}^{t,l}_{[\mathcal{T}^{t-1}]}\|}.
+\end{equation}
+The changes in attention $\mathbf{S}^{t,l}$ directly affect the output of the current layer or the input of the next layer $\mathbf{H}^{t,l+1}$. This implies that our cached values are diverging from the actual values, necessitating an update. When a layer $l^*$ observes significant changes in attention weights $\sigma^{t,l} < \gamma$, we initiate the update of the KV cache for the subsequent layers, starting from $l^* + 1$ and continuing until the last layer $L$. To achieve this, we initialize the hidden states of all cached tokens with the states $\mathbf{\tilde H}^{t,l+1}_{[\mathcal{I}]}$, which have been saved and updated using patterns similar to $\mathbf{\tilde K}^{t,l+1}_{[\mathcal{I}]}$ and $\mathbf{\tilde V}^{t,l+1}_{[\mathcal{I}]}$.
+\begin{equation}
+    \text{Update state: } \mathbf{\tilde H}^{t,l+1}_{[\mathcal{M}^{t-1}_\beta]} = \mathbf{H}^{t,l+1}_{[\mathcal{M}^{t-1}_\beta]}, \quad \text{Initialize: } \mathbf{Q}^{t,l+1}_{[\mathcal{I}]}, \mathbf{K}^{t,l+1}_{[\mathcal{I}]}, \mathbf{V}^{t,l+1}_{[\mathcal{I}]} = \text{linear}(\mathbf{\tilde H}^{t,l+1}_{[\mathcal{I}]}) 
+\end{equation}
+We then update and overwrite the KV cache using the same process as initially at $t=0$, as described in Eq.~\ref{eq:update cache}. If none of the layers satisfy $\sigma^{t,l} < \gamma$, we continue to reuse our KV cache for future predictions.
+
+We didn’t directly compare the hidden state $\mathbf{H}^{t,l+1}$ and $\mathbf{H}^{t-1,l+1}$ because their changes depend on various network components. The error in measurement could be amplified by the divergence between the cached value and the actual value (including Key-Value states). 
+
+On the other hand, the changes in attention weights are closely linked to the source of the change in Key-Value states, which is the bidirectional attention mechanism in diffusion LLMs. Intuitively, the changes in attention weights become significant when new decoded tokens receive high attention and alter the attention output computed in the past when they were still masked. Consequently, the changes in attention weights exhibit very similar patterns to the changes in Key-Value states during decoding, as illustrated in Fig.~\ref{fig:motivation}b and Fig.~\ref{fig:motivation}c.
+
+Our approach is formally grounded in \textbf{Theorem \ref{thm:attention-drift}} (Appendix), which proves that the most-attended token $\mathcal{T}^{t,\ell}$ has KV drift bounded by $\Delta^{t,\ell}_{\mathcal{T}^{t,\ell}} \leq \bar{\Delta}^{t,\ell} + O\left(\frac{\sqrt{d_k}}{R_\ell\sqrt{N}}\right)$, where the error term scales negligibly with typical transformer dimensions. This establishes that monitoring attention patterns of most-attended tokens provides a computationally efficient and theoretically sound proxy for overall KV drift.
+
+We use the hyper-parameter $\gamma$ to set the trigger for automatic cache updates. As shown in Fig.~\ref{fig:motivation}c, the attention weights' cosine similarity landscapes influence this. A higher $\gamma$ results in more frequent and extensive cache updates across multiple layers, while a lower $\gamma$ triggers updates less frequently. This flexibility allows us to effectively manage the trade-off between accuracy and latency. Our overall algorithm is described in Algorithm \ref{alg:elastic-cache}.
+
+\vspace{-0.15in}
+\section{Experiments}
+\vspace{-0.1in}
+
+\subsection{Experimental Setup}
+\vspace{-0.05in}
+\noindent{\bf Implementation Details.}
+All our runs use a single NVIDIA A100 80GB. We evaluate \textbf{Elastic-Cache} on LLaDA-Instruct~\citep{nie2025large}, LLaDA-1.5~\citep{zhu2025llada15variancereducedpreference}, and multimodal LLaDA-V~\citep{you2025llada} across MBPP~\citep{austin2021program}, HumanEval~\citep{chen2021evaluating}, MATH~\citep{hendrycks2021measuring}, GSM8K~\citep{cobbe2021training}, MathVista~\citep{lu2023mathvista}, and MathVerse~\citep{zhang2024mathverse}. Default hyperparameters: attention threshold $\gamma$=0.9, parallel-decoding confidence $\epsilon$=0.9, cache block size 32. For fair comparison, we re-run LLaDA~\citep{nie2025large} and Fast-dLLM~\citep{wu2025fast} under the same hardware/software.
+\noindent{\bf Evaluation Framework and Metrics.}
+We use \texttt{lm-eval-harness}~\citep{eval-harness}. Throughput is tokens/sec averaged until emitting, matching Fast-dLLM's protocol~\citep{wu2025fast}. 
+Accuracy metrics: GSM8K: 5-shot \texttt{flexible\_extract}~\citep{cobbe2021training}; MATH: 4-shot \texttt{math\_verify} (\texttt{minerva\_math})~\citep{hendrycks2021measuring}; HumanEval—0-shot with the Fast-dLLM post-processing~\citep{chen2021evaluating,wu2025fast}; MBPP—3-shot \texttt{pass@1}~\citep{austin2021program}. 
+For LLaDA-V, we adopt the official pipeline with \texttt{lmms-eval}~\citep{zhang2024lmmsevalrealitycheckevaluation,lmms_eval2024}: MathVista: \texttt{gpt\_eval\_score}~\citep{lu2023mathvista}; MathVerse: \texttt{gpt\_eval\_score} on \texttt{mathverse\_testmini\_vision\_dominant}~\citep{zhang2024mathverse}.
+
+\noindent{\bf Confidence-Aware Decoding.} We employ confidence-aware decoding strategies from Fast-dLLM~\citep{wu2025fast}, which select only tokens with confidence scores exceeding a specified threshold ($\epsilon$), instead of unmasking a fixed number of tokens per step, as in the baseline Diffusion LLM. This straightforward yet effective approach accelerates Diffusion LLM inference by enabling more tokens to be predicted concurrently at each iteration, contingent upon the model’s performance. Consequently, we concentrate on comparing the acceleration achieved by the KV caching method under the same decoding strategies.
+
+\vspace{-0.05in}
+\subsection{Performance and Efficiency Evaluation}
+
+Across Tables~\ref{tab:lla-instruct}, \ref{tab:lla-1.5-instruct}, and \ref{tab:perf}, our proposed \textbf{Elastic-Cache} delivers substantial throughput gains for diffusion LLMs with minimal accuracy loss. By adaptively updating the cache only when necessary, it achieves a speedup of up to 45.1$\times$ over the standard baseline. While maintaining accuracy within 1$\sim$2\% on MATH and HumanEval, it also achieves higher accuracy on GSM8K and MBPP. Compared to Fast-dLLM~\citep{wu2025fast}, Elastic-Cache consistently attains greater tokens/sec at better accuracy. Elastic-Cache also generalizes to Dream-7B (Table~\ref{tab:dream}), achieving 21.4$\times$ and 5.5$\times$ speedups on GSM8K and HumanEval respectively.
+
+As presented in Table~\ref{tab:lla-instruct}, on LLaDA-Instruct, \textbf{Elastic-Cache} reaches 90.1 t/s on GSM8K (512 tokens; 25.2$\times$ over baseline) at 77.71\% accuracy, surpassing Fast-dLLM's 44.0 t/s @ 74.83\%. On LLaDA-1.5 (Table~\ref{tab:lla-1.5-instruct}), our approach yields even greater gains, including 45.1$\times$ on  GSM8K with 512 Gen Length, with an accuracy of 81.35\% (baseline 81.35\%). This observation indicates that Elastic-Cache performs better when the model’s predictions are more accurate. The reason behind this could be the close relationship between our approach and attention scores. Intuitively, accurate predictions are associated with meaningful attention scores with fewer outliers, which makes our approach operate more smoothly.
+
+We also observed that in most settings, Elastic-Cache provides higher throughput for longer generation lengths, whereas this is the opposite for Fast-dLLM~\citep{wu2025fast}, as it often experiences reduced throughput as the generation length increases. The advantages of our approach stem from the fixed-size sliding window and automatic cache update, which minimizes the dependency of throughput on the generation length.
+
+In the multimodal setting (LLaDA-V; Table~\ref{tab:perf}), \textbf{Elastic-Cache} raises MathVerse-256 throughput to 32.3 t/s from Fast-dLLM's 30.3 t/s while maintaining 29.19\% accuracy, demonstrating robustness beyond text-only tasks. The significant improvement of Elastic-Cache over baselines across various settings suggests that our method is broadly applicable and has high scalability potential.
+
+
+\begin{table}[t]
+\centering
+\caption{Comprehensive benchmark results on the LLaDA-Instruct suite. Each cell shows accuracy (top) and decoding throughput in tokens/sec with relative speedup to the LLaDA baseline (bottom, blue: t/s / orange: speedup). Highlighted cells denote the highest throughput and speedup per configuration. The highest accuracy is bolded.}
+\label{tab:lla-instruct}
+\vspace{-0.1in}
+\resizebox{0.8\linewidth}{!}{ 
+\begin{tabular}{lc|c|c:ccc}
+\toprule
+\multicolumn{1}{c}{} &
+\multicolumn{1}{c|}{} &
+\multicolumn{1}{c|}{} &
+\multicolumn{3}{c}{\bfseries Confident-Aware Decoding}\\
+
+\multicolumn{1}{c}{\bfseries Benchmark} &
+\multicolumn{1}{c|}{\bfseries Gen Length} &
+\multicolumn{1}{c|}{\bfseries LLaDA} &
+\multicolumn{1}{c:}{\bfseries LLaDA} &
+\multicolumn{1}{c}{\bfseries Fast-dLLM} &
+\multicolumn{1}{c}{\bfseries Elastic-Cache}\\
+
+\midrule
+\multirow{3}{*}{GSM8K (5‑shot)} 
+  & 256 
+    & \makecell{ 78.01 \\ {\footnotesize \textcolor{blue}{7.3} (\textcolor{orange}{1.0\(\times\)})}} 
+    & \makecell{ 78.62 \\ {\footnotesize \textcolor{blue}{22.8} (\textcolor{orange}{3.1\(\times\)})}}
+    & \makecell{ 77.94 \\ {\footnotesize \textcolor{blue}{53.7} (\textcolor{orange}{7.7\(\times\)})}}
+    &  \makecell{\bf 78.24 \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{58.0} (\textcolor{orange}{8.2\(\times\)})}} \\
+  & 512 
+    & \makecell{ 77.10 \\ {\footnotesize \textcolor{blue}{3.6} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 77.33 \\ {\footnotesize \textcolor{blue}{18.6} (\textcolor{orange}{5.2\(\times\)})}}
+    & \makecell{ 74.83 \\ {\footnotesize \textcolor{blue}{44.0} (\textcolor{orange}{12.3\(\times\)})}}
+    & \makecell{\bf 77.71 \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{90.1} (\textcolor{orange}{25.2\(\times\)})}} \\
+\midrule
+\multirow{3}{*}{MATH (4‑shot)} 
+  & 256 
+    & \makecell{ 33.58 \\ {\footnotesize \textcolor{blue}{9.5} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 33.28 \\ {\footnotesize \textcolor{blue}{25.8} (\textcolor{orange}{2.7\(\times\)})}}
+    & \makecell{ 32.50 \\ {\footnotesize \textcolor{blue}{49.0} (\textcolor{orange}{5.1\(\times\)})}}
+    & \makecell{ \textbf{33.14} \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{48.7} (\textcolor{orange}{5.1\(\times\)})}} \\
+  & 512 
+    & \makecell{ 37.20 \\ {\footnotesize \textcolor{blue}{7.1} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 36.82 \\ {\footnotesize \textcolor{blue}{24.0} (\textcolor{orange}{3.4\(\times\)})}}
+    & \makecell{ 35.70 \\ {\footnotesize \textcolor{blue}{52.8} (\textcolor{orange}{7.4\(\times\)})}}
+    & \makecell{\textbf{36.60} \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{59.3} (\textcolor{orange}{7.9\(\times\)})}} \\
+\midrule
+\multirow{3}{*}{HumanEval (0‑shot)} 
+  & 256 
+    & \makecell{ 40.85 \\ {\footnotesize \textcolor{blue}{33.3} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ {42.07} \\ {\footnotesize \textcolor{blue}{102.1} (\textcolor{orange}{3.1\(\times\)})}}
+    & \makecell{ 37.20 \\ {\footnotesize \textcolor{blue}{99.8} (\textcolor{orange}{3.0\(\times\)})}}
+    & \makecell{\bf 40.24 \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{160.5} (\textcolor{orange}{4.8\(\times\)})}} \\
+  & 512 
+    & \makecell{ 43.90 \\ {\footnotesize \textcolor{blue}{17.7} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 43.29 \\ {\footnotesize \textcolor{blue}{51.6} (\textcolor{orange}{2.9\(\times\)})}}
+    & \makecell{ 45.73 \\ {\footnotesize \textcolor{blue}{76.1} (\textcolor{orange}{4.3\(\times\)})}}
+    &\makecell{\textbf{46.34} \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{100.7} (\textcolor{orange}{5.0\(\times\)})}} \\
+\midrule
+\multirow{3}{*}{MBPP (3‑shot)} 
+  & 256 
+    & \makecell{ 29.80 \\ {\footnotesize \textcolor{blue}{6.5} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 30.00 \\ {\footnotesize \textcolor{blue}{23.4} (\textcolor{orange}{3.6\(\times\)})}}
+    & \makecell{ 25.40 \\ {\footnotesize \textcolor{blue}{45.1} (\textcolor{orange}{7.0\(\times\)})}}
+    & \makecell{\textbf{32.2} \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{46.9} (\textcolor{orange}{7.3\(\times\)})}} \\
+  & 512 
+    & \makecell{ 15.0 \\ {\footnotesize \textcolor{blue}{4.7} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 15.0 \\ {\footnotesize \textcolor{blue}{20.8} (\textcolor{orange}{4.4\(\times\)})}}
+    & \makecell{ 13.6 \\ {\footnotesize \textcolor{blue}{44.7} (\textcolor{orange}{9.5\(\times\)})}}
+    & \makecell{ \textbf{15.6} \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{63.0} (\textcolor{orange}{13.4\(\times\)})}} \\
+\bottomrule
+\end{tabular}
+}
+\vspace{-0.1in}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Comparison with additional KV caching methods on GSM8K (5-shot, 512 tokens) using LLaDA-1.5. Each cell shows accuracy (top) and throughput in t/s with relative speedup (bottom, blue: t/s; orange: speedup).}
+\label{tab:additional-baseline}
+\vspace{-0.1in}
+\resizebox{0.95\linewidth}{!}{
+\begin{tabular}{lccccc}
+\toprule
+\textbf{LLaDA-1.5} & \textbf{dKV-Cache} & \textbf{dLLM-Cache} & \textbf{DeepCache (N=10)} & \textbf{DeepCache (N=20)} & \textbf{Elastic-Cache} \\
+\midrule
+\makecell{81.35 \\ {\footnotesize \textcolor{blue}{2.6} (\textcolor{orange}{1.0$\times$})}} & 
+\makecell{67.02 \\ {\footnotesize \textcolor{blue}{14.82} (\textcolor{orange}{5.7$\times$})}} & 
+\makecell{80.97 \\ {\footnotesize \textcolor{blue}{16.84} (\textcolor{orange}{6.5$\times$})}} & 
+\makecell{83.1 \\ {\footnotesize \textcolor{blue}{58.4} (\textcolor{orange}{22.5$\times$})}} & 
+\makecell{81.4 \\ {\footnotesize \textcolor{blue}{60.9} (\textcolor{orange}{23.4$\times$})}} & 
+\makecell{\textbf{83.7} \\ \cellcolor{yellow!20}{\footnotesize \textcolor{blue}{139.4} (\textcolor{orange}{53.6$\times$})}} \\
+\bottomrule
+\end{tabular}
+}
+\vspace{-0.1in}
+\end{table}
+
+\noindent{\bf Comparison with Additional KV Caching Methods.}
+To further validate the effectiveness of Elastic-Cache, we compare against dLLM-Cache~\citep{ma2025dkv} and DeepCache~\citep{ma2024deepcache} on GSM8K (512 tokens) with LLaDA-1.5 in Table~\ref{tab:additional-baseline}. DeepCache uses fixed-interval cache updates with intervals $N=10$ and $N=20$. Our method achieves 139.4 t/s at 83.7\% acc, significantly outperforming dLLM-Cache (16.84 t/s, 80.97\%) and DeepCache variants (58.4-60.9 t/s, 81.4-83.1\%), demonstrating the advantages of adaptive, attention-aware cache over fixed-schedule approaches.
+
+
+% llada 1.5
+\begin{table}[t]
+\centering
+\caption{Comprehensive benchmark results on the LLaDA-1.5 suite. Each cell shows accuracy (top) and decoding throughput in tokens/sec with relative speedup to the LLaDA baseline (bottom, blue: t/s; orange: speedup). Bold cells denote the highest throughput and speedup per configuration.}
+\label{tab:lla-1.5-instruct}
+\vspace{-0.1in}
+\resizebox{0.8\linewidth}{!}{ 
+\begin{tabular}{lc|c|c:ccc}
+\toprule
+\multicolumn{2}{c|}{\bfseries} &
+\multicolumn{1}{c|}{\bfseries} &
+\multicolumn{4}{c}{\bfseries Confident-Aware Decoding}\\
+
+\multicolumn{1}{c}{\bfseries Benchmark} &
+\multicolumn{1}{c|}{\bfseries Gen Length} &
+\multicolumn{1}{c|}{\bfseries LLaDA-1.5} &
+\multicolumn{1}{c:}{\bfseries LLaDA-1.5} &
+\multicolumn{1}{c}{\bfseries Fast-dLLM} &
+\multicolumn{1}{c}{\bfseries Elastic-Cache}\\
+
+\midrule
+\multirow{3}{*}{GSM8K (5‑shot)} 
+  & 256 
+    & \makecell{ 80.36 \\ {\footnotesize \textcolor{blue}{6.7} (\textcolor{orange}{1.0\(\times\)})}} 
+    & \makecell{ 80.44 \\ {\footnotesize \textcolor{blue}{22.5} (\textcolor{orange}{3.3\(\times\)})}}
+    & \makecell{ 80.59 \\ {\footnotesize \textcolor{blue}{51.2} (\textcolor{orange}{7.6\(\times\)})}}
+    & \makecell{\bf 81.50 \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{58.0} (\textcolor{orange}{8.7\(\times\)})}} \\
+  & 512 
+    & \makecell{ 81.35 \\ {\footnotesize \textcolor{blue}{2.6} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 81.88 \\ {\footnotesize \textcolor{blue}{17.2} (\textcolor{orange}{6.6\(\times\)})}}
+    & \makecell{ 80.82 \\ {\footnotesize \textcolor{blue}{36.8} (\textcolor{orange}{14.1\(\times\)})}}
+    & \makecell{ \textbf{81.35} \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{117.2} (\textcolor{orange}{45.1\(\times\)})}} \\
+\midrule
+
+\multirow{3}{*}{MATH (4‑shot)} 
+  & 256 
+    & \makecell{ 33.52\\ {\footnotesize \textcolor{blue}{8.5} (\textcolor{orange}{1.0\(\times\)})}} 
+    & \makecell{ 33.60\\ {\footnotesize \textcolor{blue}{22.3} (\textcolor{orange}{2.6\(\times\)})}} 
+    & \makecell{ 32.74\\ {\footnotesize \textcolor{blue}{44.4} (\textcolor{orange}{5.2\(\times\)})}} 
+    & \makecell{ \textbf{33.50} \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{51.0} (\textcolor{orange}{6.5\(\times\)})}} \\
+  & 512 
+    & \makecell{ 35.63\\ {\footnotesize \textcolor{blue}{5.0} (\textcolor{orange}{1.0\(\times\)})}} 
+    & \makecell{ 35.56\\ {\footnotesize \textcolor{blue}{20.3} (\textcolor{orange}{4.0\(\times\)})}} 
+    & \makecell{ 33.68\\ {\footnotesize \textcolor{blue}{44.4} (\textcolor{orange}{8.8\(\times\)})}} 
+    & \makecell{ \bf {35.36} \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{74.8} (\textcolor{orange}{14.9\(\times\)})}} \\
+\midrule
+
+\multirow{3}{*}{HuamnEval (0‑shot)} 
+  & 256 
+    & \makecell{ 43.29 \\ {\footnotesize \textcolor{blue}{7.0} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 42.68 \\ {\footnotesize \textcolor{blue}{17.5} (\textcolor{orange}{2.5\(\times\)})}}
+    & \makecell{ 34.75 \\ {\footnotesize \textcolor{blue}{18.7} (\textcolor{orange}{2.7\(\times\)})}}
+    &  \makecell{\bf 36.59 \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{20.9} (\textcolor{orange}{3.0\(\times\)})}} \\
+  & 512 
+    & \makecell{40.85  \\ {\footnotesize \textcolor{blue}{3.2} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 39.63 \\ {\footnotesize \textcolor{blue}{9.7} (\textcolor{orange}{3.1\(\times\)})}}
+    & \makecell{ 36.59 \\ {\footnotesize \textcolor{blue}{15.4} (\textcolor{orange}{4.8\(\times\)})}}
+    &  \makecell{ \bf 37.80 \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{16.8} (\textcolor{orange}{5.3\(\times\)})}} \\
+\midrule
+
+\multirow{3}{*}{MBPP (3‑shot)} 
+  & 256 
+    & \makecell{ 38.00 \\ {\footnotesize \textcolor{blue}{2.4} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 38.00 \\ {\footnotesize \textcolor{blue}{14.2} (\textcolor{orange}{5.8\(\times\)})}}
+    & \makecell{ 34.60 \\ {\footnotesize \textcolor{blue}{28.0} (\textcolor{orange}{11.6\(\times\)})}}
+    &  \makecell{\bf 41.20 \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{32.7} (\textcolor{orange}{13.5\(\times\)})}} \\
+  & 512 
+    & \makecell{ 38.20 \\ {\footnotesize \textcolor{blue}{1.0} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 38.60 \\ {\footnotesize \textcolor{blue}{11.5} (\textcolor{orange}{11.5\(\times\)})}}
+    & \makecell{ 36.20 \\ {\footnotesize \textcolor{blue}{17.8} (\textcolor{orange}{17.8\(\times\)})}}
+   &  \makecell{ \bf{39.00} \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{32.8} (\textcolor{orange}{32.8\(\times\)})}} \\
+\bottomrule
+\end{tabular}
+}
+\vspace{-0.1in}
+\end{table}
+
+%%%%%%%%%%%%%DREAM RESULT %%%%%
+\begin{table}[t]
+\centering
+\caption{Comprehensive benchmark results on the ``Dream-v0-Base-7B" suite. Each cell shows accuracy (top) and decoding throughput in tokens/sec with relative speedup to the Dream baseline (bottom, blue: t/s; orange: speedup). }
+\label{tab:dream}
+\vspace{-0.1in}
+\resizebox{0.7\linewidth}{!}{ 
+\begin{tabular}{cc|c|c:ccc}
+\toprule
+\multicolumn{2}{c|}{\bfseries} &
+\multicolumn{1}{c|}{\bfseries} &
+\multicolumn{4}{c}{\bfseries Confident-Aware Decoding}\\
+
+\multicolumn{1}{c}{\bfseries Benchmark} &
+\multicolumn{1}{c|}{\bfseries Gen Length} &
+\multicolumn{1}{c|}{\bfseries Dream} &
+\multicolumn{1}{c}{\bfseries Fast-dLLM} &
+\multicolumn{1}{c}{\bfseries Elastic-Cache}\\
+
+\midrule
+{GSM8K (5‑shot)} 
+  & 512 
+    & \makecell{ 76.0 \\ {\footnotesize \textcolor{blue}{7.9} (\textcolor{orange}{1.0\(\times\)})}} 
+    
+    & \makecell{ 74.1 \\ {\footnotesize \textcolor{blue}{45.9} (\textcolor{orange}{5.8\(\times\)})}}
+    & \makecell{\bf 75.6 \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{169.4} (\textcolor{orange}{21.4\(\times\)})}} \\
+
+\midrule
+{HumanEval (0‑shot)} 
+  & 512 
+    & \makecell{ 54.3 \\ {\footnotesize \textcolor{blue}{17.2} (\textcolor{orange}{1.0\(\times\)})}}
+    
+    & \makecell{ 51.2 \\ {\footnotesize \textcolor{blue}{50.1} (\textcolor{orange}{2.9\(\times\)})}}
+    & \makecell{\bf 56.7 \\ \cellcolor{yellow!20}\makecell{\footnotesize \textcolor{blue}{95.2} (\textcolor{orange}{5.5\(\times\)})}} \\
+
+\bottomrule
+\end{tabular}
+}
+\vspace{0.1in}
+
+%LLaDA-V
+\centering
+\caption{Performance and Speedup Comparison of LLaDA-V on MathVista and MathVerse. Each benchmark presents results from LLaDA-V (base) using  Fast-dLLM, and our method.}
+\label{tab:perf}
+\vspace{-0.1in}
+\resizebox{0.999\linewidth}{!}{ 
+\begin{tabular}{@{} c |c c c  |c c c  @{}}
+\toprule
+\multirow{2}{*}{\bfseries Length} &
+  \multicolumn{3}{c|}{\bfseries MathVista} &
+  \multicolumn{3}{c}{\bfseries MathVerse} \\
+\cmidrule(lr){2-4}\cmidrule(l){5-7}
+ & 
+Base Model (LLaDA-V)& \textbf{Fast-dLLM} & \multicolumn{1}{c}{\bfseries Elastic-Cache (Ours)} & 
+Base Model (LLaDA-V)& \textbf{Fast-dLLM} & \multicolumn{1}{c}{\bfseries Elastic-Cache (Ours)}  \\
+\midrule
+256 &  
+54.6 ({\footnotesize \textcolor{blue}{2.3}})&\makecell{ 55.9 ({\footnotesize \textcolor{blue}{28.7}})} 
+& \makecell{ 55.9 ({\footnotesize \textcolor{blue}{29.7}})} 
+& 
+30.1 ({\footnotesize \textcolor{blue}{2.1}})&\makecell{26.8 ({\footnotesize \textcolor{blue}{30.3}})} 
+& \makecell{ 29.2 ({\footnotesize \textcolor{blue}{32.3}})} 
+ \\
+512 & 
+53.0 ({\footnotesize \textcolor{blue}{1.9}}) &\makecell{ 54.1 ({\footnotesize \textcolor{blue}{23.7}})} 
+& \makecell{ 55.8 ({\footnotesize \textcolor{blue}{24.1}})} 
+& 
+26.9 ({\footnotesize \textcolor{blue}{2.0}})&\makecell{25.5 ({\footnotesize \textcolor{blue}{28.1}})} 
+& \makecell{ 29.2 ({\footnotesize \textcolor{blue}{30.8}})} 
+\\
+\bottomrule
+\end{tabular}
+}
+\vspace{-0.1in}
+
+
+\end{table}
+%%%%%%%%%%%%%%%%%%%%%
+
+
+\vspace{-0.05in}
+\subsection{Ablations}
+\vspace{-0.05in}
+
+We ablate key choices: 1) Cache update threshold $\gamma$, 2) sliding window size $\beta$, and 3) prefill and generation length, to expose speed/accuracy trade-offs and justify defaults.
+
+\noindent{\bf Cache Update Threshold ($\gamma$).} Table~\ref{tab:lla-instruct-ablation-threshold} illustrates the sensitivity of our proposed method to the parameter $\gamma$. As $\gamma$ is used to control the frequency of cache updates, a consistent decrease in $\gamma$ leads to an increase in throughput. However, there is also a trend of decreasing accuracy as throughput increases. The trend is more consistent for the LLaDA-1.5 model, while for LLaDA, the accuracy at peak ($\gamma=0.9$) is higher, but the throughput is lower.
+
+\noindent{\bf Sliding Window Size ($\beta$).} 
+Fig.~\ref{fig:window-vs-block} shows that our accuracy is stable across various $\beta$ and close to No-Cache until $\beta\!\approx$64; beyond that LLaDA's tendency to emit EOS early degrades results~\citep{you2025llada}. Throughput, however, is sensitive to $\beta$: larger windows enable more parallel prediction (fewer iterations, lower latency), but overly large $\beta$ reduces cacheable MASK tokens, raising per-step compute and latency.
+
+\noindent{\bf Sliding Window vs. Block-Wise.} When switching Elastic-Cache to block-wise decoding (Fast-dLLM-style) (Fig.~\ref{fig:window-vs-block}), our accuracy is often similar to No-Cache, but short blocks hurt accuracy and throughput diverges. Our sliding window groups nearby MASK tokens that strongly attend to each other, whereas block-wise caching over-aggressively freezes distant MASKs, harming small-block predictions. Our Elastic-Cache's automatic cache refresh detects divergent tokens and updates them, preserving accuracy at the cost of some throughput.
+
+\noindent{\bf Prefill and Generation Length.} Table~\ref{tab:lla-instruct-ablation-few-shot} and Table~\ref{tab:lla-instruct-ablation-gen-len} provide insights into the impact of prefill length and generation length on the overall speedup. Notably, both Fast-dLLM and Elastic-Cache experience a decrease in throughput as the prefill length increases from 3-shot to 8-shot. However, Elastic-Cache exhibits a remarkable speedup and consistently high accuracy across different prefill lengths. Moreover, the throughput of Elastic-Cache increases with generation length, highlighting its unique scaling properties. 
+
+
+\begin{figure}[t]
+  \centering
+  % ---------- Row 1 ----------
+  \begin{subfigure}[b]{0.352\linewidth}
+    \centering
+    \includegraphics[width=1\linewidth]{images/compare_block_length.pdf}
+    \vspace{-0.2in}
+    \caption{Sliding window and block size}
+    \label{fig:window-vs-block}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.3\linewidth}
+    \centering
+    \includegraphics[width=1\linewidth]{images/acc_speed_ratio.pdf}
+    \vspace{-0.2in}
+    \caption{Cache update frequency.}
+    \label{fig:update-freq}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[b]{0.3\linewidth}
+    \centering
+    \includegraphics[width=1\linewidth]{images/acc_threshold_ratio.pdf}
+    \vspace{-0.2in}
+    \caption{Confident-aware decoding.}
+    \label{fig:decoding-threshold}
+  \end{subfigure}
+  \vspace{-0.08in}
+  \caption{Ablation study and analysis of our proposed method. (a) Ablation study of our sliding window mechanism compared to block-wise decoding. (b) Analysis of cache update frequency under varying $\gamma$. The blue and orange lines represent accuracy and throughput, respectively. The numbers along the lines indicate the frequency of cache updates, assuming no baseline. (c) Analysis of cache update frequency under confident-aware decoding with varying $\epsilon$.}
+  \vspace{-0.1in}
+\end{figure}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+\begin{table}[t]
+\centering
+% \vspace{-0.2in}
+\caption{Performance under different denoising schedules (LLaDA-1.5, GSM8K). }
+\label{tab:denoising-schedule}
+\vspace{-0.1in}
+\resizebox{0.9\linewidth}{!}{
+\begin{tabular}{l|c|c|c|c|c}
+\toprule
+\textbf{Method} & \textbf{1 tok/step} & \textbf{2 tok/step} & \textbf{4 tok/step} & \textbf{3.25 tok/step ($\epsilon$=0.9)} & \textbf{5.12 tok/step ($\epsilon$=0.7)} \\
+\midrule
+Baseline & 
+\makecell{81.4 \\ {\footnotesize \textcolor{blue}{2.6} (\textcolor{orange}{1.0\(\times\)})}} & 
+\makecell{79.8 \\ {\footnotesize \textcolor{blue}{5.1} (\textcolor{orange}{1.0\(\times\)})}} & 
+\makecell{67.5 \\ {\footnotesize \textcolor{blue}{10.3} (\textcolor{orange}{1.0\(\times\)})}} & 
+\makecell{81.9 \\ {\footnotesize \textcolor{blue}{17.2} (\textcolor{orange}{1.0\(\times\)})}} & 
+\makecell{79.6 \\ {\footnotesize \textcolor{blue}{26.6} (\textcolor{orange}{1.0\(\times\)})}} \\
+\midrule
+Fast-dLLM & 
+\makecell{80.5 \\ {\footnotesize \textcolor{blue}{8.5} (\textcolor{orange}{3.3\(\times\)})}} & 
+\makecell{77.3 \\ {\footnotesize \textcolor{blue}{15.2} (\textcolor{orange}{3.0\(\times\)})}} & 
+\makecell{64.7 \\ {\footnotesize \textcolor{blue}{27.3} (\textcolor{orange}{2.7\(\times\)})}} & 
+\makecell{80.8 \\ {\footnotesize \textcolor{blue}{36.8} (\textcolor{orange}{2.1\(\times\)})}} & 
+\makecell{80.0 \\ {\footnotesize \textcolor{blue}{46.9} (\textcolor{orange}{1.8\(\times\)})}} \\
+\midrule
+Elastic-Cache & 
+\makecell{\textbf{82.6} \\ {\footnotesize \textcolor{blue}{47.0} (\textcolor{orange}{18.1\(\times\)})}} & 
+\makecell{\textbf{78.1} \\ {\footnotesize \textcolor{blue}{86.5} (\textcolor{orange}{17.0\(\times\)})}} & 
+\makecell{\textbf{69.9} \\ {\footnotesize \textcolor{blue}{149.8} (\textcolor{orange}{14.5\(\times\)})}} & 
+\makecell{\textbf{81.4} \\ {\footnotesize \textcolor{blue}{117.2} (\textcolor{orange}{6.8\(\times\)})}} & 
+\makecell{\textbf{81.2} \\ {\footnotesize \textcolor{blue}{167.6} (\textcolor{orange}{6.3\(\times\)})}} \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+
+%attn threshold ablation
+\begin{table}[t]
+\centering
+\caption{Impact of attention threshold on accuracy and speedup under GSM8K (5-Shot) for LLaDA and LLaDA1.5 with generation length of 512.}
+\label{tab:lla-instruct-ablation-threshold}
+\vspace{-0.1in}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{l|c|c|cccccc}
+\toprule
+\multicolumn{3}{c|}{} &
+\multicolumn{6}{c}{\bfseries Elastic-Cache (Ours)}\\
+
+\multicolumn{1}{c|}{\bfseries Model} &
+\multicolumn{1}{c|}{\bfseries No Cache} &
+\multicolumn{1}{c|}{\bfseries Fast-dLLM} &
+\multicolumn{1}{c}{\bfseries $\gamma=0.5$} &
+\multicolumn{1}{c}{\bfseries $\gamma=0.7$} &
+\multicolumn{1}{c}{\bfseries $\gamma=0.8$} &
+\multicolumn{1}{c}{\bfseries $\gamma=0.85$} &
+\multicolumn{1}{c}{\bfseries $\gamma=0.9$} &
+\multicolumn{1}{c}{\bfseries $\gamma=0.95$}\\
+
+\midrule
+LLaDA\makecell{ \\ {}}
+    & \makecell{77.10 \\ {\footnotesize \textcolor{blue}{3.6} (\textcolor{orange}{1.0\(\times\)})}} 
+    & \makecell{74.83 \\ {\footnotesize \textcolor{blue}{44.0} (\textcolor{orange}{12.2\(\times\)})}} 
+    & \makecell{71.57 \\ {\footnotesize \textcolor{blue}{109.9} (\textcolor{orange}{30.5\(\times\)})}}
+    & \makecell{73.46 \\ {\footnotesize \textcolor{blue}{108.7} (\textcolor{orange}{30.2\(\times\)})}}
+    & \makecell{74.30 \\ {\footnotesize \textcolor{blue}{103.9} (\textcolor{orange}{28.9\(\times\)})}} 
+    & \makecell{74.68 \\ {\footnotesize \textcolor{blue}{99.1} (\textcolor{orange}{27.5\(\times\)})}} 
+    & \makecell{77.71 \\ {\footnotesize \textcolor{blue}{91.5} (\textcolor{orange}{25.4\(\times\)})}}
+    & \makecell{76.72 \\ {\footnotesize \textcolor{blue}{75.5} (\textcolor{orange}{21.0\(\times\)})}} \\
+
+LLaDA-1.5\makecell{ \\ {}}
+    & \makecell{81.35 \\ {\footnotesize \textcolor{blue}{2.6} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{80.82 \\ {\footnotesize \textcolor{blue}{36.8} (\textcolor{orange}{14.2\(\times\)})}}
+    & \makecell{76.04 \\ {\footnotesize \textcolor{blue}{142.7} (\textcolor{orange}{54.9\(\times\)})}}
+    & \makecell{77.63 \\ {\footnotesize \textcolor{blue}{138.6} (\textcolor{orange}{53.3\(\times\)})}}
+    & \makecell{79.45 \\ {\footnotesize \textcolor{blue}{131.2} (\textcolor{orange}{50.5\(\times\)})}}
+    & \makecell{80.21 \\ {\footnotesize \textcolor{blue}{129.9} (\textcolor{orange}{50.0\(\times\)})}}
+    & \makecell{81.35 \\ {\footnotesize \textcolor{blue}{117.2} (\textcolor{orange}{45.1\(\times\)})}}
+    & \makecell{83.02 \\ {\footnotesize \textcolor{blue}{98.4} (\textcolor{orange}{37.8\(\times\)})}} \\
+
+\bottomrule
+\end{tabular}
+}
+
+\vspace{0.1in}
+  \caption{Comparison between Elastic-Cache and Fast-dLLM when varying Prefill and Gen. Length.}
+  \label{tab:pair}
+  \vspace{-0.1in}
+  \begin{subtable}[t]{0.48\textwidth}
+    \centering
+\caption{Impact of few-shots on Accuracy and Speedup Under GSM8K (1024) for LLaDA.}
+\label{tab:lla-instruct-ablation-few-shot}
+\resizebox{0.98\textwidth}{!}{%
+\begin{tabular}{l|ccc}
+\toprule
+\multicolumn{1}{c|}{\bfseries Model} &
+\multicolumn{1}{c}{\bfseries 3-shot} &
+\multicolumn{1}{c}{\bfseries 5-shot} &
+\multicolumn{1}{c}{\bfseries 8-shot} \\
+
+\midrule
+
+    Fast-dLLM & \makecell{ 73.77 \\ {\footnotesize \textcolor{blue}{28.5} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 76.04 \\ {\footnotesize \textcolor{blue}{25.0} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 75.36 \\ {\footnotesize \textcolor{blue}{20.8} (\textcolor{orange}{1.0\(\times\)})}} \\
+
+    Elastic-Cache 
+    & \makecell{ 75.13 \\ {\footnotesize \textcolor{blue}{185.3} (\textcolor{orange}{6.5\(\times\)})}} 
+    & \makecell{ 75.21 \\ {\footnotesize \textcolor{blue}{169.8} (\textcolor{orange}{6.8\(\times\)})}} 
+    & \makecell{ 75.28 \\ {\footnotesize \textcolor{blue}{143.9} (\textcolor{orange}{6.9\(\times\)})}} \\
+    
+\bottomrule
+\end{tabular}
+}
+  \end{subtable}
+  \hspace{0.1in}
+  \begin{subtable}[t]{0.48\textwidth}
+    \centering
+\caption{Impact of generation length on Accuracy and Speedup Under GSM8K (5-Shot) for LLaDA.}
+\label{tab:lla-instruct-ablation-gen-len}
+\resizebox{0.94\textwidth}{!}{%
+\begin{tabular}{l|ccc}
+\toprule
+\multicolumn{1}{c|}{\bfseries Model} &
+\multicolumn{1}{c}{\bfseries 256} &
+\multicolumn{1}{c}{\bfseries 512} &
+\multicolumn{1}{c}{\bfseries 1024} \\
+
+\midrule
+
+    Fast-dLLM & \makecell{ 77.94 \\ {\footnotesize \textcolor{blue}{53.7} (\textcolor{orange}{1.0\(\times\)})}}
+    & \makecell{ 74.83 \\ {\footnotesize \textcolor{blue}{44.0} (\textcolor{orange}{1.0\(\times\)}) }}
+    & \makecell{ 76.04 \\ {\footnotesize \textcolor{blue}{25.0} (\textcolor{orange}{1.0\(\times\)}) }} \\
+
+    Elastic-Cache 
+    & \makecell{ 78.24 \\ {\footnotesize \textcolor{blue}{58.0} (\textcolor{orange}{1.1\(\times\)}) }}
+    & \makecell{ 77.71 \\ {\footnotesize \textcolor{blue}{91.5} (\textcolor{orange}{2.1\(\times\)}) }} 
+    & \makecell{ 75.21 \\ {\footnotesize \textcolor{blue}{169.8} (\textcolor{orange}{6.8\(\times\)}) }} 
+     \\
+    
+\bottomrule
+\end{tabular}
+}
+  \end{subtable}
+  \vspace{-0.1in}
+\end{table}
+
+
+\vspace{-0.05in}
+\subsection{Analysis}
+
+\noindent{\bf Cache update frequency.} 
+Fig.~\ref{fig:update-freq} and Fig.~\ref{fig:decoding-threshold} illustrate the frequency of cache updates performed by Elastic-Cache under varying hyper-parameters $\gamma$ and $\epsilon$. The proposed method maintains a very low cache update frequency across different values of $\gamma$ (Fig.~\ref{fig:update-freq}). In extreme cases, with $\gamma=0.95$, the cache update frequency increases to only 20\% compared to the baseline without a cache. Moreover, increasing the model’s confidence and accuracy (with $\epsilon$, Fig.~\ref{fig:decoding-threshold}) enhances Elastic-Cache’s effectiveness, and reduces the cache update frequency.
+
+
+\noindent{\bf Tunable Speed–Accuracy Trade-off.}
+The cache update threshold $\gamma$ directly determines the balance (Table~\ref{tab:lla-instruct-ablation-threshold}). An excessively high $\gamma$ could lead to unnecessary cache updates, resulting in a decrease in speedup without any improvement in accuracy. Conversely, a smaller $\gamma$ value could guarantee speedup while sacrificing accuracy. The optimal value for $\gamma$ to maximize both accuracy and throughput depends on the model’s prediction. Models with higher accuracy tend to have the best $\gamma$ value, which is closer to $1.0$ (Table~\ref{tab:lla-instruct-ablation-threshold}).
+
+\noindent{\bf Scaling Properties.}
+Elastic-Cache scales greatly with the generation length and the power of the base model. Increasing the generation length slows down the baseline performance but speeds up Elastic-Cache (Tables~\ref{tab:lla-instruct-ablation-gen-len}). Moreover, Elastic-Cache effectiveness is highly dependent on the accuracy of the model’s predictions (Table~\ref{tab:lla-instruct}, Table~\ref{tab:lla-1.5-instruct}, Fig.~\ref{fig:decoding-threshold}). This indicates that Elastic-Cache can effectively scale with the size of the model and the size of the training data, as LLMs generally improve when they scale up.
+
+
+\noindent{\bf Robustness Across Denoising Schedules.}
+We test Elastic-Cache on LLaDA-1.5, GSM8K under varying denoising schedules by controlling average tokens decoded per step (Table~\ref{tab:denoising-schedule}). While the baseline decodes 1 token/step, confidence-aware decoding~\citep{wu2025fast} increases this to 3.25 ($\epsilon=0.9$) and 5.12 ($\epsilon=0.7$). As decoding becomes more aggressive, KV drift grows, demanding more frequent cache updates. Elastic-Cache adapts by raising update frequency from 5.6\% to 17.2\%, preserving accuracy, unlike Fast-dLLM, which suffers under fixed schedules. This highlights Elastic-Cache's robustness to denoising variations without manual tuning.
+
+
+\vspace{-0.05in}
+\section{Related Work}
+\vspace{-0.05in}
+
+\noindent{\bf Diffusion Language Models.}
+Classical diffusion models excel in continuous domains: images~\citep{ho2020denoising,dhariwal2021diffusion,rombach2022highresolutionimagesynthesislatent}, audio~\citep{yang2023diffsounddiscretediffusionmodel,huang2023makeanaudiotexttoaudiogenerationpromptenhanced}, and video~\citep{xing2024survey,ho2022imagen,ho2022video}, building on the seminal formulation of~\citet{sohl2015deep}. Adapting diffusion to discrete text has followed Markov/multinomial/continuous-time paths~\citep{austin2021structured,hoogeboom2021argmax,hoogeboom2021autoregressive,campbell2022continuous,sun2022score}, refined via score matching, ratio methods, and reparameterization~\citep{meng2022concrete,lou2023reflected,Zheng2023ARD}, with recent work unifying these views~\citep{sahoo2024simple,shi2024simplified,ou2024your,zheng2024masked}. Early NLP systems validated these ideas~\citep{he2022diffusionbert,li2022diffusion,gong2022diffuseq} and explored semi-autoregression~\citep{han2022ssd}. Masked diffusion approaching autoregressive quality~\citep{sahoo2024simple} enabled scalable models (LLaDA) competitive with LLaMA~\citep{nie2025large,nie2024scaling,touvron2023llama,dubey2024llama}, with further gains from AR adaptation and instruction tuning~\citep{gong2024scaling,zhu2025llada15variancereducedpreference,dream2025}. The paradigm now spans multimodal/structured domains~\citep{you2025llada,yang2025mmada,yu2025dimplediscretediffusionmultimodal,wang2024diffusion,wang2024dplm,kitouni2023disk}.
+\\
+\noindent{\bf Acceleration Techniques for Large Language Models.}
+KV caching underpins efficient transformer inference~\citep{vaswani2017attention,pope2023efficiently}, complemented by GQA, RoPE, and modern LLM optimizations~\citep{ainslie2023gqa,su2024roformer,touvron2023llama,touvron2023llama2,dubey2024llama}. Diffusion LLMs complicate caching due to bidirectional attention and evolving representations; dedicated methods include Fast-dLLM~\citep{wu2025fast}, dKV-Cache~\citep{ma2025dkv}, and DeepCache~\citep{ma2024deepcache}. Orthogonal accelerations exploit parallel/non-AR generation~\citep{gu2017non,xiao2023surveynonautoregressivegenerationneural}, block-wise diffusion~\citep{arriola2025blockdiffusioninterpolatingautoregressive}, fast sampling~\citep{chen2023fast}, test-time scaling~\citep{ramesh2025test}, and consistency models~\citep{kou2024cllms}. However, most rely on temporal heuristics or fixed thresholds, leaving attention patterns underused.
+\\
+{\bf Our Perspective and Insights over Prior Methods.}
+We close this gap with attention-aware and layer-aware caching for diffusion LLMs: tracking most-attended tokens and depth-varying KV dynamics to guide recomputation, complementary to interval-based~\citep{ma2025dkv} and confidence-based~\citep{wu2025fast} policies and compatible with the broader acceleration toolkit~\citep{ainslie2023gqa,su2024roformer,touvron2023llama,touvron2023llama2,dubey2024llama,gu2017non,xiao2023surveynonautoregressivegenerationneural,arriola2025blockdiffusioninterpolatingautoregressive,chen2023fast,ramesh2025test,kou2024cllms}.
+
+
+\vspace{-0.08in}
+\section{Conclusion}
+\vspace{-0.05in}
+
+We presented {\bf Elastic-Cache}, a training-free, architecture-agnostic policy that makes KV caching in diffusion LLMs adaptive along two axes: {\em when} to refresh (via an attention-aware drift test) and {\em where} to refresh (via a depth-selective update starting at a learned boundary layer). By block-caching distant MASK tokens, reusing shallow-layer caches, and refreshing only when the most-attended token indicates meaningful state change, Elastic-Cache removes large amounts of redundant QKV work. Across decoding steps, this yields substantial latency reductions with negligible impact on generation quality, addressing a key deployment bottleneck for diffusion decoders. Looking ahead, we plan to refine drift thresholds with learned predictors, formalize guarantees linking attention patterns to KV drift, and explore interplay with speculative decoding or other hardware-aware scheduling, extending the same principles to autoregressive LLMs and multimodal diffusion frameworks.
+
+
+\section*{Ethics Statement}
+This work targets inference-time efficiency for diffusion LLMs and does not introduce new data collection or model training. All evaluations use publicly available datasets and third-party checkpoints under their original licenses, no personally identifiable information is processed. While faster decoding can lower the cost of generation and thus broaden access, it may also amplify misuse. We neither change safety filters nor attempt to bypass alignment constraints of the underlying models. We will document evaluation prompts and tasks, follow the usage policies of model providers, and encourage human oversight for downstream deployments, especially in high-stakes applications.
+
+\section*{Reproducibility Statement}
+Elastic-Cache is training-free and defined by a small set of inference hyperparameters: the attention similarity threshold $\gamma$, block size and generation length. We will release code, configs, and scripts to reproduce all results: (i) reference implementations of Attention-Aware and Layer-Aware KV updates with ablation; (ii) exact prompts/datasets, metrics, and other criteria; and (iii) environment specs (CUDA/driver, framework versions) and hardware details (GPU type, batch sizes). We report wall-clock latency and accuracy metrics for each setting, and provide logs to our tables/figures from raw traces.
+
+\bibliography{iclr2026_conference}
+\bibliographystyle{iclr2026_conference}
+\clearpage
+\appendix
+\section*{\Large{Appendix}}
+
+\etocdepthtag.toc{mtappendix}
+\etocsettagdepth{mtchapter}{none}
+\etocsettagdepth{mtappendix}{subsection}
+\tableofcontents
+\newpage
+
+
+
+\section{Theoretical Validation for Elastic-Cache}
+
+\subsection{Notation and Setup}
+
+\begin{itemize}
+\item $L$: number of transformer layers, indexed by $\ell \in \{1,\ldots,L\}$
+\item $T$: total denoising steps, indexed by $t \in \{0,\ldots,T\}$
+\item $N$: sequence length
+\item $d$: hidden dimension; $d_k$, $d_v$: key and value dimensions
+\item $\mathbf{H}^{t,\ell}_i \in \R^{d}$: hidden state of token $i$ at step $t$, layer $\ell$
+\item $\mathbf{K}^{t,\ell}_i, \mathbf{V}^{t,\ell}_i \in \R^{d_k}, \R^{d_v}$: key and value of token $i$
+\item $\mathbf{S}^{t,\ell} \in \R^{N \times N}$: attention weights at step $t$, layer $\ell$
+\item $\mathcal{D}^{<t}$: decoded token positions up to step $t-1$
+\item $\mathcal{M}^t$: masked token positions at step $t$
+\item $\mathcal{M}^t_\beta$: sliding window of size $\beta$ over masked positions
+
+\item $\alpha^{t,\ell}_k := \sum_{q \in \mathcal{M}^t_\beta} \mathbf{S}^{t,\ell}_{q,k}$ : total attention token $k$ receives
+\item $\Delta\mathbf{H}_i := \mathbf{H}^{t,\ell}_i - \mathbf{H}^{t-1,\ell}_i$ : change in hidden state
+
+\item $\bar{\Delta}^{t,\ell} := \frac{1}{N}\sum_{i=1}^N \|\Delta\mathbf{H}^{t,\ell}_i\|_2$ : average hidden state drift
+
+\item $\Delta_{\max} := \max_{i} \|\Delta\mathbf{H}_i\|_2$ : maximum hidden state change
+
+\item $\Gamma^{t,\ell} := \alpha^{t,\ell}_{\mathcal{T}^{t,\ell}} - \max_{k \neq \mathcal{T}^{t,\ell}} \alpha^{t,\ell}_k \geq 0$ : Attention Gap
+
+\end{itemize}
+
+\subsection{Background Lemmas and Assumptions}
+
+\begin{lemma}[Lipschitz Continuity of Softmax]
+\label{lem:softmax-lip}
+Based on the Proposition 2 in~\cite{gao2017properties}, the softmax function $\sigma: \R^n \to \Delta^{n-1}$ defined by
+\begin{equation}
+\sigma(\mathbf{z})_i = \frac{\exp(z_i)}{\sum_{j=1}^n \exp(z_j)}
+\end{equation}
+is $1$-Lipschitz continuous with respect to the $\ell_2$ norm:
+\begin{equation}
+\norm{\sigma(\mathbf{z}) - \sigma(\mathbf{z}')}_2 \leq \norm{\mathbf{z} - \mathbf{z}'}_2, \quad \forall \mathbf{z}, \mathbf{z}' \in \R^n
+\end{equation}
+\end{lemma}
+
+
+
+\begin{assumption}[Bounded Representations]\label{ass:bounded}
+At each layer $\ell$ and step $t$: $\norm{\mathbf{H}^{t,\ell}_i}_2 \leq R_\ell$
+\end{assumption}
+
+\begin{assumption}[Lipschitz Network Components]\label{ass:lipschitz}
+The projection matrices satisfy $\norm{\mathbf{W}_Q^{\ell}}_2, \norm{\mathbf{W}_K^{\ell}}_2, \norm{\mathbf{W}_V^{\ell}}_2 \leq W_{\max}$. The feedforward network at layer $\ell$ is $L_{\text{FFN}}$-Lipschitz continuous.
+\end{assumption}
+
+\begin{assumption}[Progressive Unmasking]\label{ass:unmasking}
+At each step $t$, a non-empty subset $\mathcal{D}^t \subseteq \mathcal{M}^{t-1}$ is unmasked: $|\mathcal{D}^{<t}|$ increases and $\mathcal{M}^t = \mathcal{M}^{t-1} \setminus \mathcal{D}^t$.
+\end{assumption}
+
+\begin{assumption}[Layer-Wise Representation Dynamics]\label{ass:specialization}
+There exists $\ell^* \in \{1,\ldots,L\}$ and functions $f_{\ell}(t) \to 0$ as $t \to T$ for $\ell \leq \ell^*$ such that:
+\begin{itemize}
+\item \textbf{Shallow layers} ($\ell \leq \ell^*$): The expected hidden state change for decoded tokens vanishes: 
+For $\ell \leq \ell^*$: $$\E[\norm{\mathbf{H}^{t,\ell}_i - \mathbf{H}^{t-1,\ell}_i}_2 \mid i \in \mathcal{D}^{<t}] \leq f_{\ell}(t) \to 0$$
+
+\item \textbf{Deep layers} ($\ell > \ell^*$): The expected change remains bounded away from zero:
+$$\liminf_{t \to T} \E[\norm{\mathbf{H}^{t,\ell}_i - \mathbf{H}^{t-1,\ell}_i}_2 \mid i \in \mathcal{D}^{<t}] \geq c_{\ell} > 0$$
+\end{itemize}
+This reflects that early layers encode local lexical patterns that stabilize quickly, while deep layers encode semantic relationships that continue evolving~\citep{kovaleva2019revealing,jawahar2019does,rogers2021primer}. Our experiments validate this (Fig.~\ref{fig:motivation}b).
+\end{assumption}
+
+\begin{assumption}[Attention Concentration]\label{attn_concentration}
+The attention gap is a non-negligible fraction of total attention mass:
+\begin{equation}
+\Gamma^{t,\ell} \geq c \cdot |\mathcal{M}^t_\beta|
+\end{equation}
+for some constant $c > 0$ independent of $N, t, \ell$.
+\end{assumption}
+
+\begin{definition}[KV Drift]
+The KV drift at layer $\ell$, step $t$ for token $i$ is:
+\begin{equation}
+\Delta^{t,\ell}_i := \norm{\mathbf{K}^{t,\ell}_i - \mathbf{K}^{t-1,\ell}_i}_2 + \norm{\mathbf{V}^{t,\ell}_i - \mathbf{V}^{t-1,\ell}_i}_2
+\end{equation}
+Average drift over decoded tokens: $\Delta^{t,\ell} := \frac{1}{|\mathcal{D}^{<t}|} \sum_{i \in \mathcal{D}^{<t}} \Delta^{t,\ell}_i$
+\end{definition}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Layer-Wise KV Drift Monotonicity}
+
+This theorem formalizes the observation that KV drift increases with layer depth, providing theoretical justification for our layer-aware cache refresh strategy that selectively recomputes deeper layers while reusing shallow-layer caches. Fig.~\ref{fig:motivation}a empirically validates this monotonicity property.
+
+\begin{theorem}[Layer-Wise KV Drift Monotonicity]\label{thm:drift-monotonicity}
+Under Assumptions~\ref{ass:bounded}--\ref{ass:specialization}, there exists a transition layer $\ell^* \in \{1,\ldots,L\}$ such that for sufficiently large $t$ (when most tokens are decoded):
+\begin{equation}
+\E_t[\Delta^{t,\ell}] \leq \E_t[\Delta^{t,\ell'}], \quad \forall \ell \leq \ell^* < \ell' \leq L
+\end{equation}
+\end{theorem}
+
+\begin{proof}
+
+\textbf{Step 1: Relating KV Drift to Hidden State Drift.}
+
+The key-value projections at layer $\ell$ are:
+\begin{align}
+\mathbf{K}^{t,\ell}_i &= W_K^{\ell} \mathbf{H}^{t,\ell}_i\\
+\mathbf{V}^{t,\ell}_i &= W_V^{\ell} \mathbf{H}^{t,\ell}_i
+\end{align}
+
+By the triangle inequality and Assumption~\ref{ass:lipschitz} ($\|W_K^{\ell}\|_2, \|W_V^{\ell}\|_2 \leq W_{\max}$):
+\begin{align}
+\|\mathbf{K}^{t,\ell}_i - \mathbf{K}^{t-1,\ell}_i\|_2 &= \|W_K^{\ell}(\mathbf{H}^{t,\ell}_i - \mathbf{H}^{t-1,\ell}_i)\|_2 \notag\\
+&\leq \|W_K^{\ell}\|_2 \|\mathbf{H}^{t,\ell}_i - \mathbf{H}^{t-1,\ell}_i\|_2 \notag\\
+&\leq W_{\max} \|\Delta\mathbf{H}^{t,\ell}_i\|_2
+\end{align}
+
+Similarly for values:
+\begin{equation}
+\|\mathbf{V}^{t,\ell}_i - \mathbf{V}^{t-1,\ell}_i\|_2 \leq W_{\max} \|\Delta\mathbf{H}^{t,\ell}_i\|_2
+\end{equation}
+
+Therefore:
+\begin{equation}\label{eq:kv-drift-bound-detailed}
+\Delta^{t,\ell}_i = \|\mathbf{K}^{t,\ell}_i - \mathbf{K}^{t-1,\ell}_i\|_2 + \|\mathbf{V}^{t,\ell}_i - \mathbf{V}^{t-1,\ell}_i\|_2 \leq 2W_{\max} \|\Delta\mathbf{H}^{t,\ell}_i\|_2
+\end{equation}
+
+\textbf{Step 2: Layer Recursion for Hidden States.}
+
+At layer $\ell$, the transformer block computes:
+\begin{equation}
+\mathbf{H}^{t,\ell+1}_i = \mathbf{H}^{t,\ell}_i + \text{Attn}^{\ell}(\mathbf{Q}^{t,\ell}_i, \mathbf{K}^{t,\ell}, \mathbf{V}^{t,\ell}) + \text{FFN}^{\ell}(\mathbf{H}^{t,\ell}_i + \text{Attn}^{\ell}(\cdot))
+\end{equation}
+
+where the attention output is:
+\begin{equation}
+\text{Attn}^{\ell}(\mathbf{Q}^{t,\ell}_i, \mathbf{K}^{t,\ell}, \mathbf{V}^{t,\ell}) = \sum_{j=1}^N \mathbf{S}^{t,\ell}_{i,j} \mathbf{V}^{t,\ell}_j
+\end{equation}
+
+The change in hidden state at layer $\ell+1$ satisfies:
+\begin{align}
+\|\Delta\mathbf{H}^{t,\ell+1}_i\|_2 &= \|\mathbf{H}^{t,\ell+1}_i - \mathbf{H}^{t-1,\ell+1}_i\|_2\notag\\
+&\leq \|\Delta\mathbf{H}^{t,\ell}_i\|_2 + \|\text{Attn}^{\ell}(t) - \text{Attn}^{\ell}(t-1)\|_2 \notag\\
+&\quad + \|\text{FFN}^{\ell}(\text{input}^t) - \text{FFN}^{\ell}(\text{input}^{t-1})\|_2
+\end{align}
+
+By Assumption~\ref{ass:lipschitz}, the FFN is $L_{\text{FFN}}$-Lipschitz:
+\begin{equation}
+\|\text{FFN}^{\ell}(\text{input}^t) - \text{FFN}^{\ell}(\text{input}^{t-1})\|_2 \leq L_{\text{FFN}} \|\text{input}^t - \text{input}^{t-1}\|_2
+\end{equation}
+
+The FFN input is $\mathbf{H}^{t,\ell}_i + \text{Attn}^{\ell}(\cdot)$, so:
+\begin{align}
+\|\text{input}^t - \text{input}^{t-1}\|_2 &\leq \|\Delta\mathbf{H}^{t,\ell}_i\|_2 + \|\text{Attn}^{\ell}(t) - \text{Attn}^{\ell}(t-1)\|_2
+\end{align}
+
+Therefore:
+\begin{equation}\label{eq:hidden-recursion}
+\|\Delta\mathbf{H}^{t,\ell+1}_i\|_2 \leq (1 + L_{\text{FFN}})\|\Delta\mathbf{H}^{t,\ell}_i\|_2 + (1 + L_{\text{FFN}})\|\text{Attn}^{\ell}(t) - \text{Attn}^{\ell}(t-1)\|_2
+\end{equation}
+
+\textbf{Step 3: Bounding Attention Output Change.}
+
+Denote $\Delta_{\text{attn}}^{t,\ell,i} := \|\text{Attn}^{\ell}(t) - \text{Attn}^{\ell}(t-1)\|_2$. We decompose:
+\begin{align}
+&\sum_{j=1}^N \mathbf{S}^{t,\ell}_{i,j} \mathbf{V}^{t,\ell}_j - \sum_{j=1}^N \mathbf{S}^{t-1,\ell}_{i,j} \mathbf{V}^{t-1,\ell}_j \notag\\
+&= \sum_{j=1}^N \mathbf{S}^{t,\ell}_{i,j} (\mathbf{V}^{t,\ell}_j - \mathbf{V}^{t-1,\ell}_j) + \sum_{j=1}^N (\mathbf{S}^{t,\ell}_{i,j} - \mathbf{S}^{t-1,\ell}_{i,j}) \mathbf{V}^{t-1,\ell}_j
+\end{align}
+
+Taking norms and applying triangle inequality:
+\begin{align}
+\Delta_{\text{attn}}^{t,\ell,i} &\leq \sum_{j=1}^N \mathbf{S}^{t,\ell}_{i,j} \|\mathbf{V}^{t,\ell}_j - \mathbf{V}^{t-1,\ell}_j\|_2 + \sum_{j=1}^N |\mathbf{S}^{t,\ell}_{i,j} - \mathbf{S}^{t-1,\ell}_{i,j}| \|\mathbf{V}^{t-1,\ell}_j\|_2
+\end{align}
+
+\textit{Step 3a: First term (value changes).}
+Since $\sum_j \mathbf{S}^{t,\ell}_{i,j} = 1$ (attention weights sum to 1):
+\begin{align}
+\sum_{j=1}^N \mathbf{S}^{t,\ell}_{i,j} \|\mathbf{V}^{t,\ell}_j - \mathbf{V}^{t-1,\ell}_j\|_2 &\leq \sum_{j=1}^N \mathbf{S}^{t,\ell}_{i,j} W_{\max} \|\Delta\mathbf{H}^{t,\ell}_j\|_2 \quad \text{(by Assumption~\ref{ass:lipschitz})}\notag\\
+&= W_{\max} \E_{j \sim \mathbf{S}^{t,\ell}_{i,:}}[\|\Delta\mathbf{H}^{t,\ell}_j\|_2]\notag\\
+&\leq W_{\max} \bar{\Delta}^{t,\ell}
+\end{align}
+
+\textit{Step 3b: Second term (attention weight changes).}
+By Cauchy-Schwarz: $\sum_j |a_j| b_j \leq (\sum_j |a_j|) \max_j b_j$
+
+By Assumption~\ref{ass:bounded}: $\|\mathbf{V}^{t-1,\ell}_j\|_2 \leq W_{\max} R_\ell$
+
+Therefore:
+\begin{align}
+\sum_{j=1}^N |\mathbf{S}^{t,\ell}_{i,j} - \mathbf{S}^{t-1,\ell}_{i,j}| \|\mathbf{V}^{t-1,\ell}_j\|_2 &\leq W_{\max} R_\ell \sum_{j=1}^N |\mathbf{S}^{t,\ell}_{i,j} - \mathbf{S}^{t-1,\ell}_{i,j}|
+\end{align}
+
+By the inequality $\|\mathbf{v}\|_1 \leq \sqrt{n}\|\mathbf{v}\|_2$:
+\begin{equation}
+\sum_{j=1}^N |\mathbf{S}^{t,\ell}_{i,j} - \mathbf{S}^{t-1,\ell}_{i,j}| \leq \sqrt{N} \|\mathbf{S}^{t,\ell}_{i,:} - \mathbf{S}^{t-1,\ell}_{i,:}\|_2
+\end{equation}
+
+By Lemma~\ref{lem:softmax-lip} (softmax is 1-Lipschitz in $\ell_2$):
+\begin{equation}
+\|\mathbf{S}^{t,\ell}_{i,:} - \mathbf{S}^{t-1,\ell}_{i,:}\|_2 \leq \|\mathbf{z}^{t,\ell}_i - \mathbf{z}^{t-1,\ell}_i\|_2
+\end{equation}
+
+where $\mathbf{z}^{t,\ell}_i = (z^{t,\ell}_{i,1}, \ldots, z^{t,\ell}_{i,N})$ with $z^{t,\ell}_{i,j} = \frac{1}{\sqrt{d_k}}\mathbf{Q}^{t,\ell}_i \cdot \mathbf{K}^{t,\ell}_j$.
+
+\textit{Step 3c: Bounding logit changes.}
+For each component:
+\begin{align}
+z^{t,\ell}_{i,j} - z^{t-1,\ell}_{i,j} &= \frac{1}{\sqrt{d_k}}[\mathbf{Q}^{t,\ell}_i \cdot \mathbf{K}^{t,\ell}_j - \mathbf{Q}^{t-1,\ell}_i \cdot \mathbf{K}^{t-1,\ell}_j]\notag\\
+&= \frac{1}{\sqrt{d_k}}[\mathbf{Q}^{t,\ell}_i \cdot (\mathbf{K}^{t,\ell}_j - \mathbf{K}^{t-1,\ell}_j) + (\mathbf{Q}^{t,\ell}_i - \mathbf{Q}^{t-1,\ell}_i) \cdot \mathbf{K}^{t-1,\ell}_j]
+\end{align}
+
+By Cauchy-Schwarz and the bounds from Assumptions~\ref{ass:bounded}--\ref{ass:lipschitz}:
+\begin{align}
+|z^{t,\ell}_{i,j} - z^{t-1,\ell}_{i,j}| &\leq \frac{1}{\sqrt{d_k}}[W_{\max} R_\ell \cdot W_{\max} \|\Delta\mathbf{H}^{t,\ell}_j\|_2 + W_{\max} \|\Delta\mathbf{H}^{t,\ell}_i\|_2 \cdot W_{\max} R_\ell]\notag\\
+&= \frac{W_{\max}^2 R_\ell}{\sqrt{d_k}}[\|\Delta\mathbf{H}^{t,\ell}_i\|_2 + \|\Delta\mathbf{H}^{t,\ell}_j\|_2]\notag\\
+&\leq \frac{2W_{\max}^2 R_\ell}{\sqrt{d_k}}\max_k \|\Delta\mathbf{H}^{t,\ell}_k\|_2
+\end{align}
+
+Taking $\ell_2$ norm of the logit vector:
+\begin{align}
+\|\mathbf{z}^{t,\ell}_i - \mathbf{z}^{t-1,\ell}_i\|_2^2 &= \sum_{j=1}^N |z^{t,\ell}_{i,j} - z^{t-1,\ell}_{i,j}|^2\notag\\
+&\leq N \left(\frac{2W_{\max}^2 R_\ell}{\sqrt{d_k}}\right)^2 (\max_k \|\Delta\mathbf{H}^{t,\ell}_k\|_2)^2
+\end{align}
+
+Therefore:
+\begin{equation}
+\|\mathbf{z}^{t,\ell}_i - \mathbf{z}^{t-1,\ell}_i\|_2 \leq \frac{2W_{\max}^2 R_\ell \sqrt{N}}{\sqrt{d_k}} \max_k \|\Delta\mathbf{H}^{t,\ell}_k\|_2
+\end{equation}
+
+For typical sequences where $\max_k \|\Delta\mathbf{H}^{t,\ell}_k\|_2 = O(\bar{\Delta}^{t,\ell})$:
+\begin{equation}
+\|\mathbf{z}^{t,\ell}_i - \mathbf{z}^{t-1,\ell}_i\|_2 \leq \frac{2W_{\max}^2 R_\ell \sqrt{N}}{\sqrt{d_k}} \bar{\Delta}^{t,\ell}
+\end{equation}
+
+\textit{Step 3d: Combining.}
+Combining the bounds from Steps 3a-3c:
+\begin{align}
+\Delta_{\text{attn}}^{t,\ell,i} &\leq W_{\max} \bar{\Delta}^{t,\ell} + W_{\max} R_\ell \sqrt{N} \cdot \frac{2W_{\max}^2 R_\ell \sqrt{N}}{\sqrt{d_k}} \bar{\Delta}^{t,\ell}\notag\\
+&= W_{\max} \bar{\Delta}^{t,\ell} \left(1 + \frac{2W_{\max}^2 R_\ell^2 N}{\sqrt{d_k}}\right)
+\end{align}
+
+Define:
+\begin{equation}
+C_{\text{attn}}(\ell) := \frac{2W_{\max}^2 R_\ell^2 N}{\sqrt{d_k}} = O\left(\frac{W_{\max}^2 R_\ell^2 N}{\sqrt{d_k}}\right)
+\end{equation}
+
+Then:
+\begin{equation}\label{eq:attention-change-bound}
+\Delta_{\text{attn}}^{t,\ell,i} \leq W_{\max}(1 + C_{\text{attn}}(\ell)) \bar{\Delta}^{t,\ell}
+\end{equation}
+
+\textbf{Step 4: Recursive Bound on Hidden State Drift.}
+
+Substituting~\eqref{eq:attention-change-bound} into~\eqref{eq:hidden-recursion}:
+\begin{align}
+\|\Delta\mathbf{H}^{t,\ell+1}_i\|_2 &\leq (1 + L_{\text{FFN}})\|\Delta\mathbf{H}^{t,\ell}_i\|_2 + (1 + L_{\text{FFN}}) W_{\max}(1 + C_{\text{attn}}(\ell)) \bar{\Delta}^{t,\ell}
+\end{align}
+
+Taking averages over all tokens:
+\begin{equation}
+\bar{\Delta}^{t,\ell+1} \leq [(1 + L_{\text{FFN}}) + (1 + L_{\text{FFN}}) W_{\max}(1 + C_{\text{attn}}(\ell))] \bar{\Delta}^{t,\ell}
+\end{equation}
+
+Define the layer-dependent amplification factor:
+\begin{equation}
+\lambda_{\ell} := (1 + L_{\text{FFN}})[1 + W_{\max}(1 + C_{\text{attn}}(\ell))]
+\end{equation}
+
+Then:
+\begin{equation}
+\bar{\Delta}^{t,\ell+1} \leq \lambda_{\ell} \bar{\Delta}^{t,\ell}
+\end{equation}
+
+\textbf{Step 5: Layer-wise Accumulation by Induction.}
+
+By induction on $\ell$:
+\begin{equation}
+\bar{\Delta}^{t,\ell} \leq \bar{\Delta}^{t,1} \prod_{k=1}^{\ell-1} \lambda_k
+\end{equation}
+
+Since $\lambda_{\ell} > 1$, drift accumulates multiplicatively across layers.
+
+\textbf{Step 6: Applying Layer-Wise Specialization.}
+
+By Assumption~\ref{ass:specialization}:
+\begin{itemize}
+\item \textbf{Shallow layers} ($\ell \leq \ell^*$): $\bar{\Delta}^{t,\ell} \leq f_{\ell}(t) \to 0$ as $t \to T$
+\item \textbf{Deep layers} ($\ell > \ell^*$): $\liminf_{t \to T} \bar{\Delta}^{t,\ell} \geq c_{\ell} > 0$
+\end{itemize}
+
+By~\eqref{eq:kv-drift-bound-detailed}:
+\begin{equation}
+\E[\Delta^{t,\ell}] = \E\left[\frac{1}{|\mathcal{D}^{<t}|}\sum_{i \in \mathcal{D}^{<t}} \Delta^{t,\ell}_i\right] \leq 2W_{\max} \bar{\Delta}^{t,\ell}
+\end{equation}
+
+Therefore, for sufficiently large $t$ and any $\ell \leq \ell^* < \ell'$:
+\begin{align}
+\E[\Delta^{t,\ell}] &\leq 2W_{\max} f_{\ell}(t) \to 0\\
+\E[\Delta^{t,\ell'}] &\geq 2W_{\max} c_{\ell'} > 0
+\end{align}
+
+This establishes:
+\begin{equation}
+\E[\Delta^{t,\ell}] < \E[\Delta^{t,\ell'}], \quad \forall \ell \leq \ell^* < \ell'
+\end{equation}
+\end{proof}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Attention Concentration and Drift}
+\label{sec:attn_conc_drift}
+
+\begin{theorem}[Attention Concentration and Drift]\label{thm:attention-drift}
+Let $\mathcal{T}^{t,\ell} = \arg\max_{k \in \mathcal{D}^{<t}} \sum_{q \in \mathcal{M}^t_\beta} \mathbf{S}^{t,\ell}_{q,k}$ be the most-attended token at layer $\ell$, step $t$. Under Assumptions~\ref{ass:bounded}--\ref{ass:lipschitz}, the most-attended token has drift bounded by:
+\begin{equation}
+\Delta^{t,\ell}_{\mathcal{T}^{t,\ell}} \leq \bar{\Delta}^{t,\ell} + \epsilon_t
+\end{equation}
+where $\bar{\Delta}^{t,\ell} = \frac{1}{|\mathcal{D}^{<t}|}\sum_{i \in \mathcal{D}^{<t}} \Delta^{t,\ell}_i$ is the average drift and $\epsilon_t = O\left(\frac{\sqrt{d_k}}{R_\ell\sqrt{N}}\right)$.
+\end{theorem}
+
+\begin{proof}
+
+\textbf{Step 1: Bounding Attention Weight Changes.}
+
+We derive how attention weights $\mathbf{S}^{t,\ell}_{q,k}$ change when hidden states change.
+
+\textit{Step 1a: Logit change.}
+The attention logits are $z_{q,k} = \frac{1}{\sqrt{d_k}} \mathbf{Q}_q \cdot \mathbf{K}_k$ where:
+\begin{align}
+\mathbf{Q}_q &= W_Q \mathbf{H}_q, \quad \mathbf{K}_k = W_K \mathbf{H}_k
+\end{align}
+
+The change in logits between steps $t$ and $t-1$ is:
+\begin{align}
+z^{t,\ell}_{q,k} - z^{t-1,\ell}_{q,k} &= \frac{1}{\sqrt{d_k}}[\mathbf{Q}^{t,\ell}_q \cdot \mathbf{K}^{t,\ell}_k - \mathbf{Q}^{t-1,\ell}_q \cdot \mathbf{K}^{t-1,\ell}_k]
+\end{align}
+
+Using the identity $ab - a'b' = a(b-b') + (a-a')b'$:
+\begin{align}
+&= \frac{1}{\sqrt{d_k}}[\mathbf{Q}^{t,\ell}_q \cdot (\mathbf{K}^{t,\ell}_k - \mathbf{K}^{t-1,\ell}_k) + (\mathbf{Q}^{t,\ell}_q - \mathbf{Q}^{t-1,\ell}_q) \cdot \mathbf{K}^{t-1,\ell}_k]
+\end{align}
+
+\textit{Step 1b: Apply Cauchy-Schwarz inequality.}
+Taking absolute value and applying Cauchy-Schwarz:
+\begin{align}
+|z^{t,\ell}_{q,k} - z^{t-1,\ell}_{q,k}| &\leq \frac{1}{\sqrt{d_k}}[\|\mathbf{Q}^{t,\ell}_q\|_2 \|\mathbf{K}^{t,\ell}_k - \mathbf{K}^{t-1,\ell}_k\|_2 \notag\\
+&\quad + \|\mathbf{Q}^{t,\ell}_q - \mathbf{Q}^{t-1,\ell}_q\|_2 \|\mathbf{K}^{t-1,\ell}_k\|_2]
+\end{align}
+
+\textit{Step 1c: Bound projection norms.}
+By Assumption~\ref{ass:bounded}: $\|\mathbf{H}^{t,\ell}_i\|_2 \leq R_\ell$ for all $i,t$.
+
+By Assumption~\ref{ass:lipschitz}: $\|W_Q\|_2, \|W_K\|_2 \leq W_{\max}$.
+
+Therefore:
+\begin{align}
+\|\mathbf{Q}^{t,\ell}_q\|_2 &\leq \|W_Q\|_2 \|\mathbf{H}^{t,\ell}_q\|_2 \leq W_{\max} R_\ell\\
+\|\mathbf{K}^{t,\ell}_k\|_2 &\leq \|W_K\|_2 \|\mathbf{H}^{t,\ell}_k\|_2 \leq W_{\max} R_\ell\\
+\|\mathbf{K}^{t,\ell}_k - \mathbf{K}^{t-1,\ell}_k\|_2 &\leq \|W_K\|_2 \|\mathbf{H}^{t,\ell}_k - \mathbf{H}^{t-1,\ell}_k\|_2 \leq W_{\max} \|\Delta\mathbf{H}_k\|_2\\
+\|\mathbf{Q}^{t,\ell}_q - \mathbf{Q}^{t-1,\ell}_q\|_2 &\leq W_{\max} \|\Delta\mathbf{H}_q\|_2
+\end{align}
+
+Substituting these bounds:
+\begin{align}
+|z^{t,\ell}_{q,k} - z^{t-1,\ell}_{q,k}| &\leq \frac{1}{\sqrt{d_k}}[W_{\max} R_\ell \cdot W_{\max} \|\Delta\mathbf{H}_k\|_2 + W_{\max} \|\Delta\mathbf{H}_q\|_2 \cdot W_{\max} R_\ell]\notag\\
+&= \frac{W_{\max}^2 R_\ell}{\sqrt{d_k}}[\|\Delta\mathbf{H}_k\|_2 + \|\Delta\mathbf{H}_q\|_2]
+\end{align}
+
+\textit{Step 1d: Use maximum drift.}
+Since $\|\Delta\mathbf{H}_i\|_2 \leq \Delta_{\max}$ for all $i$:
+\begin{equation}
+|z^{t,\ell}_{q,k} - z^{t-1,\ell}_{q,k}| \leq \frac{2W_{\max}^2 R_\ell}{\sqrt{d_k}} \Delta_{\max}
+\end{equation}
+
+\textit{Step 1e: Compute $\ell_2$ norm of logit vector.}
+The logit vector for query $q$ is $\mathbf{z}_q = (z_{q,1}, \ldots, z_{q,N}) \in \mathbb{R}^N$.
+
+By the previous bound applied to each component:
+\begin{align}
+\|\mathbf{z}^{t,\ell}_q - \mathbf{z}^{t-1,\ell}_q\|_2^2 &= \sum_{k=1}^N |z^{t,\ell}_{q,k} - z^{t-1,\ell}_{q,k}|^2\notag\\
+&\leq \sum_{k=1}^N \left(\frac{2W_{\max}^2 R_\ell}{\sqrt{d_k}}\right)^2 \Delta_{\max}^2\notag\\
+&= N \cdot \frac{4W_{\max}^4 R_\ell^2}{d_k} \Delta_{\max}^2
+\end{align}
+
+Taking square root:
+\begin{equation}
+\|\mathbf{z}^{t,\ell}_q - \mathbf{z}^{t-1,\ell}_q\|_2 \leq \frac{2W_{\max}^2 R_\ell \sqrt{N}}{\sqrt{d_k}} \Delta_{\max}
+\end{equation}
+
+\textit{Step 1f: Apply softmax Lipschitz property.}
+By Lemma~\ref{lem:softmax-lip} (softmax is 1-Lipschitz in $\ell_2$ norm):
+\begin{equation}
+\|\mathbf{S}^{t,\ell}_{q,:} - \mathbf{S}^{t-1,\ell}_{q,:}\|_2 \leq \|\mathbf{z}^{t,\ell}_q - \mathbf{z}^{t-1,\ell}_q\|_2 \leq \frac{2W_{\max}^2 R_\ell \sqrt{N}}{\sqrt{d_k}} \Delta_{\max}
+\end{equation}
+
+\textit{Step 1g: Convert to $\ell_\infty$ norm.}
+Since $\|\mathbf{v}\|_\infty \leq \|\mathbf{v}\|_2$ for any vector $\mathbf{v}$:
+\begin{equation}\label{eq:attention-weight-bound}
+\max_k |\mathbf{S}^{t,\ell}_{q,k} - \mathbf{S}^{t-1,\ell}_{q,k}| \leq \frac{2W_{\max}^2 R_\ell \sqrt{N}}{\sqrt{d_k}} \Delta_{\max}
+\end{equation}
+
+\textbf{Step 2: Change in Total Attention Received.}
+
+For token $k$, the change in total attention received is:
+\begin{align}
+|\alpha^{t,\ell}_k - \alpha^{t-1,\ell}_k| &= \left|\sum_{q \in \mathcal{M}^t_\beta} (\mathbf{S}^{t,\ell}_{q,k} - \mathbf{S}^{t-1,\ell}_{q,k})\right|\notag\\
+&\leq \sum_{q \in \mathcal{M}^t_\beta} |\mathbf{S}^{t,\ell}_{q,k} - \mathbf{S}^{t-1,\ell}_{q,k}| \quad \text{(triangle inequality)}\notag\\
+&\leq |\mathcal{M}^t_\beta| \cdot \max_q \max_k |\mathbf{S}^{t,\ell}_{q,k} - \mathbf{S}^{t-1,\ell}_{q,k}| \quad \text{(bound by max)}
+\end{align}
+
+Using~\eqref{eq:attention-weight-bound}:
+\begin{equation}\label{eq:attention-mass-change}
+|\alpha^{t,\ell}_k - \alpha^{t-1,\ell}_k| \leq |\mathcal{M}^t_\beta| \cdot \frac{2W_{\max}^2 R_\ell \sqrt{N}}{\sqrt{d_k}} \Delta_{\max}
+\end{equation}
+
+\textbf{Step 3: Relating to KV Drift.}
+
+Recall that KV drift is $\Delta^{t,\ell}_i = \|\mathbf{K}^{t,\ell}_i - \mathbf{K}^{t-1,\ell}_i\|_2 + \|\mathbf{V}^{t,\ell}_i - \mathbf{V}^{t-1,\ell}_i\|_2$.
+
+By Assumption~\ref{ass:lipschitz}:
+\begin{align}
+\Delta^{t,\ell}_i &\leq W_{\max} \|\Delta\mathbf{H}_i\|_2 + W_{\max} \|\Delta\mathbf{H}_i\|_2 = 2W_{\max} \|\Delta\mathbf{H}_i\|_2
+\end{align}
+
+Therefore: $\|\Delta\mathbf{H}_i\|_2 \geq \frac{\Delta^{t,\ell}_i}{2W_{\max}}$.
+
+In particular: $\Delta_{\max} \geq \frac{\max_i \Delta^{t,\ell}_i}{2W_{\max}}$.
+
+Substituting into~\eqref{eq:attention-mass-change}:
+\begin{equation}\label{eq:attention-vs-drift}
+|\alpha^{t,\ell}_k - \alpha^{t-1,\ell}_k| \leq |\mathcal{M}^t_\beta| \cdot \frac{2W_{\max}^2 R_\ell \sqrt{N}}{\sqrt{d_k}} \cdot \frac{\max_i \Delta^{t,\ell}_i}{2W_{\max}} = |\mathcal{M}^t_\beta| \cdot \frac{W_{\max} R_\ell \sqrt{N}}{\sqrt{d_k}} \max_i \Delta^{t,\ell}_i
+\end{equation}
+
+\textbf{Step 4: Stability Constraint and Excess Drift.}
+
+Suppose $\mathcal{T}^{t,\ell}$ has drift $\Delta^{t,\ell}_{\mathcal{T}^{t,\ell}} = \bar{\Delta}^{t,\ell} + \varepsilon$ where $\varepsilon > 0$ is excess drift beyond average.
+
+Then:
+\begin{align}
+|\alpha^{t,\ell}_{\mathcal{T}^{t,\ell}} - \alpha^{t-1,\ell}_{\mathcal{T}^{t,\ell}}| &\leq |\mathcal{M}^t_\beta| \cdot \frac{W_{\max} R_\ell \sqrt{N}}{\sqrt{d_k}} (\bar{\Delta}^{t,\ell} + \varepsilon)
+\end{align}
+
+While tokens with average drift have:
+\begin{align}
+|\alpha^{t,\ell}_k - \alpha^{t-1,\ell}_k| &\leq |\mathcal{M}^t_\beta| \cdot \frac{W_{\max} R_\ell \sqrt{N}}{\sqrt{d_k}} \bar{\Delta}^{t,\ell}
+\end{align}
+
+The differential attention change is:
+\begin{equation}
+\Delta_{\text{differential}} = |\mathcal{M}^t_\beta| \cdot \frac{W_{\max} R_\ell \sqrt{N}}{\sqrt{d_k}} \varepsilon
+\end{equation}
+
+For $\mathcal{T}^{t,\ell}$ to remain most-attended, the gap at step $t-1$ must absorb this differential:
+\begin{equation}
+\Gamma^{t-1,\ell} \geq \Delta_{\text{differential}} = |\mathcal{M}^t_\beta| \cdot \frac{W_{\max} R_\ell \sqrt{N}}{\sqrt{d_k}} \varepsilon
+\end{equation}
+
+\textbf{Step 5: Assuming Bounded Attention Gap.}
+
+Applying the assumption \ref{attn_concentration}:
+\begin{equation}
+c \cdot |\mathcal{M}^t_\beta| \geq |\mathcal{M}^t_\beta| \cdot \frac{W_{\max} R_\ell \sqrt{N}}{\sqrt{d_k}} \varepsilon
+\end{equation}
+
+Canceling $|\mathcal{M}^t_\beta|$ (assuming $|\mathcal{M}^t_\beta| > 0$):
+\begin{equation}
+c \geq \frac{W_{\max} R_\ell \sqrt{N}}{\sqrt{d_k}} \varepsilon
+\end{equation}
+
+Solving for $\varepsilon$:
+\begin{equation}
+\varepsilon \leq \frac{c \sqrt{d_k}}{W_{\max} R_\ell \sqrt{N}} = O\left(\frac{\sqrt{d_k}}{R_\ell \sqrt{N}}\right)
+\end{equation}
+
+Therefore:
+\begin{equation}
+\Delta^{t,\ell}_{\mathcal{T}^{t,\ell}} \leq \bar{\Delta}^{t,\ell} + O\left(\frac{\sqrt{d_k}}{R_\ell \sqrt{N}}\right)
+\end{equation}
+\end{proof}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Implications for Elastic-Cache}
+
+These results provide theoretical justification for our design:
+\begin{itemize}
+\item \textbf{Theorem~\ref{thm:drift-monotonicity}}: Deeper layers have larger KV drift, justifying layer-aware refresh starting from $\ell^*$
+\item \textbf{Theorem~\ref{thm:attention-drift}}: Most-attended tokens have minimal drift, validating their use as cache staleness indicators
+\end{itemize}
+
+
+\section{Detailed Experiment Setup}
+\noindent{\bf Implementation Details.}
+We conduct all the experiments on a single NVIDIA A100 80GB GPU to ensure a consistent hardware environment. We evaluate our proposed method, \textbf{\texttt{Elastic-Cache}}, on three large scale DLMs: LLaDA-Instruct~\citep{nie2025large}, LLaDA-1.5~\citep{zhu2025llada15variancereducedpreference}, and the multimodal LLaDA-V~\citep{you2025llada}. Our evaluation spans both language and multimodal reasoning tasks including MBPP~\citep{austin2021program}, HumanEval~\citep{chen2021evaluating} for coding tasks, MATH~\citep{hendrycks2021measuring}, GSM8K~\citep{cobbe2021training} for Maths related tasks and MathVista~\citep{lu2023mathvista} MathVerse~\citep{zhang2024mathverse} for multimodal mathematical reasoning tasks. The major hyperparameters for Elastic-Cache, unless otherwise specified in ablation studies, are set to a attention threshold of $\gamma=0.9$, a confidence threshold for parallel decoding of $\epsilon=0.9$, and a cache block size of 32. To establish a rigorous and fair comparison for all baseline methods, were re-evaluate all the methods including the original diffusion model LLaDA~\cite{nie2025large} and Fast-dLLM~\citep{wu2025fast}. This process eliminates confounding variables from hardware or software discrepancies and ensures that all observed performance differences are attributable to the methods themselves.
+
+\noindent{\bf Evaluation Framework and Metrics.}
+Our evaluation protocol comprehensively assesses both inference efficiency and the preservation of model performance across a variety of tasks. For standardization and reproducibility, we conduct all task-specific evaluations using the \texttt{lm-eval-harness} library~\citep{eval-harness}. We measure inference speed by throughput in tokens per second (t/s), which we calculate as the average number of tokens the model generates over the entire sequence until it produces an end-of-sequence (\textbf{\texttt{<eos>}}) token. We keep our calculation methodology consistent with that of Fast-dLLM~\citep{wu2025fast} to ensure comparable speed benchmarks. We measure task-specific performance using established metrics appropriate for each benchmark: for GSM8K~\citep{cobbe2021training}, we report 5-shot \texttt{flexible\_extract} exact match accuracy; for the MATH dataset~\citep{hendrycks2021measuring}, we report the 4-shot \texttt{math\_verify} score using the \texttt{minerva\_math} variant; for HumanEval~\citep{chen2021evaluating}, we evaluate 0-shot accuracy using a post-processing script consistent with the Fast-dLLM implementation to ensure fair comparison; and for MBPP~\citep{austin2021program}, we report the 3-shot \texttt{pass@1} metric. For multimodal evaluation on LLaDA-V~\citep{you2025llada}, we utilize an evaluation suite adapted from its official implementation using the \texttt{lmms-eval} framework~\citep{zhang2024lmmsevalrealitycheckevaluation,lmms_eval2024} to test on the MathVista~\citep{lu2023mathvista} and MathVerse~\citep{zhang2024mathverse} benchmarks. For MathVista, we report the \texttt{gpt\_eval\_score}, and for MathVerse, we report the \texttt{gpt\_eval\_score} on the \texttt{mathverse\_testmini\_vision\_dominant} subset.
+
+\noindent{\bf Hyper-parameters:} The hyper-parameters used for Elastic-Cache are provided in Table \ref{tab:hyperparameters}. Specifically, 
+\begin{itemize}
+    \item For LLaDA and LLaDA-1.5, $\gamma$ = 0.9 everywhere; $\beta$ is mostly 16, except GSM8K ($\beta$ = 32 at 256, 16 at 512) and HumanEval ($\beta$ = 32 at both 256/512). 
+    \item For LLaDA-V (MathVista/MathVerse), $\gamma$ = 0.7 and $\beta$ = 16 for both 256 and 512 token lengths.	
+    \item All tasks are reported at generation lengths 256 and 512.
+\end{itemize}
+
+{\bf Our Motivation and Perspective.}
+We close the gap with attention-aware and layer-aware caching for diffusion LLMs: tracking most-attended tokens and depth-varying KV dynamics to guide recomputation, complementary to interval-based~\citep{ma2025dkv} and confidence-based~\citep{wu2025fast} policies and compatible with the broader acceleration toolkit~\citep{ainslie2023gqa,su2024roformer,touvron2023llama,touvron2023llama2,dubey2024llama,gu2017non,xiao2023surveynonautoregressivegenerationneural,arriola2025blockdiffusioninterpolatingautoregressive,chen2023fast,ramesh2025test,kou2024cllms}.
+
+\begin{table}[t]
+    \centering
+    \caption{The hyper-parameters of Elastic-Cache under various settings.}
+    \label{tab:hyperparameters}
+    \resizebox{0.55\linewidth}{!}{
+    \begin{tabular}{llccc}
+        \toprule
+        \textbf{Model} & \textbf{Benchmark} & \textbf{Gen Length} & $\beta$ & $\gamma$ \\
+        \midrule
+        \multirow{9}{*}{\textbf{LLaDA}} & \multirow{2}{*}{GSM8K (5-shot)} & 256 & 32 & 0.9 \\
+         & & 512 & 16 & 0.9 \\
+        \cmidrule(l){2-5}
+         & \multirow{2}{*}{MATH (4-shot)} & 256 & 16 & 0.9 \\
+         & & 512 & 16 & 0.9 \\
+        \cmidrule(l){2-5}
+         & \multirow{2}{*}{Humaneval (0-shot)} & 256 & 32 & 0.9 \\
+         & & 512 & 32 & 0.9 \\
+        \cmidrule(l){2-5}
+         & \multirow{2}{*}{MBPP (3-shot)} & 256 & 16 & 0.9 \\
+         & & 512 & 16 & 0.9 \\
+        \midrule
+        \multirow{9}{*}{\textbf{LLaDA-1.5}} & \multirow{2}{*}{GSM8K (5-shot)} & 256 & 16 & 0.9 \\
+         & & 512 & 16 & 0.9 \\
+        \cmidrule(l){2-5}
+         & \multirow{2}{*}{MATH (4-shot)} & 256 & 16 & 0.9 \\
+         & & 512 & 16 & 0.9 \\
+        \cmidrule(l){2-5}
+         & \multirow{2}{*}{Humaneval (0-shot)} & 256 & 32 & 0.9 \\
+         & & 512 & 32 & 0.9 \\
+        \cmidrule(l){2-5}
+         & \multirow{2}{*}{MBPP (3-shot)} & 256 & 16 & 0.9 \\
+         & & 512 & 16 & 0.9 \\
+        \midrule
+        \multirow{4}{*}{\textbf{LLaDA-V}} & \multirow{2}{*}{Mathvista} & 256 & 16 & 0.7 \\
+         & & 512 & 16 & 0.7 \\
+        \cmidrule(l){2-5}
+         & \multirow{2}{*}{Mathverse} & 256 & 16 & 0.7 \\
+         & & 512 & 16 & 0.7 \\
+        \bottomrule
+    \end{tabular}
+    }
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\section{Extended Experimental Analysis}
+
+\subsection{Comprehensive Hyperparameter Sensitivity}
+
+We provide extensive ablation studies to understand the interaction between window size $\beta$ and attention threshold $\gamma$. Table~\ref{tab:beta-gamma-sweep} presents results on GSM8K with 512 Gen Length with LLaDA-1.5, systematically varying both parameters. The results demonstrate that $\beta=16$ with $\gamma=0.9$ provides the best balance between accuracy and throughput for most applications. When maximum accuracy is required, $\beta=8$ with $\gamma=0.95$ achieves 83.2\% accuracy at 79.1 t/s. For throughput-critical deployments, $\beta=16$ with $\gamma=0.7$ delivers 138.6 t/s while maintaining 77.6\% accuracy. Larger window sizes ($\beta=32$) do not consistently improve performance, likely because they cache too many MASK tokens that eventually become relevant, forcing more frequent cache invalidations.
+
+\begin{table}[!htbp]
+\centering
+\caption{Joint sensitivity analysis of window size $\beta$ and attention threshold $\gamma$ on GSM8K with 512 Gen Length (LLaDA-1.5). Each cell shows accuracy (top) and throughput in t/s (bottom).}
+\label{tab:beta-gamma-sweep}
+\vspace{-0.1in}
+\resizebox{0.4\linewidth}{!}{
+\begin{tabular}{lcccc}
+\toprule
+$\beta$ / $\gamma$ & 0.7 & 0.8 & 0.9 & 0.95 \\
+\midrule
+8 & \makecell{79.8 \\ 103.9} & \makecell{81.3 \\ 103.5} & \makecell{81.1 \\ 109.3} & \makecell{83.2 \\ 79.1} \\
+16 & \makecell{77.6 \\ 138.6} & \makecell{79.5 \\ 131.2} & \makecell{81.4 \\ 117.2} & \makecell{83.0 \\ 98.4} \\
+32 & \makecell{77.5 \\ 118.7} & \makecell{77.7 \\ 116.6} & \makecell{81.0 \\ 104.1} & \makecell{81.7 \\ 88.8} \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+Beyond single token tracking, we evaluate strategies that monitor the top-k most-attended tokens per layer. Table~\ref{tab:topk-tracking} shows results for k $\in \{1, 5, 10, 15, 20\}$ across different $\gamma$ values. Tracking more tokens improves accuracy slightly but adds overhead. Top-10 and Top-15 strategies achieve the best accuracy, reaching up to 84.7\% on GSM8K with 512 Gen Length. However, the throughput gains diminish as more tokens require drift computation. For most deployments, tracking a single most-attended token (Top-1) provides sufficient signal while minimizing overhead.
+
+\begin{table}[h]
+\centering
+\caption{Sensitivity to the number of tracked tokens (Top-k) across different attention thresholds on GSM8K with 512 Gen Length (LLaDA-1.5). Each cell shows accuracy (top) and throughput in t/s (bottom).}
+\label{tab:topk-tracking}
+\vspace{-0.1in}
+\resizebox{0.44\linewidth}{!}{
+\begin{tabular}{lcccc}
+\toprule
+Top-k / $\gamma$ & 0.8 & 0.85 & 0.9 & 0.95 \\
+\midrule
+Top-1 & \makecell{79.5 \\ 131.2} & \makecell{80.2 \\ 129.9} & \makecell{81.4 \\ 117.2} & \makecell{83.0 \\ 98.4} \\
+Top-5 & \makecell{81.5 \\ 130.5} & \makecell{81.4 \\ 122.4} & \makecell{83.5 \\ 109.9} & \makecell{82.7 \\ 88.0} \\
+Top-10 & \makecell{81.4 \\ 121.1} & \makecell{82.6 \\ 118.4} & \makecell{84.1 \\ 100.7} & \makecell{82.9 \\ 77.6} \\
+Top-15 & \makecell{82.5 \\ 167.4} & \makecell{83.2 \\ 159.7} & \makecell{83.7 \\ 139.4} & \makecell{84.7 \\ 103.0} \\
+Top-20 & \makecell{81.6 \\ 162.4} & \makecell{82.3 \\ 154.1} & \makecell{83.9 \\ 136.3} & \makecell{84.2 \\ 102.0} \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+
+\subsection{Memory and Computational Overhead}
+
+\noindent{\bf Memory Footprint Analysis.}
+Table~\ref{tab:memory-footprint} reports peak GPU memory usage across generation lengths on LLaDA-1.5 with GSM8K. Elastic-Cache achieves lower memory consumption than both baselines, with savings of 0.93-1.42 GB compared to the baseline and 2.38-3.89 GB compared to Fast-dLLM. This reduction stems from: (1) selective layer-wise cache updates that avoid storing intermediate states for all layers, and (2) block-wise caching of distant MASK tokens outside the sliding window. These memory savings enable deployment on resource-constrained devices while maintaining high throughput.
+
+\begin{table}[h]
+\centering
+\caption{Peak GPU memory footprint (GB) on LLaDA-1.5, GSM8K across generation lengths.}
+\label{tab:memory-footprint}
+\vspace{-0.1in}
+\resizebox{0.6\linewidth}{!}{
+\begin{tabular}{lccc}
+\toprule
+\textbf{Method} & \textbf{256 tokens} & \textbf{512 tokens} & \textbf{1024 tokens} \\
+\midrule
+Baseline & 19.04 & 19.62 & 20.79 \\
+Fast-dLLM & 20.49 & 21.42 & 23.26 \\
+Elastic-Cache & \textbf{18.11} & \textbf{18.13} & \textbf{19.37} \\
+\bottomrule
+\end{tabular}
+}
+\vspace{-0.1in}
+\end{table}
+
+The computational overhead of our attention-aware cache update mechanism is minimal compared to standard attention computation. Table~\ref{tab:compute-overhead} compares the complexity and multiply-accumulate operations (MACs) for cache update triggers versus full QKV attention at sequence length K=1024. Finding the most-attended token requires $O(K^2H)$ operations, which translates to $6.7 \times 10^7$ MACs. In contrast, full attention computation scales as $O(K^2HD)$ with $1.3 \times 10^{10}$ MACs. Our cache trigger introduces less than 0.5\% overhead relative to attention, making it negligible in the overall inference budget. The cosine similarity computation for drift detection adds another $O(KH)$ operations, which is even cheaper.
+
+\begin{table}[h]
+\centering
+\caption{Computational overhead comparison. Cache update trigger has negligible cost compared to full attention computation (K=1024, H=32, D=128).}
+\label{tab:compute-overhead}
+\vspace{-0.1in}
+\resizebox{0.57\linewidth}{!}{
+\begin{tabular}{lcc}
+\toprule
+Operation & Complexity & MACs (K=1024) \\
+\midrule
+Cache Update Trigger & $O(K^2H)$ & $6.7 \times 10^7$ \\
+Attention (QKV) & $O(K^2HD)$ & $1.3 \times 10^{10}$ \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\subsection{Scalability Analysis}
+
+We validate multi-GPU scalability by comparing throughput and latency under different hardware configurations. Table~\ref{tab:multigpu} shows results for LLaDA-1.5 on GSM8K with 512 Gen Length using 1 and 2 A100 GPUs with data parallelism. With 2 GPUs and batch size 8, Elastic-Cache achieves 225.5 t/s compared to Fast-dLLM's 68.0 t/s, maintaining the 3.3x throughput advantage observed in single-GPU settings. The latency improvement is more dramatic: our method reduces end-to-end inference time from 1.86 hours to 0.83 hours on a single GPU, and from 1.00 hours to 0.56 hours on two GPUs. These results confirm that Elastic-Cache scales effectively with additional hardware without requiring architecture-specific optimizations.
+
+\begin{table}[!htbp]
+\centering
+\caption{Multi-GPU scalability on GSM8K with 512 Gen Length (LLaDA-1.5). Throughput in t/s and latency in hours for full benchmark evaluation.}
+\label{tab:multigpu}
+\vspace{-0.1in}
+\resizebox{0.62\linewidth}{!}{
+\begin{tabular}{lccc}
+\toprule
+Configuration & Accuracy (\%) & Throughput (t/s) & Latency (h) \\
+\midrule
+\multicolumn{4}{c}{\textit{1 GPU, batch size 4}} \\
+Fast-dLLM & 80.3 & 36.8 & 1.86 \\
+Elastic-Cache & \textbf{81.9} & \textbf{117.2} & \textbf{0.83} \\
+\midrule
+\multicolumn{4}{c}{\textit{2 GPUs, batch size 8}} \\
+Fast-dLLM & 80.3 & 68.0 & 1.00 \\
+Elastic-Cache & \textbf{81.9} & \textbf{225.5} & \textbf{0.56} \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+%%%%%
+\subsection{Block-Caching Mechanism}
+
+To validate the effectiveness of our block-wise caching strategy for distant MASK tokens, we compare Elastic-Cache with and without this mechanism across different window sizes. Table~\ref{tab:block-cache-ablation} shows that block-caching provides substantial throughput gains with minimal impact on accuracy. At $\beta=16$, removing block-caching reduces throughput from 119.8 t/s to 82.7 t/s while maintaining similar accuracy (81.4\% vs 80.6\%). The benefits increase at larger window sizes, demonstrating that caching distant MASK tokens effectively eliminates redundant computation without harming prediction quality.
+
+\begin{table}[h]
+\centering
+\caption{Ablation of block-caching mechanism on GSM8K with 512 Gen Length (LLaDA-1.5, $\gamma=0.9$). Each cell shows accuracy (top) and throughput in t/s (bottom).}
+\label{tab:block-cache-ablation}
+\vspace{-0.1in}
+\resizebox{0.62\linewidth}{!}{
+\begin{tabular}{lcccc}
+\toprule
+Method & $\beta=8$ & $\beta=16$ & $\beta=32$ & $\beta=64$ \\
+\midrule
+w/o block-caching & \makecell{81.1 \\ 77.0} & \makecell{80.6 \\ 82.7} & \makecell{80.6 \\ 84.3} & \makecell{74.3 \\ 67.1} \\
+Elastic-Cache & \makecell{81.1 \\ 109.3} & \makecell{81.4 \\ 119.8} & \makecell{81.0 \\ 118.1} & \makecell{75.7 \\ 88.6} \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+We further explore integrating adaptive block sizing using AdaBlock~\citep{lu2025adablock}, which dynamically adjusts window size based on semantic coherence. Table~\ref{tab:adablock} shows results when combining AdaBlock with Elastic-Cache. Starting from default window sizes $\beta_0$, AdaBlock adjusts to average sizes $\bar{\beta}$ during decoding. However, this adaptive approach introduces overhead without accuracy gains, confirming our observation that fixed window sizes suffice when combined with attention-aware cache updates.
+
+\begin{table}[h]
+\centering
+\caption{Integration with AdaBlock adaptive window sizing on GSM8K with 512 Gen Length (LLaDA-1.5, $\gamma=0.9$). Format: accuracy / throughput (t/s).}
+\label{tab:adablock}
+\vspace{-0.1in}
+\resizebox{0.6\linewidth}{!}{
+\begin{tabular}{lcc}
+\toprule
+Method & $\beta_0=16$, $\bar{\beta}=15.6$ & $\beta_0=32$, $\bar{\beta}=27.1$ \\
+\midrule
+Elastic-Cache & 81.4 / 119.1 & 81.0 / 118.1 \\
++ AdaBlock & 81.9 / 87.1 & 80.7 / 85.5 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\subsection{Runtime Adaptation of Layer Boundary}
+
+The layer boundary $\ell^*$ is determined automatically at runtime based on observed attention drift. Table~\ref{tab:layer-boundary} shows how cache update frequency $\rho = \frac{L-\ell^*-1}{L}$ varies with threshold $\gamma$ on GSM8K with 512 Gen Length. Lower $\gamma$ values trigger updates less frequently ($\rho=0.47\%$ at $\gamma=0.5$), maximizing throughput but sacrificing accuracy. Higher $\gamma$ values increase update frequency ($\rho=20.02\%$ at $\gamma=0.95$), preserving accuracy at reduced throughput. This adaptive behavior demonstrates that $\ell^*$ effectively responds to input difficulty without manual tuning.
+
+\begin{table}[h]
+\centering
+\caption{Cache update frequency $\rho$ and performance as layer boundary $\ell^*$ adapts to different thresholds on GSM8K with 512 Gen Length (LLaDA-1.5).}
+\label{tab:layer-boundary}
+\vspace{-0.1in}
+\resizebox{0.7\linewidth}{!}{
+\begin{tabular}{lcccccc}
+\toprule
+$\gamma$ & 0.5 & 0.7 & 0.8 & 0.85 & 0.9 & 0.95 \\
+\midrule
+$\rho$ (\%) & 0.47 & 1.81 & 4.17 & 6.50 & 10.23 & 20.02 \\
+Accuracy (\%) & 76.0 & 77.6 & 79.5 & 80.2 & 81.4 & 83.0 \\
+Throughput (t/s) & 142.7 & 138.6 & 131.2 & 129.9 & 117.2 & 98.4 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\subsection{Validation of Most-Attended Token Heuristic}
+
+Our method relies on the assumption that most-attended tokens exhibit minimal drift and serve as conservative indicators for cache staleness. Table~\ref{tab:token-drift-validation} validates this assumption empirically by measuring average cosine similarity between consecutive steps for most-attended tokens versus all cached tokens across benchmarks. The most-attended tokens consistently maintain higher similarity (0.948-0.985), confirming they change less than average tokens and provide reliable lower bounds for drift detection.
+
+\begin{table}[!htbp]
+\centering
+\caption{Empirical validation of most-attended token stability. Higher cosine similarity indicates lower drift. Results on LLaDA-1.5 with $\gamma=0.9$.}
+\label{tab:token-drift-validation}
+\vspace{-0.1in}
+\resizebox{0.72\linewidth}{!}{
+\begin{tabular}{lcccc}
+\toprule
+Token Type & GSM8K & MATH & HumanEval & MBPP \\
+\midrule
+Most-attended & 0.974 & 0.978 & 0.985 & 0.948 \\
+Average (all cached) & 0.973 & 0.977 & 0.980 & 0.947 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\subsection{Multimodal Extensions}
+
+For multimodal tasks on LLaDA-V, we evaluate two configurations: single-token prediction per step (matching our text-only setup) and parallel multi-token prediction (matching the original LLaDA-V implementation). Table~\ref{tab:multimodal-parallel} shows that Elastic-Cache with single-token prediction already surpasses the original LLaDA-V baseline in throughput. When extended to parallel prediction, throughput increases further to 44.2 t/s on MathVista and 42.2 t/s on MathVerse, demonstrating that our cache management strategy complements parallel decoding effectively in multimodal settings.
+
+\begin{table}[!htbp]
+\centering
+\caption{Multimodal performance with parallel decoding on LLaDA-V (generation length 512). Format: accuracy / throughput (t/s).}
+\label{tab:multimodal-parallel}
+\vspace{-0.1in}
+\resizebox{0.6\linewidth}{!}{
+\begin{tabular}{lcc}
+\toprule
+Method & MathVista & MathVerse \\
+\midrule
+LLaDA-V baseline & 53.0 / 1.9 & 26.9 / 2.0 \\
+Elastic-Cache (single-token) & 55.8 / 24.1 & 29.2 / 32.3 \\
+Elastic-Cache (parallel) & 50.6 / 44.2 & 26.3 / 42.2 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+\subsection{Comparison with Consistency Models}
+
+We compare against consistency-based acceleration methods for diffusion models. Table~\ref{tab:consistency-comparison} shows results on GSM8K with 512 Gen Length using Consistency LLMs~\citep{kou2024cllms} versus our approach on LLaDA-1.5. While consistency models achieve reasonable throughput (35.5 t/s), they suffer significant accuracy degradation (56.5\% vs 78.5\% baseline). Elastic-Cache maintains higher accuracy (79.2\%) while delivering substantially greater throughput (109.6 t/s), demonstrating the advantage of training-free cache management over distillation-based approaches.
+
+\begin{table}[!htbp]
+\centering
+\caption{Comparison with consistency-based acceleration on GSM8K with 512 {\em Gen Length}. Our training-free approach preserves accuracy while achieving higher throughput.}
+\label{tab:consistency-comparison}
+\vspace{-0.1in}
+\resizebox{0.6\linewidth}{!}{
+\begin{tabular}{lccc}
+\toprule
+Method & Accuracy (\%) & Throughput (t/s) \\
+\midrule
+Consistency LLMs & 56.5 & 35.5 \\
+LLaDA-1.5 baseline & 78.5 & 2.6 \\
+Elastic-Cache & \textbf{79.2} & \textbf{109.6} \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+
+\section{Use of Large Language Models}
+
+An LLM was used to help solely polish the writing of the paper, while all method, idea and experiments were prepared and carried out entirely by the authors.
+
+
+\section{Sample Response}
+In the following, we present several examples of actual generation results produced by our approach under different parameter settings.
+
+\begin{table}[h]
+\centering
+\caption{Example -- Qualitative comparison for different $\gamma$, LLaDA-1.5}
+\vspace{0.3cm}
+
+\noindent\rule{\textwidth}{0.4pt}
+\textbf{Prompt:} \textit{A store sells 3 types of fruit: apples at \$2 each, bananas at \$1 each, and oranges at \$3 each. If Sarah buys 4 apples, 6 bananas, and 2 oranges, how much does she spend in total?}
+\noindent\rule{\textwidth}{0.4pt}
+
+\vspace{0.5cm}
+
+\begin{tabular}{|>{\columncolor{lightblue}}p{5cm}|>{\columncolor{lightgreen}}p{5cm}|>{\columncolor{lightpink}}p{5cm}|}
+\hline
+\rowcolor{headercolor}
+\textcolor{white}{\textbf{$\gamma=0.5$}} & \textcolor{white}{\textbf{$\gamma=0.7$}} & \textcolor{white}{\textbf{$\gamma=0.95$}} \\
+\hline
+\footnotesize
+To determine how much Sarah spends in total, we need to calculate the cost of each type of fruit separately and then sum these amounts.
+
+1. **Cost of apples:**
+   - Sarah buys 4 apples.
+   - Each apple costs \$2.
+   - Total cost for apples = $(4 \times 2 = 8)$ dollars.
+
+2. **Cost of bananas:**
+   - Sarah buys 6 bananas.
+   - Each banana costs \$1.
+   - Total cost for bananas = $(6 \times 1 = 6)$ dollars.
+
+3. **Cost of oranges:**
+   - Sarah buys 2 oranges.
+   - Each orange costs \$3.
+   - Total cost for oranges = $(2 \times 3 = 6)$ dollars.
+
+Now, we sum the costs of all the fruits to find the total amount Sarah spends:
+
+$8 \text{ (apples)} + 6 \text{ (bananas)} + 6 \text{ (oranges)} = 20 \text{ dollars}$
+
+Therefore, Sarah spends a total of 20 dollars.
+
+\vspace{0.2cm}
+\textcolor{red}{\textbf{Time: 3.1s}}
+&
+\footnotesize
+To determine how much Sarah spends in total, we need to calculate the cost of each type of fruit separately and then sum these amounts.
+
+First, let's calculate the cost of the apples:
+- Sarah buys 4 apples.
+- Each apple costs \$2.
+- Therefore, the cost of apples is $(4 \times 2 = 8)$ dollars.
+
+Next, let's calculate the cost of the bananas:
+- Sarah buys 6 bananas.
+- Each banana costs \$1.
+- Therefore, the cost of bananas is $(6 \times 1 = 6)$ dollars.
+
+Finally, let's calculate the cost of the oranges:
+- Sarah buys 2 oranges.
+- Each orange costs \$3.
+- Therefore, the cost of oranges is $(2 \times 3 = 6)$ dollars.
+
+Now, we sum the costs of all the fruits to find the total amount Sarah spends:
+- Total cost = Cost of apples + Cost of bananas + Cost of oranges
+- Total cost = $(8 + 6 + 6 = 20)$ dollars
+
+So, Sarah spends a total of 20 dollars.
+
+\vspace{0.2cm}
+\textcolor{red}{\textbf{Time: 3.4s}}
+&
+\footnotesize
+To determine how much Sarah spends in total, we need to calculate the cost of each type of fruit separately and then sum these amounts.
+
+First, let's calculate the cost of the apples:
+- Sarah buys 4 apples.
+- Each apple costs \$2.
+- Total cost for apples = $(4 \times 2 = 8)$ dollars.
+
+Next, let's calculate the cost of the bananas:
+- Sarah buys 6 bananas.
+- Each banana costs \$1.
+- Total cost for bananas = $(6 \times 1 = 6)$ dollars.
+
+Then, let's calculate the cost of the oranges:
+- Sarah buys 2 oranges.
+- Each orange costs \$3.
+- Total cost for oranges = $(2 \times 3 = 6)$ dollars.
+
+Now, we sum the costs of all the fruits to find the total amount spent:
+- Total cost = Cost of apples + Cost of bananas + Cost of oranges
+- Total cost = 8 + 6 + 6
+- Total cost = 20 dollars
+
+Therefore, Sarah spends a total of 20 dollars.
+
+\vspace{0.2cm}
+\textcolor{red}{\textbf{Time: 3.5s}}
+\\
+\hline
+\end{tabular}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{table}[h]
+\centering
+\caption{Example -- Qualitative comparison for different $\gamma$, LLaDA-1.5}
+\vspace{0.3cm}
+
+\noindent\rule{\textwidth}{0.4pt}
+\textbf{Prompt:} \textit{Tom has 24 marbles. He gives 1/3 of them to his sister and 1/4 of the remaining marbles to his brother. How many marbles does Tom have left?}
+\noindent\rule{\textwidth}{0.4pt}
+
+\vspace{0.5cm}
+
+\begin{tabular}{|>{\columncolor{lightblue}}p{5cm}|>{\columncolor{lightgreen}}p{5cm}|>{\columncolor{lightpink}}p{5cm}|}
+\hline
+\rowcolor{headercolor}
+\textcolor{white}{\textbf{$\gamma = 0.5$}} & \textcolor{white}{\textbf{$\gamma = 0.7$}} & \textcolor{white}{\textbf{$\gamma = 0.95$}} \\
+\hline
+\footnotesize
+To determine how many marbles Tom has left, we will follow these steps:
+
+1. Calculate the number of marbles Tom gives to his sister.
+2. Subtract the marbles given to his sister from the original number of marbles.
+3. Calculate the number of marbles Tom gives to his brother.
+4. Subtract the marbles given to his brother from the remaining marbles.
+
+Let's start with the first step:
+
+**Step 1: Calculate the number of marbles Tom gives to his sister.**
+
+Tom gives $\frac{1}{3}$ of his 24 marbles to his sister.
+$\frac{1}{3} \times 24 = 8$
+So, Tom gives 8 marbles to his sister.
+
+**Step 2: Subtract the marbles given to his sister from the original number of marbles.**
+
+$24 - 8 = 16$
+So, after giving 8 marbles to his sister, Tom has 16 marbles left.
+
+**Step 3: Calculate the number of marbles Tom gives to his brother.**
+
+Tom gives $\frac{1}{4}$ of the remaining 16 marbles to his brother.
+$\frac{1}{4} \times 16 = 4$
+So, Tom gives 4 marbles to his brother.
+
+**Step 4: Subtract the marbles given to his brother from the remaining marbles.**
+
+$16 - 4 = 12$
+So, after giving 4 marbles to his brother, Tom has 12 marbles left.
+
+Therefore, the number of marbles Tom has left is $\boxed{12}$.
+
+\vspace{0.2cm}
+\textcolor{red}{\textbf{Time: 3.3s}}
+&
+\footnotesize
+To determine how many marbles Tom has left, we will follow these steps:
+
+1. Calculate the number of marbles Tom gives to his sister.
+2. Subtract the marbles given to his sister from the original number of marbles.
+3. Calculate the number of marbles Tom gives to his brother.
+4. Subtract the marbles given to his brother from the remaining marbles.
+
+Let's start with the first step:
+
+**Step 1: Calculate the number of marbles Tom gives to his sister.**
+
+Tom gives $\frac{1}{3}$ of his 24 marbles to his sister.
+Marbles given to sister = $\frac{1}{3} \times 24 = 8$
+
+**Step 2: Subtract the marbles given to his sister from the original number of marbles.**
+
+Remaining marbles after giving to sister = $24 - 8 = 16$
+
+**Step 3: Calculate the number of marbles Tom gives to his brother.**
+
+Tom gives $\frac{1}{4}$ of the remaining 16 marbles to his brother.
+Marbles given to brother = $\frac{1}{4} \times 16 = 4$
+
+**Step 4: Subtract the marbles given to his brother from the remaining marbles.**
+
+Remaining marbles after giving to brother = $16 - 4 = 12$
+
+Therefore, the number of marbles Tom has left is $\boxed{12}$.
+
+\vspace{0.2cm}
+\textcolor{red}{\textbf{Time: 3.1s}}
+&
+\footnotesize
+To determine how many marbles Tom has left, we will follow these steps:
+
+1. Calculate the number of marbles Tom gives to his sister.
+2. Subtract the marbles given to his sister from the total number of marbles.
+3. Calculate the number of marbles Tom gives to his brother.
+4. Subtract the marbles given to his brother from the remaining marbles.
+
+**Step 1: Calculate the number of marbles Tom gives to his sister.**
+
+Tom gives $\frac{1}{3}$ of his 24 marbles to his sister.
+Marbles given to sister = $\frac{1}{3} \times 24 = 8$
+
+**Step 2: Subtract the marbles given to his sister from the total number of marbles.**
+
+Remaining marbles after giving to sister = $24 - 8 = 16$
+
+**Step 3: Calculate the number of marbles Tom gives to his brother.**
+
+Tom gives $\frac{1}{4}$ of the remaining 16 marbles to his brother.
+Marbles given to brother = $\frac{1}{4} \times 16 = 4$
+
+**Step 4: Subtract the marbles given to his brother from the remaining marbles.**
+
+Remaining marbles after giving to brother = 16 - 4 = 12
+
+Therefore, the number of marbles Tom has left is $\boxed{12}$.
+
+\vspace{0.2cm}
+\textcolor{red}{\textbf{Time: 3.2s}}
+\\
+\hline
+\end{tabular}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{table}[h]
+\centering
+\caption{Example -- Qualitative comparison of responses under different $\gamma$.}
+\vspace{0.3cm}
+
+\noindent\rule{\textwidth}{0.4pt}
+\textbf{Prompt:} \textit{Points $A$ and $B$ are on parabola $y=4x^2+7x-1$, and the origin is the midpoint of $\overline{AB}$. Find the square of the length of $\overline{AB}$.}
+\noindent\rule{\textwidth}{0.4pt}
+
+\vspace{0.5cm}
+
+\begin{tabular}{|>{\columncolor{lightblue}}p{5cm}|>{\columncolor{lightgreen}}p{5cm}|>{\columncolor{lightpink}}p{5cm}|}
+\hline
+\rowcolor{headercolor}
+\textcolor{white}{\textbf{$\gamma = 0.5$}} & \textcolor{white}{\textbf{$\gamma = 0.7$}} & \textcolor{white}{\textbf{$\gamma = 0.9$}} \\
+\hline
+\footnotesize
+Let $A = (x_1, y_1)$ and $B = (x_2, y_2)$. Since the origin is the midpoint of $\overline{AB}$, we have:
+$$\left( \frac{x_1 + x_2}{2}, \frac{y_1 + y_2}{2} \right) = (0, 0).$$
+This implies:
+$$x_1 + x_2 = 0 \quad \text{and} \quad y_1 + y_2 = 0.$$
+
+Since $A$ and $B$ lie on the parabola $y = 4x^2 + 7x - 1$, we have:
+$$y_1 + y_2 = (4x_1^2 + 7x_1 - 1) + (4x_2^2 + 7x_2 - 1) = 0.$$
+
+Now, using the equations $x_1 + x_2 = 0$ and $y_1 + y_2 = 0$, we get:
+$$4x_1^2 + 7x_1 - 1 + 4x_2^2 + 7x_2 - 1 = 0.$$
+
+This simplifies to:
+$$4x_1^2 + 7x_1 + 4x_2^2 + 7x_2 - 2 = 0.$$
+
+Thus, the square of the length of $\overline{AB}$ is:
+$$(x_1 - x_2)^2 + (y_1 - y_2)^2 = 0^2 + 0^2 = 0.$$
+
+Therefore, the square of the length of $\overline{AB}$ is:
+$$\boxed{0}.$$
+
+\vspace{0.2cm}
+\textcolor{red}{\textbf{Time: 8.1s}}
+&
+\footnotesize
+Let $A = (x_1, y_1)$ and $B = (x_2, y_2)$. Since the origin is the midpoint of $\overline{AB}$, we have:
+$$\left( \frac{x_1 + x_2}{2}, \frac{y_1 + y_2}{2} \right) = (0, 0).$$
+This implies:
+$$x_1 + x_2 = 0 \quad \text{and} \quad y_1 + y_2 = 0.$$
+
+Since $A$ and $B$ lie on the parabola $y = 4x^2 + 7x - 1$, we have:
+$$y_1 = 4x_1^2 + 7x_1 - 1 $$
+and  $$y_2 = 4x_2^2 + 7x_2 - 1.$$
+
+From $x_1 + x_2 = 0$, we get $x_1 = -x_2$. Substituting $x_1 = -x_2$ into the equations for $y_1$ and $y_2$:
+$$y_1 = 4x_2^2 + 7x_2 - 1$$ and  $$y_2 = 4x_2^2 + 7x_2 - 1.$$
+
+Since $y_1 + y_2 = 0$, we have:
+$$y_1 = -y_2.$$
+
+Thus,
+$$y_1 = -(4x_2^2 + 7x_2 - 1) = -4x_2^2 - 7x_2 + 1.$$
+
+Similarly,
+$$y_2 = 4x_2^2 + 7x_2 - 1.$$
+
+Therefore,
+$$y_1 = -y_2 =$$ $$-(4x_2^2 + 7x_2 - 1) = -4x_2^2 - 7x_2 + 1.$$
+
+Thus, the square of the length of $\overline{AB}$ is given by:
+$$\boxed{2}.$$
+
+\vspace{0.2cm}
+\textcolor{red}{\textbf{Time: 9.3s}}
+&
+\footnotesize
+Let $A = (x_1, y_1)$ and $B = (x_2, y_2)$. Since the origin is the midpoint of $\overline{AB}$, we have:
+$$\left( \frac{x_1 + x_2}{2}, \frac{y_1 + y_2}{2} \right) = (0, 0).$$
+This implies:
+$$x_1 + x_2 = 0 \quad \text{and} \quad y_1 + y_2 = 0.$$
+
+Since $A$ and $B$ lie on the parabola $y = 4x^2 + 7x - 1$, we have:
+$$y_1 = 4x_1^2 + 7x_1 - 1$$ and $$y_2 = 4x_2^2 + 7x_2 - 1.$$
+
+Using $y_1 + y_2 = 0$, we get:
+$y_1 + y_2 =$ 
+$(4x_1^2 + 7x_1 - 1) + (4x_2^2 + 7x_2 - 1) = 0.$
+Simplifying, we have:
+$$4x_1^2 + 7x_1 + 4x_2^2 + 7x_2 - 2 = 0.$$
+
+Since $x_1 + x_2 = 0$, we get:
+$$4x_1^2 + 7x_1 + 4x_2^2 + 7x_2 - 2 = 0.$$
+
+Now, we need to find the square of the length of $\overline{AB}$. The length of $\overline{AB}$ is given by:
+$$AB = \sqrt{(x_2 - x_1)^2 + (y_2 - y_1)^2}.$$
+
+Using the midpoint formula and the properties of the parabola, we can simplify the expression. However, since the problem asks for the square of the length, we can directly use the result.
+
+Thus, the square of the length of $\overline{AB}$ is:
+$$\boxed{50}.$$
+
+\vspace{0.2cm}
+\textcolor{ForestGreen}{\textbf{Time: 8.7s (Correct)}}
+\\
+\hline
+\end{tabular}
+\end{table}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% \subsection{Coding Examples}
+
+\begin{table}[h]
+\centering
+\caption{Coding Example -- Close Elements}
+
+\noindent\rule{\textwidth}{0.4pt}
+\textbf{Prompt:}
+\begin{lstlisting}[language=Python]
+from typing import List
+
+def has_close_elements(numbers: List[float], threshold: float) -> bool:
+    """ Check if in given list of numbers, are any two numbers closer to each other than
+    given threshold.
+    >>> has_close_elements([1.0, 2.0, 3.0], 0.5)
+    False
+    >>> has_close_elements([1.0, 2.8, 3.0, 4.0, 5.0, 2.0], 0.3)
+    True
+    """
+\end{lstlisting}
+\noindent\rule{\textwidth}{0.4pt}
+
+\vspace{0.5cm}
+
+\begin{tabular}{|>{\columncolor{lightred}}p{7.3cm}|>{\columncolor{lightgreen}}p{7.3cm}|}
+\hline
+\rowcolor{darkgray}
+\textcolor{white}{\textbf{FAST-DLLM}} & \textcolor{white}{\textbf{OURS}} \\
+\hline
+
+\hline
+
+\footnotesize
+\begin{lstlisting}[language=Python, backgroundcolor=\color{lightred}]
+sorted_numbers = sorted(numbers)
+for i in range(len(sorted_numbers)):
+    if abs(sorted_numbers[i] - sorted_numbers[i + 1]) < threshold:
+        return True
+return False
+\end{lstlisting}
+
+&
+
+\footnotesize
+\begin{lstlisting}[language=Python, backgroundcolor=\color{lightgreen}]
+sorted_numbers = sorted(numbers)
+for i in range(len(sorted_numbers) - 1):
+    if abs(sorted_numbers[i] - sorted_numbers[i + 1]) < threshold:
+        return True
+return False
+\end{lstlisting}
+\\
+\hline
+\multicolumn{2}{|c|}{\textbf{Fast-DLLM generated incorrect solution}} \\
+\hline
+\end{tabular}
+\end{table}
+
+\vspace{1cm}
+
+\begin{table}[h]
+\centering
+\caption{Coding Example -- Truncate Number}
+
+\noindent\rule{\textwidth}{0.4pt}
+\textbf{Prompt:}
+\begin{lstlisting}[language=Python]
+def truncate_number(number: float) -> float:
+    """ Given a positive floating point number, it can be decomposed into
+    and integer part (largest integer smaller than given number) and decimals
+    (leftover part always smaller than 1).
+
+    Return the decimal part of the number.
+    >>> truncate_number(3.5)
+    0.5
+    """
+\end{lstlisting}
+\noindent\rule{\textwidth}{0.4pt}
+
+\vspace{0.5cm}
+
+\begin{tabular}{|>{\columncolor{lightgreen}}p{7.3cm}|>{\columncolor{lightgreen}}p{7.3cm}|}
+\hline
+\rowcolor{darkgray}
+\textcolor{white}{\textbf{FAST-DLLM}} & \textcolor{white}{\textbf{OURS}} \\
+\hline
+
+\hline
+
+\footnotesize
+\begin{lstlisting}[language=Python, backgroundcolor=\color{lightgreen}]
+if number < 0:
+    raise ValueError("The number must be positive.")
+integer_part = int(number)
+decimal_part = number - integer_part
+return decimal_part
+\end{lstlisting}
+
+&
+
+\footnotesize
+\begin{lstlisting}[language=Python, backgroundcolor=\color{lightgreen}]
+if number < 0:
+    raise ValueError("The number must be positive")
+integer_part = int(number)
+decimal_part = number - integer_part
+return decimal_part
+\end{lstlisting}
+
+\\
+\hline
+\multicolumn{2}{|c|}{\textbf{Both solutions are functionally equivalent with minor  differences}} \\
+\hline
+\end{tabular}
+\end{table}
+
+\end{document}

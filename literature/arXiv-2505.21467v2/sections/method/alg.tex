@@ -1,0 +1,166 @@
+% \begin{figure}[h!]
+%   \centering
+%   %----------- Guided Diffusion (Left) -----------%
+%   \begin{minipage}[t]{0.49\columnwidth}
+%     \begin{algorithm}[H]
+%       \caption{Guided Diffusion}
+%       \label{alg:guided_diffusion}
+%       \begin{algorithmic}[1]
+%         \REQUIRE masked seq.\ \(x\), DLM \(f_\theta\), AR \(g_\phi\)
+%         \ENSURE fully unmasked \(x\)
+%         \WHILE{\(\exists i:\,x[i] = \text{mask}\)}
+%           \STATE \( \text{logits}_{DLM} \gets \operatorname{softmax}(f_\theta(x)) \)
+%           \STATE \( \text{tok}_{DLM} \gets \arg\max\, \text{logits}_{DLM} \)
+%           \STATE \( \text{logits}_{AR} \gets \operatorname{softmax}(g_\phi(\text{tok}_{DLM})) \)
+%           \STATE \( \text{tok}_{AR} \gets \arg\max\, \text{logits}_{AR} \)
+%           \STATE let \( M = [i_1, \dots, i_m] \) be masked indices
+%           \STATE \( k \gets \max\{ j : \text{tok}_{DLM}[i_\ell] = \text{tok}_{AR}[i_\ell],\, \forall \ell \le j \} \)
+%           \IF{\(k > 0\)}
+%             \STATE unmask \(i_1{:}i_k\) with \(\text{tok}_{DLM}[i_1{:}i_k]\)
+%           \ELSE
+%             \STATE unmask \(i_1\) with \(\text{tok}_{DLM}[i_1]\)
+%           \ENDIF
+%         \ENDWHILE
+%       \end{algorithmic}
+%     \end{algorithm}
+%   \end{minipage}%
+%   \hspace{2pt}
+%   %-------- Guided Diffusion + Correction (Right) --------%
+%   \begin{minipage}[t]{0.49\columnwidth}
+%     \begin{algorithm}[H]
+%       \caption{Guided Diffusion with Correction}
+%       \label{alg:guided_diffusion_corrected}
+%       \begin{algorithmic}[1]
+%         \REQUIRE masked seq.\ \(x\), DLM \(f_\theta\), AR \(g_\phi\)
+%         \ENSURE fully unmasked \(x\)
+%         \WHILE{\(\exists i:\,x[i] = \text{mask}\)}
+%           \STATE \( \text{logits}_{DLM} \gets \operatorname{softmax}(f_\theta(x)) \)
+%           \STATE \( \text{tok}_{DLM} \gets \arg\max\, \text{logits}_{DLM} \)
+%           \STATE \( \text{logits}_{AR} \gets \operatorname{softmax}(g_\phi(\text{tok}_{DLM})) \)
+%           \STATE \( \text{tok}_{AR} \gets \arg\max\, \text{logits}_{AR} \)
+%           \STATE let \( M = [i_1, \dots, i_m] \) be masked indices
+%           \STATE \( k \gets \max\{ j : \text{tok}_{DLM}[i_\ell] = \text{tok}_{AR}[i_\ell],\, \forall \ell \le j \} \)
+%           \IF{\(k > 0\)}
+%             \STATE unmask \(i_1{:}i_k\) with \(\text{tok}_{DLM}[i_1{:}i_k]\)
+%             \STATE unmask \(i_{k+1}\) with \(\text{tok}_{AR}[i_{k+1}]\)
+%           \ELSE
+%             \STATE unmask \(i_1\) with \(\text{tok}_{DLM}[i_1]\)
+%           \ENDIF
+%         \ENDWHILE
+%       \end{algorithmic}
+%     \end{algorithm}
+%   \end{minipage}
+%   % \caption{Left: AR-assisted guided diffusion. Right: with correction—also fills one token using AR beyond matched region.}
+% \end{figure}
+
+
+
+% \begin{figure}[h!]
+%   \centering
+%   %----------- Guided Diffusion (Left) -----------%
+%   \begin{minipage}[t]{0.49\columnwidth}
+%     \begin{algorithm}[H]
+%       \caption{Guided Diffusion (AR-Assisted)}
+%       \label{alg:guided_diffusion}
+%       \begin{algorithmic}[1]
+%         \REQUIRE masked seq.\ \(x\), DLM \(f_\theta\), AR \(g_\phi\)
+%         \ENSURE fully unmasked \(x\)
+%         \WHILE{\(\exists i:\,x[i] = \text{mask}\)}
+%           \STATE \( \text{logits}_{\text{DLM}} \gets \operatorname{softmax}(f_\theta(x)) \)
+%           \STATE \( \text{tok}_{\text{DLM}} \gets \arg\max\, \text{logits}_{\text{DLM}} \)
+%           \STATE \( \text{logits}_{AR} \gets \operatorname{softmax}(g_\phi(\text{tok}_{\text{DLM}})) \)
+%           \STATE \( \text{tok}_{\text{\text{AR}}} \gets \arg\max\, \text{logits}_{\text{AR}} \)
+%           \STATE let \( M = [i_1, \dots, i_m] \) be masked indices
+%           \STATE \( k \leftarrow \text{size}(\{\text{tok}_{\text{DLM}} = \text{tok}_{\text{AR}}\}) \)
+%           \IF{\(k > 0\)}
+%             \STATE Unmask \(i_1{:}i_k\) with \(\text{tok}_{\text{DLM}}[i_1{:}i_k]\)
+%           \ELSE
+%             \STATE Unmask \(i_1\) with \(\text{tok}_{\text{DLM}}[i_1]\)
+%           \ENDIF
+%         \ENDWHILE
+%       \end{algorithmic}
+%     \end{algorithm}
+%   \end{minipage}%
+%   \hspace{2pt}
+%   %-------- Guided Diffusion + Correction (Right) --------%
+%   \begin{minipage}[t]{0.49\columnwidth}
+%     \begin{algorithm}[H]
+%       \caption{Guided Diffusion with Correction}
+%       \label{alg:guided_diffusion_corrected}
+%       \begin{algorithmic}[1]
+%         \REQUIRE masked seq.\ \(x\), DLM \(f_\theta\), AR \(g_\phi\)
+%         \ENSURE fully unmasked \(x\)
+%         \WHILE{\(\exists i:\,x[i] = \text{mask}\)}
+%           \STATE \( \text{logits}_{\text{DLM}} \gets \operatorname{softmax}(f_\theta(x)) \)
+%           \STATE \( \text{tok}_{\text{DLM}} \gets \arg\max\, \text{logits}_{\text{DLM}} \)
+%           \STATE \( \text{logits}_{\text{AR}} \gets \operatorname{softmax}(g_\phi(\text{tok}_{\text{DLM}})) \)
+%           \STATE \( \text{tok}_{\text{AR}} \gets \arg\max\, \text{logits}_{\text{AR}} \)
+%           \STATE let \( M = [i_1, \dots, i_m] \) be masked indices
+%           \STATE \( k \leftarrow \text{size}(\{\text{tok}_{\text{DLM}} = \text{tok}_{\text{AR}}\}) \)
+%           \STATE Unmask \(i_1{:}i_k\) with \(\text{tok}_{\text{DLM}}[i_1{:}i_k]\)
+%           \STATE Correct \(i_{k+1}\) with \(\text{tok}_{\text{AR}}[i_{k+1}]\)
+%         \ENDWHILE
+%       \end{algorithmic}
+%     \end{algorithm}
+%   \end{minipage}
+%   % \caption{Left: AR-assisted guided diffusion. Right: with correction—also fills one token using AR beyond matched region.}
+% \end{figure}
+
+
+
+% \begin{figure}[h!]
+%   \centering
+%   \begin{minipage}[t]{\columnwidth} % Changed width to full column
+%     \begin{algorithm}[H]
+%       \caption{Guided Diffusion (AR-Assisted)}
+%       \label{alg:guided_diffusion}
+%       \begin{algorithmic}[1]
+%         \REQUIRE masked seq.\ \(x\), DLM \(f_\theta\), AR \(g_\phi\)
+%         \ENSURE fully unmasked \(x\)
+%         \WHILE{\(\exists i:\,x[i] = \text{mask}\)}
+%           \STATE \( \text{logits}_{\text{DLM}} \gets \operatorname{softmax}(f_\theta(x)) \)
+%           \STATE \( \text{tok}_{\text{DLM}} \gets \arg\max\, \text{logits}_{\text{DLM}} \)
+%           \STATE \( \text{logits}_{\text{AR}} \gets \operatorname{softmax}(g_\phi(\text{tok}_{\text{DLM}})) \)
+%           \STATE \( \text{tok}_{\text{\text{AR}}} \gets \arg\max\, \text{logits}_{\text{AR}} \)
+%           \STATE let \( M = [i_1, \dots, i_m] \) be masked indices
+%           \STATE \( k \leftarrow \text{size}(\{\text{tok}_{\text{DLM}} = \text{tok}_{\text{AR}}\}) \)
+%           \IF{\(k > 0\)}
+%             \STATE Unmask \(i_1{:}i_k\) with \(\text{tok}_{\text{DLM}}[i_1{:}i_k]\)
+%           \ELSE
+%             \STATE Unmask \(i_1\) with \(\text{tok}_{\text{DLM}}[i_1]\)
+%           \ENDIF
+%         \ENDWHILE
+%       \end{algorithmic}
+%     \end{algorithm}
+%   \end{minipage}
+% \end{figure}
+
+
+
+
+\begin{figure}[h!]
+  \centering
+  \begin{minipage}[t]{\columnwidth}
+    \begin{algorithm}[H]
+      \caption{Guided Diffusion}
+      \label{alg:guided_diffusion}
+      \KwIn{masked sequence $x$, DLM $f_\theta$, AR $g_\phi$}
+      \KwOut{fully unmasked $x$}
+
+      \While{$\exists i:\,x[i] = \text{mask}$ \tcp*[f]{loop until all unmasked~}}{
+        $\text{logits}_{\text{DLM}} \gets \operatorname{softmax}(f_\theta(x))$ \tcp*[f]{DLM predicts masked tokens}\\
+        $\text{tok}_{\text{DLM}} \gets \arg\max \text{logits}_{\text{DLM}}$ \tcp*[f]{DLM predictions}\\
+        $\text{logits}_{\text{AR}} \gets \operatorname{softmax}(g_\phi(\text{tok}_{\text{DLM}}))$ \tcp*[f]{AR processes DLM output}\\
+        $\text{tok}_{\text{AR}} \gets \arg\max \text{logits}_{\text{AR}}$ \tcp*[f]{AR predictions}\\
+        Let $M = [i_1,\dots,i_m]$ be masked indices \tcp*[f]{remaining mask positions}\\
+        $k \leftarrow \text{size}(\{\text{tok}_{\text{DLM}} = \text{tok}_{\text{AR}}\})$ \tcp*[f]{find matches}\\
+
+        \eIf{$k > 0$ \tcp*[f]{models agree~}}{
+          Unmask $i_1{:}i_k$ with $\text{tok}_{\text{DLM}}[i_1{:}i_k]$ \tcp*[f]{accept matching run}
+        }{
+          Unmask $i_1$ with $\text{tok}_{\text{DLM}}[i_1]$ \tcp*[f]{fallback:~accept first}
+        }
+      }
+    \end{algorithm}
+  \end{minipage}
+\end{figure}

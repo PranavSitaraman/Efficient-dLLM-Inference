@@ -1,0 +1,35 @@
+\section{Introduction}
+\label{sec:introduction}
+
+% <!--Block Diffusion LLM의 성장으로 AR LLM과의 acc 격차가 줄고, 성능이 올랐다는 내용. KV Cache로 인한 Memory Access Bottleneck은 여전하다.  -->
+Block diffusion LLMs have emerged as a promising paradigm that combines the benefits of autoregressive (AR) and diffusion-based generation~\citep{arriola2025blockdiffusion, wu2025fastdllmv2, cheng2025sdar}. By generating tokens in a block-wise autoregressive manner while enabling parallel token generation within each block via diffusion, these models achieve competitive accuracy compared to AR models while offering higher throughput. Furthermore, the block-wise generation scheme enables KV caching, which reduces redundant computation and, in long-context settings, often makes memory access a dominant bottleneck as the KV cache grows.
+
+% <!-- Dynamic sparse attention이 AR LLM에서 memory access bottleneck을 해결하는 데 효과적이었고, block diffusion LLM에도 적용 가능하다. 기존 방법들은 approximate estimation을 사용하는데, block diffusion에 적용하면 limited recall을 보인다. 한편, block diffusion에는 AR LLM에 없는 고유한 기회가 있다: All-mask block의 attention이 이후 step들을 잘 예측한다. -->
+Dynamic sparse attention has proven effective at reducing KV cache memory access in AR LLMs by dynamically estimating and fetching only the important tokens at each decoding step~\citep{tang2024quest, yang2025tidaldecode}. The same principle can be applied to block diffusion LLMs, performing sparse attention at each denoising forward pass. However, existing methods rely on approximate importance estimation, such as reusing one layer's selection across other layers~\citep{yang2025tidaldecode} or estimating token importance from page-level representative values~\citep{tang2024quest}, and achieve only 36--82\% top-K recall rate when adapted to block diffusion (Figure~\ref{fig:method_comparison}).
+
+% <!-- Block Diffusion에서는 AR LLM에는 없던 고유한 기회가 있다. All-\mask block의 attention이 denoising 전 과정에 걸쳐 중요한 KV position을 정확하게 예측한다. 두 가지 관찰: (1) Top-K recall 84-90%, (2) layer-wise budget 비율 안정적. -->
+We observe that block diffusion LLMs present a unique opportunity for higher-fidelity sparse attention that does not exist in AR LLMs. The attention patterns computed on the initial All-\mask block, the first denoising step where all positions contain \texttt{[MASK]} tokens, reliably predict the important KV positions for all subsequent denoising steps. Specifically, the top-K indices selected from the All-\mask block maintain 84--90\% recall rate throughout the entire denoising process (Figure~\ref{fig:topk_consistency}), far exceeding the recall achieved by existing methods. Furthermore, the relative budget requirements across layers remain stable from the initial All-\mask state to the fully decoded state, enabling reliable layer-adaptive budget allocation.
+
+% <!-- 이러한 관찰 결과를 바탕으로 우리 method에 대한 소개 ( Training-Free Inference ) -->
+Based on these observations, we propose \name (\mask-Guided Sparse Attention), a dynamic sparse attention method tailored for block diffusion LLMs. \name uses the attention computed on the All-\mask block to identify critical KV positions with layer-adaptive budgets, then reuses these positions for all subsequent denoising steps. By leveraging this temporal consistency unique to block diffusion, \name achieves substantially higher recall than existing sparse attention methods, maintaining near-lossless accuracy while effectively reducing KV cache memory access for significant end-to-end speedup.
+
+% <!-- Lightweight Finetuning Framework에 대한 소개 -->
+While \name works effectively without any training, we further propose a lightweight fine-tuning framework that strengthens the model's reliance on \mask-guided attention patterns. With less than 200 training steps, the fine-tuned model often surpasses even exact attention performance, as the model learns to concentrate its attention more consistently around the patterns established by the All-\mask block.
+
+% <!-- Training-Free Evaluation 효과에 대한 소개. Acc가 평균적으로 다른 Method들에 비해 약 몇 배 더 적은 Budget에서 Exact Attention Model들과 Comparable해졌는지를 비교하기. Latency는 Baseline Exact Attention Model에 비해 Acc를 유지하는 선 상에서 몇 배 빨라지는지 적기 -->
+We evaluate \name on various subtasks in LongBench. \name achieves comparable accuracy to exact attention even at small budgets such as $K$=512 and 1024, where Quest and Tidal still show significant degradation. In terms of latency, \name delivers up to $3$--$4\times$ end-to-end speedup over the dense attention baseline while preserving accuracy, demonstrating that the memory access reduction translates directly into practical wall-clock gains.
+
+% <!-- FineTuning에 대한 효과 적기 -->
+With fine-tuning, \name further improves accuracy: at the same sparse budget, the fine-tuned model matches or exceeds exact attention accuracy on 4 out of 6 subtasks, and surpasses the dense attention baseline on several of them. This suggests that the concentrated attention patterns learned through \mask-guided fine-tuning act as an implicit regularizer, improving generation quality beyond what dense attention achieves.
+
+% <!-- Contribution 정리.  -->
+Our contributions are summarized as follows:
+\begin{itemize}
+    \item We analyze attention patterns in block diffusion LLMs and discover that the All-\mask block provides reliable guidance for sparse attention throughout the denoising process: (1) top-K indices maintain 84--90\% recall rate, and (2) layer-wise budget requirements remain stable across denoising steps.
+    \item We propose \name, a training-free dynamic sparse attention method that leverages All-\mask-guided selection to achieve 84--90\% top-K recall, substantially outperforming existing methods such as Quest (48--82\%) and Tidal (36--74\%) adapted to block diffusion.
+    \item We introduce a lightweight fine-tuning framework that 
+    strengthens \mask-guided patterns with minimal cost (100~200 steps, 
+    less than 10 hours for Fast-dLLM 7B on a single H100), often surpassing 
+    dense attention performance.
+    \item We demonstrate $3$--$4\times$ end-to-end speedup over exact attention on long-context benchmarks while maintaining comparable accuracy, significantly outperforming existing sparse attention methods at the same budget.
+\end{itemize}

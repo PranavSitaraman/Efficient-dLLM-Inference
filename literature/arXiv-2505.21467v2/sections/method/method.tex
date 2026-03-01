@@ -1,0 +1,149 @@
+\section{Methodology}
+
+% We present three key techniques to accelerate diffusion-based language model inference: KV approximation caching, AR-assisted unmasking, and speculative decoding.
+
+% \subsection{KV Approximation Caching}
+
+% \subsubsection{Observation: Attention Decay}
+
+% In non-causal attention, contributions from future tokens to past positions decay rapidly. We exploit this by freezing early-layer key/value states during denoising.
+
+% \subsubsection{Implementation}
+
+% We define an effective cache truncation threshold $\epsilon$, below which the attention contribution is negligible:
+% \[
+% \text{Mask}(i, j) = \mathbb{1}[ \alpha_{ij} > \epsilon ]
+% \]
+
+% \subsection{AR-Assisted Unmasking}
+
+% We use a lightweight AR model to suggest the next token(s), guiding the denoising process.
+
+% \subsection{Speculative Decoding with Verifier}
+
+% A strong AR verifier accepts or rejects unmasked tokens proposed by the diffusion model. Rejected spans are re-noised and regenerated.
+
+
+% \subsection{Preliminary of Diffusion Language Model}
+
+% Given the partially masked token sequence $\mathbf{x}_t$ at step $t$, assume the diffusion language model $f_\theta$ will complete the sequence with $T$ denoising steps. 
+% \zhanqiu{TODO: Mention specifics for diffusion language model: unmasking}
+
+
+% Diffusion language models (DLMs) generate sequences by progressively denoising an initially masked token sequence over $T$ iterative steps. At each timestep $t$, the model $f_\theta$ predicts token distributions given the current partially masked sequence $\vec{x}_t$. While DLMs enable parallel token generation and bidirectional attention, their inference remains inefficient due to repeated full-sequence forward passes. We propose two complementary techniques---KV approximation caching \zhanqiu{TODO: might want to rename this} and AR-guided unmasking---to improve inference efficiency and scalability without loss in quality.
+
+\input{sections/method/preliminary}
+
+\input{sections/method/preliminary/dlm_bottlenecks}
+
+\input{sections/method/token_incoherence}
+
+\input{sections/method/preliminary_figure}
+
+
+\subsection{Proposed Method}
+% This section presents two methods that directly accelerate the SoTA diffusion model off-the-shelf. 
+% To address both the quadratic compute growth and the token incoherence inherent to naïve diffusion inference, we introduce two complementary, training‐free components.  
+
+% \textbf{FreeCache.} 
+% We exploits the observation that once a contiguous block of tokens has been fully unmasked, its influence on earlier blocks remains effectively fixed; by caching and reusing each block’s key/value projections, we reduce the per‐step attention cost from \(O(L)\) to \(O(B)\), where \(B\) is a user‐defined block size.  
+
+% \emph{Guided diffusion} leverages a lightweight pre-trained autoregressive model to guide parallel unmasking: at each denoising step, we unmask tokens where the DLM and ARM agree. This enforces coherence under aggressive unmasking and reduces the number of denoising steps by over \(5\times\) without any drop in generation quality.  
+
+
+
+
+\input{sections/method/cache}
+\input{sections/method/method_figures}
+
+
+
+
+
+\input{sections/method/guided_diffusion_v2}
+
+
+% GUided only
+% \begin{algorithm}[H]
+%   \caption{Guided Diffusion}
+%   \label{alg:guided_diffusion}
+%   \begin{algorithmic}[1]
+%     \REQUIRE initial masked sequence \(x\), diffusion model \(f_\theta\), AR model \(g_\phi\)
+%     \ENSURE fully unmasked sequence \(x\)
+%     \WHILE{\(\exists i:\;x[i]=\mathrm{mask}\)}
+%       \STATE \(\mathrm{dlm\_logits}\gets\operatorname{softmax}\bigl(f_\theta(x)\bigr)\)
+%       \STATE \(\mathrm{dlm\_tokens}\gets\arg\max\,\mathrm{dlm\_logits}\)
+%       \STATE \(\mathrm{ar\_logits}\gets\operatorname{softmax}\bigl(g_\phi(\mathrm{dlm\_tokens})\bigr)\)
+%       \STATE \(\mathrm{ar\_tokens}\gets\arg\max\,\mathrm{ar\_logits}\)
+%       \STATE let $M$ be the masked indices of \(x\)
+%       \STATE 
+%         \(k \gets \max\{\,j : \mathrm{dlm\_tokens}_{i_\ell}
+%         = \mathrm{ar\_tokens}_{i_\ell}\ \forall\ell\le j\}\)
+%       \IF{\(k>0\)}
+%         \STATE unmask \(i_1,\dots,i_k\) in \(x\) with \(\mathrm{dlm\_tokens}_{i_1\ldots i_k}\)
+%       \ELSE
+%         \STATE unmask \(i_1\) in \(x\) with \(\mathrm{dlm\_tokens}_{i_1}\)
+%       \ENDIF
+%     \ENDWHILE
+%   \end{algorithmic}
+% \end{algorithm}
+
+% \begin{figure}[h!]
+%   \centering
+%   %----------- Guided Diffusion (Left) -----------%
+%   \begin{minipage}[t]{0.49\columnwidth}
+%     \begin{algorithm}[H]
+%       \caption{Guided Diffusion (AR-Assisted)}
+%       \label{alg:guided_diffusion}
+%       \begin{algorithmic}[1]
+%         \REQUIRE masked seq.\ \(x\), DLM \(f_\theta\), AR \(g_\phi\)
+%         \ENSURE fully unmasked \(x\)
+%         \WHILE{\(\exists i:\,x[i] = \text{mask}\)}
+%           \STATE \( \text{log}_d \gets \operatorname{softmax}(f_\theta(x)) \)
+%           \STATE \( \text{tok}_d \gets \arg\max\, \text{log}_d \)
+%           \STATE \( \text{log}_a \gets \operatorname{softmax}(g_\phi(\text{tok}_d)) \)
+%           \STATE \( \text{tok}_a \gets \arg\max\, \text{log}_a \)
+%           \STATE let \( M = [i_1, \dots, i_m] \) be masked indices
+%           \STATE \( k \gets \max\{ j : \text{tok}_d[i_\ell] = \text{tok}_a[i_\ell],\, \forall \ell \le j \} \)
+%           \IF{\(k > 0\)}
+%             \STATE unmask \(i_1{:}i_k\) with \(\text{tok}_d[i_1{:}i_k]\)
+%           \ELSE
+%             \STATE unmask \(i_1\) with \(\text{tok}_d[i_1]\)
+%           \ENDIF
+%         \ENDWHILE
+%       \end{algorithmic}
+%     \end{algorithm}
+%   \end{minipage}%
+%   \hspace{2pt}
+%   %-------- Guided Diffusion + Correction (Right) --------%
+%   \begin{minipage}[t]{0.49\columnwidth}
+%     \begin{algorithm}[H]
+%       \caption{Guided Diffusion with Correction}
+%       \label{alg:guided_diffusion_corrected}
+%       \begin{algorithmic}[1]
+%         \REQUIRE masked seq.\ \(x\), DLM \(f_\theta\), AR \(g_\phi\)
+%         \ENSURE fully unmasked \(x\)
+%         \WHILE{\(\exists i:\,x[i] = \text{mask}\)}
+%           \STATE \( \text{log}_d \gets \operatorname{softmax}(f_\theta(x)) \)
+%           \STATE \( \text{tok}_d \gets \arg\max\, \text{log}_d \)
+%           \STATE \( \text{log}_a \gets \operatorname{softmax}(g_\phi(\text{tok}_d)) \)
+%           \STATE \( \text{tok}_a \gets \arg\max\, \text{log}_a \)
+%           \STATE let \( M = [i_1, \dots, i_m] \) be masked indices
+%           \STATE \( k \gets \max\{ j : \text{tok}_d[i_\ell] = \text{tok}_a[i_\ell],\, \forall \ell \le j \} \)
+%           \IF{\(k > 0\)}
+%             \STATE unmask \(i_1{:}i_k\) with \(\text{tok}_d[i_1{:}i_k]\)
+%             \STATE unmask \(i_{k+1}\) with \(\text{tok}_a[i_{k+1}]\)
+%           \ELSE
+%             \STATE unmask \(i_1\) with \(\text{tok}_d[i_1]\)
+%           \ENDIF
+%         \ENDWHILE
+%       \end{algorithmic}
+%     \end{algorithm}
+%   \end{minipage}
+%   % \caption{Left: AR-assisted guided diffusion. Right: with correction—also fills one token using AR beyond matched region.}
+% \end{figure}
+
+
+
+
+\input{sections/method/alg}

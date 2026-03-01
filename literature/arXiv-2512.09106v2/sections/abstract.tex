@@ -1,0 +1,14 @@
+\abstract{
+Diffusion (Large) Language Models (dLLMs) now match the downstream performance of their autoregressive counterparts on many tasks, while holding the promise of being more efficient during inference.
+One particularly successful variant is \emph{masked} discrete diffusion, in which a buffer filled with special mask tokens is progressively replaced with tokens sampled from the model's vocabulary.
+Efficiency can be gained by unmasking several tokens in parallel, but doing too many at once risks degrading the generation quality.
+Thus, one critical design aspect of dLLMs is the \textit{sampling procedure} that selects, at each step of the diffusion process, which tokens to replace.
+Indeed, recent work has found that heuristic strategies such as confidence thresholding lead to both higher quality and token throughput compared to random unmasking.
+However, such heuristics have downsides: they require manual tuning, and we observe that their performance degrades with larger buffer sizes.
+In this work, we instead propose to train sampling procedures using reinforcement learning. Specifically, we formalize masked diffusion sampling as a Markov decision process in which the dLLM serves as the environment, and propose a lightweight policy architecture based on a single-layer transformer that maps dLLM token confidences to unmasking decisions.
+Our experiments show that these trained policies match the performance of state-of-the-art heuristics when combined with semi-autoregressive generation, while outperforming them in the full diffusion setting.
+We also examine the transferability of these policies, finding that they can generalize to new underlying dLLMs and longer sequence lengths. However, we also observe that their performance degrades when applied to out-of-domain data, and that fine-grained tuning of the accuracy-efficiency trade-off can be challenging with our approach.
+}
+\metadata[Correspondence]{\sffamily MJ: \url{m.jazbec@uva.nl}; TXO: \url{theoxo@csail.mit.edu}; MC: \url{cuturi@apple.com}}
+\metadata[Contributions]{\sffamily * denotes equal contribution; work done while MJ and TXO were interns at Apple.}
+\date{\sffamily\today}

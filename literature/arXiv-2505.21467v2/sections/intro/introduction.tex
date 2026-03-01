@@ -1,0 +1,60 @@
+\section{Introduction}
+Large language model~(LLM)~\cite{liu2024deepseek, bai2023qwen, touvron2023llama} have shown great success across multiple domains in human life with strong intelligence. In particular, most of the current state-of-the-art~(SoTA) LLM models are autoregressive~(AR) models with transformer-based architecture~\cite{vaswani2017attention}. However, autoregressive models sequentially generate new tokens at inference time for each decoding step, preserving the logic of semantics~(e.g., logic) with the cost of insufficient parallelism and the limitation of mono-direction generation. 
+Diffusion Language Models~(DLMs)~\cite{dream2025, nie2025large, arriola2025block} have emerged as an appealing alternative. 
+By iteratively denoising a masked sequence in parallel, DLM enables parallel token generation and bidirectional context, which allows all tokens to be generated simultaneously at each step, while keeping the coherence between past and future tokens. 
+
+% \textbf{However, the challenge of DLM is obvious and remains under-explored.}
+\textbf{However, DLMs exhibit fundamental challenges that remain under-explored.}
+The comparable quality between the SoTA DLM and AR model comes with the cost of extensive computation latency and insufficient \textit{long-context} ability. 
+These drawbacks largely limit the scalability and practicality of diffusion models, which motivates this work to investigate the following problem:
+
+\begin{center}
+% \textit{How to accelerate SoTA DLM without training while maintaining model performance?}
+\textit{How to effectively accelerate SoTA DLM while maintaining model performance?}
+\end{center}
+
+% While LLM compression has been widely investigated, recent methods require either calibration or fine-tuning to overcome the performance degradation caused by compression. 
+Essentially, the efficiency bottleneck of DLM is caused by the incompatibility with the caching strategy, which has been widely used in auto regressive models~(ARM).
+Recently proposed Block Diffusion~\cite{arriola2025block} have shown promising results on diffusion model with Key-Value caching strategy, whereas the overhead of additional fine-tuning and training hinder the fast deployment of DLM. More importantly, the scalability of caching remains questionable against large-sized DLMs~(e.g., Dream-7B-Instruct~\cite{dream2025}, LLaDA-8B-Instruct~\cite{nie2025large})
+
+% Despite these advantages, practical adoption of DLMs has been limited. State-of-the-art open-source implementations such as Dream 7B \cite{} and LLaMA 8B \cite{} achieve comparable quality to similarly sized AR models (e.g., Qwen2.5 7B, LLaMA3 8B), but suffer from severe inefficiencies during inference. Each denoising step requires a full-sequence forward pass, and current heuristic-based unmasking strategies lead to token collisions and degraded output quality when fewer steps are used.
+
+To address the efficiency challenge of the SoTA DLM models, this work proposes two novel methods:  \circled{1} 
+\texttt{FreeCache}, a \underline{training-free} caching strategy that enables diffusion acceleration; \circled{2} \texttt{Guided Diffusion}, a \underline{training-free} technique that guides token unmasking in long-context diffusion generation.
+Unlike the conventional compression algorithm~(e.g., quantization, pruning) that requires a dedicated calibration run, the proposed method directly accelerate the model off the shelf. 
+Specifically, we reveal the fact that the impact of future tokens on earlier positions rapidly diminishes over denoising steps. 
+Therefore, direct caching of the earlier unmasked clean tokens can be considered as a KV state approximation with the result of negligible impact on output quality. 
+
+In addition to FreeCache, we introduce guided unmasking assisted by a lightweight autoregressive model. 
+The proposed Guided Diffusion introduces the mechanism of ``big diffusion model generation followed by small model unmasking guidance." 
+% Unlike speculative decoding, which requires an expensive correction step, our guidance-only approach selects plausible tokens to unmask, minimizing this overhead and preserving the full reasoning power of the DLM. 
+Our guidance-only approach selects plausible tokens to unmask, minimizing this overhead and preserving the full reasoning power of the DLM. By doing so, the proposed method elegantly combines the advantages of both DLM and autoregressive models. The diffusion process can be easily parallelized, while the autoregressive model is \textbf{exempt} from repetitive and expensive speculative correction. 
+% We summarize the characteristics of the proposed method in Table~\ref{tab:intro-model-comparison}. 
+Overall, the contributions of this work are:
+
+
+% Table~\ref{tab:intro-model-comparison} summarizes the tradeoffs between AR and diffusion-based models along four axes: generation quality, parallelism, KV caching, and latency. While AR models benefit from KV reuse and produce high-quality outputs, they are fundamentally non-parallelizable. Conversely, DLMs support parallel decoding but incur significant latency due to step-wise denoising and the lack of cache reuse. Naively reducing the number of denoising steps often results in loss of accuracy due to incoherent token combinations. Our goal is to bridge this efficiency gap without sacrificing the strengths of diffusion-based generation.
+
+% \input{sections/intro/intro_table}
+
+% This work proposes three complementary innovations that enable high-quality, low end-to-end latency inference for DLMs:
+\begin{itemize}
+    \item \textbf{Simplicity.} The proposed method achieves an average of 12.14$\times$ and 13.29$\times$ speedup on the Dream-7B-Instruct and LLaDA-8B-Instruct models with negligible accuracy drop, respectively. 
+    For the first time, the DLM based architecture achieves comparable~(even better) generation speed compared to the same-sized AR-based LLM models.
+    \item \textbf{Versatility.} The proposed method exhibits strong performance across multiple knowledge domains, including both simple and complex reasoning tasks. 
+    \item \textbf{Scalability.} With the proposed training-free auto-regressive guidance, our work enables the long-context diffusion~($>$1024 tokens) \textbf{without} hurting the model performance. 
+\end{itemize}
+
+
+
+
+
+%Although DLMs operate with bidirectional attention, we observe that the influence of future tokens on earlier positions rapidly diminishes over denoising steps. We exploit this observation to enable approximate caching of KV states, yielding nearly lossless reuse of attention computations. This method achieves up to $5\times$ speedups in standard benchmarks.
+
+% \textbf{(2) Lightweight AR-assisted unmasking.} We introduce a lightweight autoregressive model to guide the unmasking process. Rather than relying on static heuristics, the AR model proposes plausible token candidates that the DLM accepts or refines. This reduces the number of required denoising steps while preserving generation fidelity, resulting in up to $20\times$ end-to-end speedups.
+
+% \textbf{(3) Speculative decoding with AR-verifier.} To further accelerate generation, we extend speculative decoding to the diffusion setting by combining a fast DLM draft model with a high-accuracy AR verifier. The verifier selectively accepts or rejects proposed completions, correcting unmasking errors on the fly. This approach yields $10\times$ speedups and improves final accuracy by up to 10 absolute points.
+
+Together, these techniques make it feasible to deploy DLMs in long-context and high-throughput applications without compromising quality. 
+Our method retains the desirable properties of parallel generation and bidirectional conditioning of DLMs while overcoming the challenge of key inefficiencies. We demonstrate that diffusion-based language models can achieve competitive inference performance with autoregressive LLM baselines, paving the way for their practical adoption in real-world scenarios.
+% e

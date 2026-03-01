@@ -1,0 +1,24 @@
+
+The proposed method directly employs the off-the-shelf diffusion and auto-regressive large language models~(for guided masking) from HuggingFace. The proposed method uses the same set of configurations for all tasks. We believe a more fine-grained hyper-parameter setting can lead to improved performance, but we keep a single set of configurations to demonstrate the generality and practicality. Table~\ref{tbl:config} shows the detailed experimental configuration of the proposed method with Dream-v0-Instruct-7B~\cite{dream2025} and LLaDA-8B-Instruct~\cite{nie2025large}.
+
+\textbf{Stochastic Guided Unmasking.} Please note that during guided unmasking, we only consider the \texttt{Top-K} logits of the AR-guider model as the guidance logits $\text{log}_a$.
+In addition to the deterministic guidance strategy~(Algorithm 1 and Algorithm 2), if the maximum token logit of the diffusion output~(of each token) is greater $\tau \times \max(\text{log}_a)$, the token will be unmasked. Otherwise, it will remain silent, where $\tau$ is the \texttt{Guidance Confidence Threshold}~(default = 0.5). 
+
+\begin{table}[h!]
+\centering
+\caption{Diffusion configuration of the Dream-v0-Instruct-7B~\cite{dream2025} and LLaDA-8B-Instruct~\cite{nie2025large} employed in this work.}
+\resizebox{0.7\linewidth}{!}{\begin{tabular}{ccc}
+\toprule
+\multicolumn{1}{c}{\textbf{Setting}}                               & \multicolumn{1}{c}{\textbf{Dream-v0-Instruct-7B}~\cite{dream2025}} & \textbf{LLaDA-8B-Instruct}~\cite{nie2025large} \\ \midrule\midrule
+\multicolumn{3}{c}{\textbf{Configuration of FreeCache (This work)}}                                                     \\ \midrule\midrule
+\multicolumn{1}{c}{Block Cache Size}                      & \multicolumn{1}{c}{256}               & 256      \\ \midrule
+\multicolumn{1}{c}{Max Output Tokens}                     & \multicolumn{1}{c}{256}               & 256      \\ \midrule
+\multicolumn{1}{c}{Block Length~\cite{nie2025large}} & \multicolumn{1}{c}{-}                 & 64       \\ \midrule\midrule
+\multicolumn{3}{c}{\textbf{Configuration of FreeCache + Guided Unmasking (This work)}}                                             \\ \midrule\midrule
+\multicolumn{1}{c}{Max Output Tokens}                     & \multicolumn{1}{c}{1024}              & 1024     \\ \midrule
+\multicolumn{1}{c}{Speculation Block Size}                & \multicolumn{1}{c}{32}                & 32       \\ \midrule
+\multicolumn{1}{c}{Top-K Assisted Tokens Selection}       & \multicolumn{1}{c}{2}                 & 2        \\ \midrule
+\multicolumn{1}{c}{Guidance Confidence Threshold~$\tau$}       & \multicolumn{1}{c}{0.5}               & 0.5      \\ \bottomrule
+\end{tabular}}
+\label{tbl:config}
+\end{table}
