@@ -46,6 +46,18 @@ class EvalResult:
     cache_invalidations: int = 0
     agreement_rate: float = 0.0
     draft_accept_rate: float = 0.0
+    reuse_mean_safe: float = 0.0
+    reuse_mean_js: float = 0.0
+    access_rate: float = 0.0
+    access_mandatory_rate: float = 0.0
+    access_optional_rate: float = 0.0
+    access_budget_utilization: float = 0.0
+    access_next_h_precision: float = 0.0
+    access_next_h_recall: float = 0.0
+    access_next_h_f1: float = 0.0
+    access_next_h_spec_precision: float = 0.0
+    access_next_h_spec_recall: float = 0.0
+    access_next_h_spec_f1: float = 0.0
 
 
 def _remask_note(cfg: dict) -> str:
@@ -54,6 +66,24 @@ def _remask_note(cfg: dict) -> str:
 
 def _append_note(note: str, extra: str) -> str:
     return f"{note},{extra}" if note else extra
+
+
+def _load_state_dict_flexible(module, state_dict: Dict[str, torch.Tensor], label: str) -> None:
+    """
+    Load compatible checkpoint weights and skip shape-mismatched keys.
+    """
+    own = module.state_dict()
+    compatible = {
+        k: v for k, v in state_dict.items()
+        if (k in own) and (own[k].shape == v.shape)
+    }
+    skipped = [
+        k for k, v in state_dict.items()
+        if (k not in own) or (k in own and own[k].shape != v.shape)
+    ]
+    module.load_state_dict(compatible, strict=False)
+    if skipped:
+        print(f"[Checkpoint] {label}: skipped {len(skipped)} incompatible keys.")
 
 
 def evaluate_aoae(
@@ -124,7 +154,8 @@ def evaluate_aoae(
         total_gen_tokens += n_gen
         gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
 
-        if check_math_correctness(gen_text, reference):
+        is_correct = check_math_correctness(gen_text, reference)
+        if is_correct:
             correct += 1
         total += 1
 
@@ -136,6 +167,12 @@ def evaluate_aoae(
     avg_time = total_time / max(total, 1)
     avg_nfe = total_nfe / max(total, 1)
     avg_tps = total_gen_tokens / max(total_time, 1e-6)
+    pc_cfg = cfg.get("inference", {}).get("positional_cache", {})
+    pc_note = (
+        f"pc=on(H={int(pc_cfg.get('horizon', 4))},B={int(pc_cfg.get('refresh_budget', 0))})"
+        if pc_cfg.get("enabled", False)
+        else "pc=off"
+    )
 
     return EvalResult(
         method="AOAE",
@@ -145,7 +182,7 @@ def evaluate_aoae(
         avg_nfe=avg_nfe,
         avg_tokens_per_sec=avg_tps,
         avg_gen_time_sec=avg_time,
-        config_note=_append_note(f"tau_pi={policy_temperature}", _remask_note(cfg)),
+        config_note=_append_note(f"tau_pi={policy_temperature},{pc_note}", _remask_note(cfg)),
     )
 
 
@@ -313,6 +350,7 @@ def evaluate_speculative(
     cfg: dict,
     policy_temperature: float = 1.0,
     max_samples: Optional[int] = None,
+    dynamics_sink: Optional[List[Dict[str, Any]]] = None,
 ) -> EvalResult:
     """Evaluate speculative diffusion (dual-model) on a dataset."""
     mask_id = cfg["base_model"]["mask_token_id"]
@@ -329,9 +367,28 @@ def evaluate_speculative(
     total_cache_invalidations = 0
     total_draft_accepts = 0
     total_draft_rejects = 0
+    total_reuse_safe = 0.0
+    total_reuse_js = 0.0
+    total_access_rate = 0.0
+    total_access_mandatory = 0.0
+    total_access_optional = 0.0
+    total_access_budget_util = 0.0
+    total_access_next_h_precision = 0.0
+    total_access_next_h_recall = 0.0
+    total_access_next_h_f1 = 0.0
+    total_access_next_h_spec_precision = 0.0
+    total_access_next_h_spec_recall = 0.0
+    total_access_next_h_spec_f1 = 0.0
 
     n_eval = min(len(dataset), max_samples) if max_samples else len(dataset)
     tau_r = cfg["base_model"].get("routing_temperature", 0.01)
+    reuse_method = cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")
+    pc_cfg = cfg.get("inference", {}).get("positional_cache", {})
+    pc_note = (
+        f"pc=on(H={int(pc_cfg.get('horizon', 4))},B={int(pc_cfg.get('refresh_budget', 0))})"
+        if pc_cfg.get("enabled", False)
+        else "pc=off"
+    )
 
     # Warm-up forward pass (exclude from timing)
     warmup_ids = torch.full((1, 32), mask_id, dtype=torch.long, device=device)
@@ -384,7 +441,8 @@ def evaluate_speculative(
         total_gen_tokens += n_gen
         gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
 
-        if check_math_correctness(gen_text, reference):
+        is_correct = check_math_correctness(gen_text, reference)
+        if is_correct:
             correct += 1
         total += 1
 
@@ -396,6 +454,29 @@ def evaluate_speculative(
         total_draft_accepts += int(stats.get("draft_accepts", 0))
         total_draft_rejects += int(stats.get("draft_rejects", 0))
         total_agreement += float(stats.get("mean_agreement", 0.0))
+        total_reuse_safe += float(stats.get("reuse_mean_safe_reuse", 0.0))
+        total_reuse_js += float(stats.get("reuse_mean_js_divergence", 0.0))
+        total_access_rate += float(stats.get("access_access_rate", 0.0))
+        total_access_mandatory += float(stats.get("access_access_mandatory_rate", 0.0))
+        total_access_optional += float(stats.get("access_access_optional_rate", 0.0))
+        total_access_budget_util += float(stats.get("access_access_budget_utilization", 0.0))
+        total_access_next_h_precision += float(stats.get("access_next_h_precision", 0.0))
+        total_access_next_h_recall += float(stats.get("access_next_h_recall", 0.0))
+        total_access_next_h_f1 += float(stats.get("access_next_h_f1", 0.0))
+        total_access_next_h_spec_precision += float(stats.get("access_next_h_spec_precision", 0.0))
+        total_access_next_h_spec_recall += float(stats.get("access_next_h_spec_recall", 0.0))
+        total_access_next_h_spec_f1 += float(stats.get("access_next_h_spec_f1", 0.0))
+        if dynamics_sink is not None and "kv_dynamics" in stats:
+            dynamics_sink.append(
+                {
+                    "tau_r": float(tau_r),
+                    "tau_pi": float(policy_temperature),
+                    "reuse_signal_method": reuse_method,
+                    "sample_index": i,
+                    "sample_correct": bool(is_correct),
+                    "kv_dynamics": stats["kv_dynamics"],
+                }
+            )
 
     accuracy = correct / max(total, 1)
     avg_time = total_time / max(total, 1)
@@ -408,6 +489,18 @@ def evaluate_speculative(
     )
     draft_accept_rate = total_draft_accepts / max(total_draft_accepts + total_draft_rejects, 1)
     agreement_rate = total_agreement / max(total, 1)
+    reuse_mean_safe = total_reuse_safe / max(total, 1)
+    reuse_mean_js = total_reuse_js / max(total, 1)
+    access_rate = total_access_rate / max(total, 1)
+    access_mandatory_rate = total_access_mandatory / max(total, 1)
+    access_optional_rate = total_access_optional / max(total, 1)
+    access_budget_utilization = total_access_budget_util / max(total, 1)
+    access_next_h_precision = total_access_next_h_precision / max(total, 1)
+    access_next_h_recall = total_access_next_h_recall / max(total, 1)
+    access_next_h_f1 = total_access_next_h_f1 / max(total, 1)
+    access_next_h_spec_precision = total_access_next_h_spec_precision / max(total, 1)
+    access_next_h_spec_recall = total_access_next_h_spec_recall / max(total, 1)
+    access_next_h_spec_f1 = total_access_next_h_spec_f1 / max(total, 1)
 
     return EvalResult(
         method="Speculative-AOAE",
@@ -418,7 +511,7 @@ def evaluate_speculative(
         avg_tokens_per_sec=avg_tps,
         avg_gen_time_sec=avg_time,
         config_note=_append_note(
-            f"tau_r={tau_r},tau_pi={policy_temperature}",
+            f"tau_r={tau_r},tau_pi={policy_temperature},reuse={reuse_method},{pc_note}",
             _remask_note(cfg),
         ),
         cache_hit_rate=cache_hit_rate,
@@ -426,6 +519,18 @@ def evaluate_speculative(
         cache_invalidations=total_cache_invalidations,
         agreement_rate=agreement_rate,
         draft_accept_rate=draft_accept_rate,
+        reuse_mean_safe=reuse_mean_safe,
+        reuse_mean_js=reuse_mean_js,
+        access_rate=access_rate,
+        access_mandatory_rate=access_mandatory_rate,
+        access_optional_rate=access_optional_rate,
+        access_budget_utilization=access_budget_utilization,
+        access_next_h_precision=access_next_h_precision,
+        access_next_h_recall=access_next_h_recall,
+        access_next_h_f1=access_next_h_f1,
+        access_next_h_spec_precision=access_next_h_spec_precision,
+        access_next_h_spec_recall=access_next_h_spec_recall,
+        access_next_h_spec_f1=access_next_h_spec_f1,
     )
 
 
@@ -448,6 +553,138 @@ def run_pareto_sweep(
     return results
 
 
+def _aggregate_kv_dynamics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not records:
+        return {}
+
+    summaries = [r.get("kv_dynamics", {}).get("summary", {}) for r in records]
+    summaries = [s for s in summaries if s]
+    if not summaries:
+        return {}
+
+    def _mean(name: str) -> float:
+        vals = [float(s.get(name, 0.0)) for s in summaries if name in s]
+        return float(np.mean(vals)) if vals else 0.0
+
+    # Locality metrics (windowed hit ratios) and age-bucket drifts.
+    locality_vals: Dict[str, List[float]] = {}
+    age_vals: Dict[str, List[float]] = {}
+    for s in summaries:
+        for k, v in s.get("locality", {}).items():
+            locality_vals.setdefault(k, []).append(float(v))
+        for k, v in s.get("age_drift_means", {}).items():
+            age_vals.setdefault(k, []).append(float(v))
+
+    # Aggregate per-layer drift by averaging across samples.
+    layer_map: Dict[int, List[float]] = {}
+    for r in records:
+        for row in r.get("kv_dynamics", {}).get("per_layer", []):
+            idx = int(row.get("layer_idx", 0))
+            val = float(row.get("mean_hidden_drift", 0.0))
+            layer_map.setdefault(idx, []).append(val)
+    per_layer = [
+        {"layer_idx": idx, "mean_hidden_drift": float(np.mean(vals))}
+        for idx, vals in sorted(layer_map.items())
+    ]
+
+    return {
+        "num_records": len(records),
+        "mean_agreement": _mean("mean_agreement"),
+        "mean_access": _mean("mean_access"),
+        "mean_confidence_masked": _mean("mean_confidence_masked"),
+        "mean_confidence_unmasked": _mean("mean_confidence_unmasked"),
+        "mean_layer_drift_slope": _mean("layer_drift_slope"),
+        "mean_off_by_one_drift_ratio": _mean("off_by_one_drift_ratio"),
+        "mean_confident_token_drift_ratio": _mean("confident_token_drift_ratio"),
+        "mean_thrash_rate_given_cached": _mean("thrash_rate_given_cached"),
+        "mean_locality": {
+            k: float(np.mean(vs)) for k, vs in sorted(locality_vals.items())
+        },
+        "mean_age_drift": {
+            k: float(np.mean(vs)) for k, vs in sorted(age_vals.items())
+        },
+        "per_layer_drift": per_layer,
+    }
+
+
+def _save_kv_dynamics_artifacts(records: List[Dict[str, Any]], output_dir: str) -> None:
+    if not records:
+        return
+
+    raw_path = os.path.join(output_dir, "kv_dynamics_records.json")
+    with open(raw_path, "w") as f:
+        json.dump(records, f, indent=2)
+    print(f"KV dynamics records saved to {raw_path}")
+
+    summary = _aggregate_kv_dynamics(records)
+    summary_path = os.path.join(output_dir, "kv_dynamics_summary.json")
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"KV dynamics summary saved to {summary_path}")
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        print(f"KV dynamics plotting skipped (matplotlib unavailable): {e}")
+        return
+
+    per_layer = summary.get("per_layer_drift", [])
+    if per_layer:
+        x = [int(r["layer_idx"]) for r in per_layer]
+        y = [float(r["mean_hidden_drift"]) for r in per_layer]
+        fig, ax = plt.subplots(1, 1, figsize=(7, 4))
+        ax.plot(x, y, "o-", linewidth=2)
+        ax.set_xlabel("Layer index")
+        ax.set_ylabel("Mean hidden drift")
+        ax.set_title("Layer-wise Drift (KV proxy)")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        layer_plot = os.path.join(output_dir, "kv_dynamics_layer_drift.png")
+        fig.savefig(layer_plot, dpi=150)
+        plt.close(fig)
+        print(f"KV dynamics plot saved to {layer_plot}")
+
+
+def _save_eval_plots(all_results: List[EvalResult], output_dir: str) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        print(f"Eval plotting skipped (matplotlib unavailable): {e}")
+        return
+
+    if not all_results:
+        return
+
+    fig, ax = plt.subplots(1, 1, figsize=(7, 5))
+    for r in all_results:
+        label = r.method
+        ax.scatter(r.avg_tokens_per_sec, r.accuracy, s=80, alpha=0.8, label=label)
+    ax.set_xlabel("Tokens / sec")
+    ax.set_ylabel("Accuracy")
+    ax.set_title("Eval: Accuracy vs Throughput")
+    # Deduplicate legend entries
+    handles, labels = ax.get_legend_handles_labels()
+    seen = set()
+    dedup_h = []
+    dedup_l = []
+    for h, l in zip(handles, labels):
+        if l in seen:
+            continue
+        seen.add(l)
+        dedup_h.append(h)
+        dedup_l.append(l)
+    ax.legend(dedup_h, dedup_l, fontsize=8)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    path = os.path.join(output_dir, "eval_tps_vs_accuracy.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    print(f"Eval plot saved to {path}")
+
 def _build_run_metadata(
     cfg: dict,
     mode: str,
@@ -469,7 +706,16 @@ def _build_run_metadata(
         "backend": cfg.get("base_model", {}).get("backend", "auto"),
         "routing_temperature": cfg.get("base_model", {}).get("routing_temperature"),
         "disable_remask": bool(cfg.get("inference", {}).get("disable_remask", False)),
+        "reuse_signal_method": cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match"),
+        "reuse_signal_threshold": cfg.get("inference", {}).get("reuse_signal", {}).get("threshold", 0.0),
         "compose_gamma": cfg.get("inference", {}).get("compose_gamma", 0.0),
+        "positional_cache_enabled": bool(cfg.get("inference", {}).get("positional_cache", {}).get("enabled", False)),
+        "positional_cache_horizon": int(cfg.get("inference", {}).get("positional_cache", {}).get("horizon", 4)),
+        "positional_cache_refresh_budget": int(cfg.get("inference", {}).get("positional_cache", {}).get("refresh_budget", 0)),
+        "track_kv_dynamics": bool(cfg.get("analysis", {}).get("track_kv_dynamics", False)),
+        "kv_locality_windows": cfg.get("analysis", {}).get("locality_windows", [8, 16, 32]),
+        "kv_confidence_threshold": cfg.get("analysis", {}).get("confidence_threshold", 0.9),
+        "kv_attention_proxy_top_frac": cfg.get("analysis", {}).get("attention_proxy_top_frac", 0.1),
         "eval_dataset": cfg.get("data", {}).get("eval_dataset", ""),
         "eval_split": cfg.get("data", {}).get("eval_split", ""),
         "eval_max_samples": max_samples,
@@ -521,6 +767,7 @@ def main(
         max_samples = dc.get("eval_max_samples")
 
     all_results: List[EvalResult] = []
+    kv_dynamics_records: List[Dict[str, Any]] = []
 
     if mode == "speculative" or cfg["base_model"].get("backend") == "dual":
         # ====== Speculative Dual-Model Evaluation ======
@@ -594,9 +841,9 @@ def main(
             policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
             print(f"\nLoading trained policy from {checkpoint_path}")
             ckpt = torch.load(checkpoint_path, map_location=device)
-            policy.load_state_dict(ckpt["policy"])
+            _load_state_dict_flexible(policy, ckpt["policy"], "policy")
             if "soft_mask" in ckpt:
-                soft_mask.load_state_dict(ckpt["soft_mask"])
+                _load_state_dict_flexible(soft_mask, ckpt["soft_mask"], "soft_mask")
             policy.eval()
 
             # PRISM adapter
@@ -614,7 +861,9 @@ def main(
                 print(f"\n--- tau_pi = {tau_pi} ---")
                 r = evaluate_speculative(
                     dual_model, policy, soft_mask, prism, eval_ds, tokenizer, cfg,
-                    policy_temperature=tau_pi, max_samples=max_samples,
+                    policy_temperature=tau_pi,
+                    max_samples=max_samples,
+                    dynamics_sink=kv_dynamics_records,
                 )
                 all_results.append(r)
                 print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
@@ -628,7 +877,9 @@ def main(
 
             r = evaluate_speculative(
                 dual_model, policy, soft_mask, None, eval_ds, tokenizer, cfg,
-                policy_temperature=1.0, max_samples=max_samples,
+                policy_temperature=1.0,
+                max_samples=max_samples,
+                dynamics_sink=kv_dynamics_records,
             )
             all_results.append(r)
             print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
@@ -678,9 +929,9 @@ def main(
             policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
 
             ckpt = torch.load(checkpoint_path, map_location=device)
-            policy.load_state_dict(ckpt["policy"])
+            _load_state_dict_flexible(policy, ckpt["policy"], "policy")
             if "soft_mask" in ckpt:
-                soft_mask.load_state_dict(ckpt["soft_mask"])
+                _load_state_dict_flexible(soft_mask, ckpt["soft_mask"], "soft_mask")
             policy.eval()
             soft_mask.eval()
 
@@ -724,20 +975,26 @@ def main(
     manifest_path = _append_manifest(metadata, all_results)
     print(f"Manifest updated at {manifest_path}")
 
+    _save_kv_dynamics_artifacts(kv_dynamics_records, cfg["logging"]["output_dir"])
+    _save_eval_plots(all_results, cfg["logging"]["output_dir"])
+
     # --- Print summary table ---
-    print("\n" + "=" * 140)
+    print("\n" + "=" * 196)
     print(
         f"{'Method':<25} {'Accuracy':>10} {'TPS':>10} {'NFE':>8} "
-        f"{'CacheHit':>10} {'Agree':>8} {'DraftAcc':>10} {'Note':<40}"
+        f"{'CacheHit':>10} {'Agree':>8} {'DraftAcc':>10} {'Reuse':>8} {'ReuseJS':>9} "
+        f"{'AccF1':>8} {'SpecF1':>8} {'Note':<40}"
     )
-    print("-" * 140)
+    print("-" * 196)
     for r in all_results:
         print(
             f"{r.method:<25} {r.accuracy:>10.4f} {r.avg_tokens_per_sec:>10.1f} "
             f"{r.avg_nfe:>8.0f} {r.cache_hit_rate:>10.4f} "
-            f"{r.agreement_rate:>8.4f} {r.draft_accept_rate:>10.4f} {r.config_note:<40}"
+            f"{r.agreement_rate:>8.4f} {r.draft_accept_rate:>10.4f} "
+            f"{r.reuse_mean_safe:>8.4f} {r.reuse_mean_js:>9.4f} "
+            f"{r.access_next_h_f1:>8.4f} {r.access_next_h_spec_f1:>8.4f} {r.config_note:<40}"
         )
-    print("=" * 140)
+    print("=" * 196)
 
     return all_results
 
@@ -751,10 +1008,44 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, default="standard",
                         choices=["standard", "speculative"],
                         help="'standard' for single-model, 'speculative' for dual-model")
+    parser.add_argument("--reuse_signal_method", type=str, default=None,
+                        choices=[
+                            "argmax_match", "topk_overlap", "min_confidence",
+                            "min_margin", "js_divergence", "temporal_confidence",
+                        ],
+                        help="Override inference.reuse_signal.method.")
+    parser.add_argument("--reuse_signal_threshold", type=float, default=None,
+                        help="Override inference.reuse_signal.threshold.")
+    parser.add_argument("--track_kv_dynamics", action="store_true",
+                        help="Enable analysis.track_kv_dynamics.")
+    parser.add_argument("--disable_remask", action="store_true",
+                        help="Set inference.disable_remask=true.")
+    parser.add_argument("--enable_positional_cache", action="store_true",
+                        help="Enable inference.positional_cache for next-H access experiments.")
+    parser.add_argument("--positional_cache_horizon", type=int, default=None,
+                        help="Override inference.positional_cache.horizon.")
+    parser.add_argument("--positional_cache_refresh_budget", type=int, default=None,
+                        help="Override inference.positional_cache.refresh_budget.")
     args = parser.parse_args()
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
+
+    ic = cfg.setdefault("inference", {})
+    if args.reuse_signal_method is not None:
+        ic.setdefault("reuse_signal", {})["method"] = args.reuse_signal_method
+    if args.reuse_signal_threshold is not None:
+        ic.setdefault("reuse_signal", {})["threshold"] = float(args.reuse_signal_threshold)
+    if args.disable_remask:
+        ic["disable_remask"] = True
+    if args.track_kv_dynamics:
+        cfg.setdefault("analysis", {})["track_kv_dynamics"] = True
+    if args.enable_positional_cache:
+        ic.setdefault("positional_cache", {})["enabled"] = True
+    if args.positional_cache_horizon is not None:
+        ic.setdefault("positional_cache", {})["horizon"] = int(args.positional_cache_horizon)
+    if args.positional_cache_refresh_budget is not None:
+        ic.setdefault("positional_cache", {})["refresh_budget"] = int(args.positional_cache_refresh_budget)
 
     main(
         cfg,

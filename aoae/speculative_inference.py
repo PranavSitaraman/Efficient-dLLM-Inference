@@ -20,6 +20,14 @@ from dataclasses import dataclass, field
 from .cache import DKVCacheManager
 from .models.composed_prediction import compose_prediction_dual
 from .models.dual_model import DualModelWrapper, DualModelOutput
+from .agreement_signals import compute_reuse_signal
+from .positional_cache import (
+    init_positional_state,
+    get_policy_positional_features,
+    build_access_set,
+    update_positional_state,
+    compute_next_h_access_metrics,
+)
 
 
 @dataclass
@@ -33,6 +41,11 @@ class SpeculativeTrajectory:
     mask_ind_list: List[torch.BoolTensor] = field(default_factory=list)
     quality_scores_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     agreement_list: List[torch.Tensor] = field(default_factory=list)
+    age_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
+    last_action_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
+    access_exec_list: List[torch.Tensor] = field(default_factory=list)
+    access_mandatory_list: List[torch.Tensor] = field(default_factory=list)
+    changed_list: List[torch.Tensor] = field(default_factory=list)
     step_fracs: List[float] = field(default_factory=list)
     final_tokens: Optional[torch.Tensor] = None
     completion_step: Optional[torch.Tensor] = None
@@ -40,6 +53,7 @@ class SpeculativeTrajectory:
     mean_agreement_rate: float = 0.0
     total_cache_hits: int = 0
     total_cache_misses: int = 0
+    access_metrics: Dict[str, float] = field(default_factory=dict)
 
 
 def speculative_inference(
@@ -78,6 +92,7 @@ def speculative_inference(
     disable_remask = ic.get("disable_remask", False)
     base_temp = ic["temperature"]
     gamma = ic.get("compose_gamma", 0.0)
+    use_positional_cache = bool(ic.get("positional_cache", {}).get("enabled", False))
 
     B = prompt_ids.shape[0]
     P = prompt_ids.shape[1]
@@ -97,6 +112,8 @@ def speculative_inference(
 
     trajectory = SpeculativeTrajectory() if record_trajectory else None
     agreement_rates = []
+    reuse_state = None
+    pos_state = init_positional_state(B, L_gen, device)
 
     # --- Main speculative diffusion loop ---
     for t in range(T, 0, -1):
@@ -115,11 +132,13 @@ def speculative_inference(
         dual_out = dual_model.dual_forward_resp(
             y, resp_slice, need_hidden=need_hidden,
         )
-        agreement_rates.append(dual_out.agreement_rate)
-
         resp_logits = dual_out.primary_logits      # [B, L_gen, V]
         aux_logits = dual_out.auxiliary_logits      # [B, L_gen, V]
-        agreement = dual_out.agreement             # [B, L_gen] bool
+        agreement, reuse_state, _ = compute_reuse_signal(
+            resp_logits, aux_logits, cfg, state=reuse_state
+        )
+        agreement = agreement.bool()
+        agreement_rates.append(float(agreement.float().mean().item()))
 
         # --- PRISM quality scores ---
         q_scores = None
@@ -131,6 +150,10 @@ def speculative_inference(
         H_t, confidence, entropy = soft_mask_module(
             resp_logits, mask_ind, step_frac
         )
+        age_feat = None
+        last_action_feat = None
+        if use_positional_cache:
+            age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
 
         # --- Policy forward (with agreement signal) ---
         policy_out = policy(
@@ -138,6 +161,8 @@ def speculative_inference(
             temperature=policy_temperature,
             quality_scores=q_scores,
             agreement=agreement.float(),
+            age_feature=age_feat,
+            last_action_feature=last_action_feat,
         )
         pol_inner = policy.module if hasattr(policy, "module") else policy
 
@@ -149,6 +174,8 @@ def speculative_inference(
         if disable_remask:
             r_t = torch.zeros_like(r_t)
             actions = {**actions, "r_t": r_t}
+        q_exec, q_mandatory, _access_diag = build_access_set(actions, policy_out, cfg)
+        actions = {**actions, "q_t_mandatory": q_mandatory}
 
         # --- Record trajectory ---
         if trajectory is not None:
@@ -164,6 +191,12 @@ def speculative_inference(
                 q_scores.detach() if q_scores is not None else None
             )
             trajectory.agreement_list.append(agreement.detach())
+            trajectory.age_feature_list.append(age_feat.detach() if age_feat is not None else None)
+            trajectory.last_action_feature_list.append(
+                last_action_feat.detach() if last_action_feat is not None else None
+            )
+            trajectory.access_exec_list.append(q_exec.detach())
+            trajectory.access_mandatory_list.append(q_mandatory.detach())
             trajectory.step_fracs.append(step_frac)
 
         # --- Count cache thrashing ---
@@ -213,7 +246,7 @@ def speculative_inference(
         # ====== Phase 3: Cache (agreement positions only) ======
         if cache_mgr is not None:
             # Only cache positions where auxiliary and primary agree
-            agreement_cache = kappa_t * agreement.float()
+            agreement_cache = kappa_t * agreement.float() * q_exec
             cache_mgr.commit(agreement_cache)
 
             if trajectory is not None:
@@ -221,6 +254,12 @@ def speculative_inference(
                 trajectory.total_cache_misses += int(
                     (kappa_t * (~agreement).float()).sum().item()
                 )
+
+        changed = (u_t.bool() | r_t.bool()).float()
+        if trajectory is not None:
+            trajectory.changed_list.append(changed.detach())
+        if use_positional_cache:
+            update_positional_state(pos_state, q_exec=q_exec, changed=changed, cfg=cfg)
 
         y = y.clone()
         y[:, resp_slice] = resp_tokens
@@ -232,5 +271,16 @@ def speculative_inference(
             trajectory.completion_step = torch.full((B,), T, device=device)
         if agreement_rates:
             trajectory.mean_agreement_rate = sum(agreement_rates) / len(agreement_rates)
+        pc_cfg = cfg.get("inference", {}).get("positional_cache", {})
+        if pc_cfg.get("enabled", False):
+            horizon = int(pc_cfg.get("horizon", 4))
+            trajectory.access_metrics = compute_next_h_access_metrics(
+                access_exec_steps=trajectory.access_exec_list,
+                changed_steps=trajectory.changed_list,
+                mandatory_steps=trajectory.access_mandatory_list,
+                horizon=horizon,
+            )
+        else:
+            trajectory.access_metrics = compute_next_h_access_metrics([], [], None, 1)
 
     return y, trajectory

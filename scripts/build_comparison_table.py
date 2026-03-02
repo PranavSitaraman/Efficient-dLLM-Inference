@@ -81,6 +81,10 @@ def _load_rows(eval_path: Path) -> List[Dict[str, Any]]:
     config_path = str(metadata.get("config_path", ""))
     output_dir = str(metadata.get("output_dir", str(eval_path.parent)))
     routing_temperature = metadata.get("routing_temperature", None)
+    reuse_signal_method = str(metadata.get("reuse_signal_method", "argmax_match"))
+    positional_cache_enabled = bool(metadata.get("positional_cache_enabled", False))
+    positional_cache_horizon = metadata.get("positional_cache_horizon", "")
+    positional_cache_budget = metadata.get("positional_cache_refresh_budget", "")
 
     rows: List[Dict[str, Any]] = []
     for r in results:
@@ -98,6 +102,10 @@ def _load_rows(eval_path: Path) -> List[Dict[str, Any]]:
             "backend": backend,
             "gating": _infer_gating(backend, str(r.get("method", ""))),
             "tau_r": "" if tau_r is None else f"{_safe_float(tau_r):.4f}",
+            "reuse_signal": reuse_signal_method,
+            "positional_cache": "on" if positional_cache_enabled else "off",
+            "positional_horizon": positional_cache_horizon,
+            "positional_budget": positional_cache_budget,
             "remask": _parse_remask(config_note, metadata.get("disable_remask")),
             "method": str(r.get("method", "")),
             "note": config_note,
@@ -107,6 +115,18 @@ def _load_rows(eval_path: Path) -> List[Dict[str, Any]]:
             "cache_hit_rate": f"{_safe_float(r.get('cache_hit_rate')):.6f}",
             "agreement_rate": f"{_safe_float(r.get('agreement_rate')):.6f}",
             "draft_accept_rate": f"{_safe_float(r.get('draft_accept_rate')):.6f}",
+            "reuse_mean_safe": f"{_safe_float(r.get('reuse_mean_safe')):.6f}",
+            "reuse_mean_js": f"{_safe_float(r.get('reuse_mean_js')):.6f}",
+            "access_rate": f"{_safe_float(r.get('access_rate')):.6f}",
+            "access_mandatory_rate": f"{_safe_float(r.get('access_mandatory_rate')):.6f}",
+            "access_optional_rate": f"{_safe_float(r.get('access_optional_rate')):.6f}",
+            "access_budget_utilization": f"{_safe_float(r.get('access_budget_utilization')):.6f}",
+            "access_next_h_precision": f"{_safe_float(r.get('access_next_h_precision')):.6f}",
+            "access_next_h_recall": f"{_safe_float(r.get('access_next_h_recall')):.6f}",
+            "access_next_h_f1": f"{_safe_float(r.get('access_next_h_f1')):.6f}",
+            "access_next_h_spec_precision": f"{_safe_float(r.get('access_next_h_spec_precision')):.6f}",
+            "access_next_h_spec_recall": f"{_safe_float(r.get('access_next_h_spec_recall')):.6f}",
+            "access_next_h_spec_f1": f"{_safe_float(r.get('access_next_h_spec_f1')):.6f}",
             "total_samples": _safe_int(r.get("total_samples")),
         }
         rows.append(row)

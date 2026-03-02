@@ -15,7 +15,7 @@ Only ONE copy of the 16B model is loaded; routing is toggled in-place.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Optional, Dict
+from typing import Tuple, Optional, Dict, List
 from dataclasses import dataclass
 
 from .base_model import LLaDABaseModel
@@ -34,6 +34,7 @@ class DualModelOutput:
     agreement: torch.Tensor           # [B, L] bool: argmax match
     agreement_rate: float             # scalar: mean agreement across batch
     primary_hidden: Optional[torch.Tensor] = None  # [B, L, D] if requested
+    primary_hidden_states: Optional[List[torch.Tensor]] = None  # [N][B, L, D]
 
 
 class DualModelWrapper(nn.Module):
@@ -113,12 +114,23 @@ class DualModelWrapper(nn.Module):
         set_hard_routing(self._model.model)  # restore default
         return out
 
+    @torch.no_grad()
+    def primary_forward_with_all_hidden(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        """Soft-routed forward → (logits [B,L,V], all hidden states)."""
+        set_soft_routing(self._model.model)
+        out = self._model.forward_with_all_hidden(input_ids)
+        set_hard_routing(self._model.model)
+        return out
+
     # ------------------------------------------------------------------
     @torch.no_grad()
     def dual_forward(
         self,
         input_ids: torch.LongTensor,
         need_hidden: bool = False,
+        need_all_hidden: bool = False,
     ) -> DualModelOutput:
         """Run hard auxiliary then soft primary, compute agreement.
 
@@ -133,11 +145,16 @@ class DualModelWrapper(nn.Module):
         aux_logits = self.auxiliary_forward(input_ids)
 
         # Phase 1: Primary verification (soft routing, slow)
-        if need_hidden:
+        if need_all_hidden:
+            pri_logits, pri_hidden_states = self.primary_forward_with_all_hidden(input_ids)
+            pri_hidden = pri_hidden_states[-1]
+        elif need_hidden:
             pri_logits, pri_hidden = self.primary_forward_with_hidden(input_ids)
+            pri_hidden_states = None
         else:
             pri_logits = self.primary_forward(input_ids)
             pri_hidden = None
+            pri_hidden_states = None
 
         # Compute agreement: positions where argmax tokens match
         aux_tokens = aux_logits.argmax(dim=-1)  # [B, L]
@@ -151,6 +168,7 @@ class DualModelWrapper(nn.Module):
             agreement=agreement,
             agreement_rate=agreement_rate,
             primary_hidden=pri_hidden,
+            primary_hidden_states=pri_hidden_states,
         )
 
     # ------------------------------------------------------------------
@@ -160,18 +178,25 @@ class DualModelWrapper(nn.Module):
         input_ids: torch.LongTensor,
         resp_slice: slice,
         need_hidden: bool = False,
+        need_all_hidden: bool = False,
     ) -> DualModelOutput:
         """Dual forward, returning logits only for the response region.
 
         This is a convenience for inference loops where we only need
         logits for positions [P:P+L_gen].
         """
-        out = self.dual_forward(input_ids, need_hidden=need_hidden)
+        out = self.dual_forward(
+            input_ids,
+            need_hidden=need_hidden,
+            need_all_hidden=need_all_hidden,
+        )
         out.primary_logits = out.primary_logits[:, resp_slice, :]
         out.auxiliary_logits = out.auxiliary_logits[:, resp_slice, :]
         out.agreement = out.agreement[:, resp_slice]
         if out.primary_hidden is not None:
             out.primary_hidden = out.primary_hidden[:, resp_slice, :]
+        if out.primary_hidden_states is not None:
+            out.primary_hidden_states = [h[:, resp_slice, :] for h in out.primary_hidden_states]
         return out
 
 

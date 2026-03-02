@@ -19,6 +19,15 @@ from dataclasses import dataclass
 
 from .cache import DKVCacheManager
 from .models.composed_prediction import compose_prediction
+from .agreement_signals import compute_reuse_signal
+from .kv_dynamics import SpeculativeDynamicsTracker
+from .positional_cache import (
+    init_positional_state,
+    get_policy_positional_features,
+    build_access_set,
+    update_positional_state,
+    compute_next_h_access_metrics,
+)
 
 
 @dataclass
@@ -218,6 +227,8 @@ def run_speculative_inference(
     gamma = ic.get("compose_gamma", 0.0)
     use_fallback = ic["fallback_unmask"]
     disable_remask = ic.get("disable_remask", False)
+    track_kv_dynamics = bool(cfg.get("analysis", {}).get("track_kv_dynamics", False))
+    use_positional_cache = bool(ic.get("positional_cache", {}).get("enabled", False))
 
     B = prompt_ids.shape[0]
     P = prompt_ids.shape[1]
@@ -230,6 +241,16 @@ def run_speculative_inference(
 
     resp_slice = slice(P, P + L_gen)
     cache_mgr = SpeculativeCacheManager(B, L_gen, device)
+    dynamics_tracker = SpeculativeDynamicsTracker(cfg) if track_kv_dynamics else None
+    reuse_state = None
+    reuse_diag_sum: Dict[str, float] = {}
+    reuse_diag_steps = 0
+    access_diag_sum: Dict[str, float] = {}
+    access_diag_steps = 0
+    access_exec_steps: List[torch.Tensor] = []
+    changed_steps: List[torch.Tensor] = []
+    mandatory_steps: List[torch.Tensor] = []
+    pos_state = init_positional_state(B, L_gen, device)
 
     for t in range(T, 0, -1):
         step_frac = t / T
@@ -240,12 +261,21 @@ def run_speculative_inference(
             break
 
         # Dual-model forward
-        need_hidden = (prism_adapter is not None)
-        dual_out = dual_model.dual_forward_resp(y, resp_slice, need_hidden=need_hidden)
+        need_hidden = (prism_adapter is not None) or track_kv_dynamics
+        need_all_hidden = track_kv_dynamics
+        dual_out = dual_model.dual_forward_resp(
+            y, resp_slice, need_hidden=need_hidden, need_all_hidden=need_all_hidden
+        )
 
         resp_logits = dual_out.primary_logits
         aux_logits = dual_out.auxiliary_logits
-        agreement = dual_out.agreement
+        agreement, reuse_state, reuse_diag = compute_reuse_signal(
+            resp_logits, aux_logits, cfg, state=reuse_state
+        )
+        agreement = agreement.bool()
+        for k, v in reuse_diag.items():
+            reuse_diag_sum[k] = reuse_diag_sum.get(k, 0.0) + float(v)
+        reuse_diag_steps += 1
 
         # PRISM quality scores
         q_scores = None
@@ -255,6 +285,10 @@ def run_speculative_inference(
 
         # Soft-masked state
         H_t, confidence, entropy = soft_mask_module(resp_logits, mask_ind, step_frac)
+        age_feat = None
+        last_action_feat = None
+        if use_positional_cache:
+            age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
 
         # Policy forward
         policy_out = policy(
@@ -262,6 +296,8 @@ def run_speculative_inference(
             temperature=policy_temperature,
             quality_scores=q_scores,
             agreement=agreement.float(),
+            age_feature=age_feat,
+            last_action_feature=last_action_feat,
         )
         pol_inner = policy.module if hasattr(policy, "module") else policy
         actions = pol_inner.sample_actions(policy_out, mask_ind)
@@ -271,6 +307,11 @@ def run_speculative_inference(
         kappa_t = actions["kappa_t"]
         if disable_remask:
             r_t = torch.zeros_like(r_t)
+            actions = {**actions, "r_t": r_t}
+        q_exec, q_mandatory, access_diag = build_access_set(actions, policy_out, cfg)
+        for k, v in access_diag.items():
+            access_diag_sum[k] = access_diag_sum.get(k, 0.0) + float(v)
+        access_diag_steps += 1
 
         resp_tokens = resp_tokens.clone()
 
@@ -309,13 +350,66 @@ def run_speculative_inference(
                         best_pos = masked_pos[confidence[b_idx, masked_pos].argmax()]
                         resp_tokens[b_idx, best_pos] = resp_logits[b_idx, best_pos].argmax()
 
+        if dynamics_tracker is not None:
+            layer_hiddens = dual_out.primary_hidden_states
+            if not layer_hiddens:
+                if dual_out.primary_hidden is not None:
+                    layer_hiddens = [dual_out.primary_hidden]
+                else:
+                    layer_hiddens = []
+            if layer_hiddens:
+                max_prob = F.softmax(resp_logits, dim=-1).max(dim=-1).values
+                dynamics_tracker.observe_step(
+                    layer_hiddens=layer_hiddens,
+                    max_prob=max_prob,
+                    mask_ind=mask_ind,
+                    agreement=agreement.float(),
+                    u_t=u_t,
+                    r_t=r_t,
+                    kappa_t=kappa_t,
+                    q_t=(
+                        q_exec
+                        if cfg.get("inference", {}).get("positional_cache", {}).get("enabled", False)
+                        else torch.zeros_like(q_exec)
+                    ),
+                )
+
         # Phase 3: Agreement-gated cache commit
-        cache_mgr.step(r_t, kappa_t, u_t, agreement)
+        cache_mgr.step(r_t, kappa_t * q_exec, u_t, agreement)
+
+        changed = (u_t.bool() | r_t.bool()).float()
+        access_exec_steps.append(q_exec.detach())
+        changed_steps.append(changed.detach())
+        mandatory_steps.append(q_mandatory.detach())
+        if use_positional_cache:
+            update_positional_state(pos_state, q_exec=q_exec, changed=changed, cfg=cfg)
 
         y = y.clone()
         y[:, resp_slice] = resp_tokens
 
-    return y, cache_mgr.get_stats()
+    stats = cache_mgr.get_stats()
+    reuse_method = cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")
+    stats["reuse_signal_method"] = reuse_method
+    for k, v in reuse_diag_sum.items():
+        stats[f"reuse_{k}"] = v / max(reuse_diag_steps, 1)
+    for k, v in access_diag_sum.items():
+        stats[f"access_{k}"] = v / max(access_diag_steps, 1)
+    pc_cfg = cfg.get("inference", {}).get("positional_cache", {})
+    if pc_cfg.get("enabled", False):
+        horizon = int(pc_cfg.get("horizon", 4))
+        stats.update(
+            compute_next_h_access_metrics(
+                access_exec_steps=access_exec_steps,
+                changed_steps=changed_steps,
+                mandatory_steps=mandatory_steps,
+                horizon=horizon,
+            )
+        )
+    else:
+        stats.update(compute_next_h_access_metrics([], [], None, 1))
+    if dynamics_tracker is not None:
+        stats["kv_dynamics"] = dynamics_tracker.summarize()
+    return y, stats
 
 
 def run_policy_guided_inference(
@@ -355,6 +449,7 @@ def run_policy_guided_inference(
     gamma = ic.get("compose_gamma", 0.0)
     use_fallback = ic["fallback_unmask"]
     disable_remask = ic.get("disable_remask", False)
+    use_positional_cache = bool(ic.get("positional_cache", {}).get("enabled", False))
 
     B = prompt_ids.shape[0]
     P = prompt_ids.shape[1]
@@ -367,6 +462,7 @@ def run_policy_guided_inference(
 
     resp_slice = slice(P, P + L_gen)
     cache_mgr = PolicyGuidedCacheManager(B, L_gen, device)
+    pos_state = init_positional_state(B, L_gen, device)
 
     for t in range(T, 0, -1):
         step_frac = t / T
@@ -395,12 +491,18 @@ def run_policy_guided_inference(
         H_t, confidence, entropy = soft_mask_module(
             resp_logits, mask_ind, step_frac
         )
+        age_feat = None
+        last_action_feat = None
+        if use_positional_cache:
+            age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
 
         # Policy forward
         policy_out = policy(
             H_t, mask_ind, step_frac,
             temperature=policy_temperature,
             quality_scores=q_scores,
+            age_feature=age_feat,
+            last_action_feature=last_action_feat,
         )
         pol_inner = policy.module if hasattr(policy, "module") else policy
         actions = pol_inner.sample_actions(policy_out, mask_ind)
@@ -410,6 +512,8 @@ def run_policy_guided_inference(
         kappa_t = actions["kappa_t"]
         if disable_remask:
             r_t = torch.zeros_like(r_t)
+            actions = {**actions, "r_t": r_t}
+        q_exec, _q_mandatory, _ = build_access_set(actions, policy_out, cfg)
 
         resp_tokens = resp_tokens.clone()
 
@@ -449,7 +553,11 @@ def run_policy_guided_inference(
                         resp_tokens[b_idx, best_pos] = resp_logits[b_idx, best_pos].argmax()
 
         # Phase 3: Cache commit + stats tracking
-        cache_mgr.step(r_t, kappa_t, u_t)
+        cache_mgr.step(r_t, kappa_t * q_exec, u_t)
+
+        changed = (u_t.bool() | r_t.bool()).float()
+        if use_positional_cache:
+            update_positional_state(pos_state, q_exec=q_exec, changed=changed, cfg=cfg)
 
         y = y.clone()
         y[:, resp_slice] = resp_tokens

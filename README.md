@@ -138,6 +138,14 @@ All hyperparameters live in YAML configs. Key settings from `configs/default.yam
 | `inference.steps` | 64 | Diffusion steps T |
 | `inference.compose_gamma` | 0.5 | Composed prediction strength (§3.6) |
 | `inference.disable_remask` | `false` | Ablation switch to disable remask actions while keeping other settings fixed |
+| `inference.reuse_signal.method` | `argmax_match` | Training-free safe-to-reuse gate (`argmax_match`, `topk_overlap`, `min_confidence`, `min_margin`, `js_divergence`, `temporal_confidence`) |
+| `inference.positional_cache.enabled` | `false` | Enable next-H positional speculative caching (`q_t` access head) |
+| `inference.positional_cache.horizon` | `4` | Next-H window for access prediction metrics |
+| `inference.positional_cache.refresh_budget` | `32` | Top-B non-mandatory refresh positions per step |
+| `policy.use_positional_features` | `false` | Adds age + last-access features to policy state (enable for POC2) |
+| `grpo.access_reward_weight` | `0.0` | Optional dense reward coefficient for next-H speculative access F1 |
+| `analysis.track_kv_dynamics` | `false` | Enable KV-dynamics proxy logging during speculative eval |
+| `analysis.attention_proxy_top_frac` | `0.1` | Fraction of highest-confidence positions used for confident-token drift proxy |
 | `base_model.routing_temperature` | 0.01 | Soft routing τ_r (soft_moe backend only) |
 
 ## Experiment Tracking Outputs
@@ -145,10 +153,32 @@ All hyperparameters live in YAML configs. Key settings from `configs/default.yam
 - `run_eval.py` now writes:
   - `outputs/<run>/eval_results.json`
   - `outputs/<run>/eval_metadata.json`
+  - `outputs/<run>/eval_tps_vs_accuracy.png`
+  - `outputs/<run>/kv_dynamics_records.json` (if `analysis.track_kv_dynamics=true`)
+  - `outputs/<run>/kv_dynamics_summary.json` (if enabled)
+  - `outputs/<run>/kv_dynamics_layer_drift.png` (if enabled and matplotlib available)
   - `results/experiment_manifest.jsonl` (append-only registry across runs)
 - Build a consolidated table from saved artifacts:
   - `python3 scripts/build_comparison_table.py`
   - Outputs: `results/comparison_table.csv` and `results/comparison_table.md`
+- Aggregate KV-dynamics summaries across runs:
+  - `python3 scripts/summarize_kv_dynamics.py`
+  - Outputs: `results/kv_dynamics_table.csv` and `results/kv_dynamics_table.md`
+
+POC2-friendly eval override example (no retraining):
+
+```bash
+python3 run_eval.py \
+  --config configs/dual_mini_tau01.yaml \
+  --mode speculative \
+  --reuse_signal_method js_divergence \
+  --reuse_signal_threshold 0.05 \
+  --disable_remask \
+  --track_kv_dynamics \
+  --enable_positional_cache \
+  --positional_cache_horizon 4 \
+  --positional_cache_refresh_budget 32
+```
 
 ## Architecture & Design
 

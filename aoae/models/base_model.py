@@ -389,47 +389,24 @@ class LLaDABaseModel(nn.Module):
     # ------------------------------------------------------------------
     @torch.no_grad()
     def forward_with_hidden(self, input_ids: torch.LongTensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Forward pass → (logits [B,L,V], hidden_states [B,L,D]).
+        """Forward pass → (logits [B,L,V], last_hidden [B,L,D])."""
+        logits, hidden_states = self.forward_with_all_hidden(input_ids)
+        return logits, hidden_states[-1]
 
-        Uses block-causal attention (the pattern LLaDA2 was trained with).
-        """
+    @torch.no_grad()
+    def forward_with_all_hidden(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, list]:
+        """Forward pass → (logits [B,L,V], hidden_states [num_layers][B,L,D])."""
         if self._backend in ("dinfer", "soft_moe"):
-            return self._forward_with_hidden_dinfer(input_ids)
+            return self._forward_with_all_hidden_dinfer(input_ids)
 
         batch_size, seq_len = input_ids.shape
         attention_mask = self._make_attention_mask(
             batch_size, seq_len, input_ids.device, block_length=self._block_length,
         )
         outputs = self.model(input_ids, attention_mask=attention_mask, output_hidden_states=True)
-
-        # Extract logits from various output types
-        if hasattr(outputs, "logits"):
-            logits = outputs.logits
-        elif isinstance(outputs, (tuple, list)):
-            logits = outputs[0]
-        else:
-            # Handle MoeModelOutputWithPast and other custom output classes
-            # Try to get the first element if it's a dataclass-like object
-            try:
-                logits = outputs[0]
-            except (TypeError, IndexError):
-                raise RuntimeError(
-                    f"Unexpected model output type: {type(outputs)}. "
-                    f"Available attributes: {dir(outputs)}"
-                )
-
-        # Extract hidden states from various output types
-        if hasattr(outputs, "hidden_states") and outputs.hidden_states is not None:
-            hidden = outputs.hidden_states[-1]
-        elif hasattr(outputs, "last_hidden_state"):
-            hidden = outputs.last_hidden_state
-        else:
-            raise RuntimeError(
-                "Model did not return hidden_states. "
-                "Ensure the model supports output_hidden_states=True."
-            )
-
-        return logits, hidden
+        return self._extract_logits_and_hidden_states(outputs, source="hf")
 
     @torch.no_grad()
     def forward_hidden_only(self, input_ids: torch.LongTensor) -> torch.Tensor:
@@ -442,7 +419,7 @@ class LLaDABaseModel(nn.Module):
         Uses block-causal attention (the pattern LLaDA2 was trained with).
         """
         if self._backend in ("dinfer", "soft_moe"):
-            return self._forward_with_hidden_dinfer(input_ids)[1]
+            return self.forward_with_hidden(input_ids)[1]
 
         batch_size, seq_len = input_ids.shape
         attention_mask = self._make_attention_mask(
@@ -462,28 +439,46 @@ class LLaDABaseModel(nn.Module):
             return outputs[0]
         raise RuntimeError(f"Unexpected backbone output type: {type(outputs)}")
 
-    def _forward_with_hidden_dinfer(
+    def _extract_logits_and_hidden_states(
+        self, outputs, source: str = "hf",
+    ) -> Tuple[torch.Tensor, list]:
+        if hasattr(outputs, "logits"):
+            logits = outputs.logits
+        elif isinstance(outputs, (tuple, list)):
+            logits = outputs[0]
+        else:
+            try:
+                logits = outputs[0]
+            except (TypeError, IndexError):
+                raise RuntimeError(f"Unexpected {source} output type: {type(outputs)}")
+
+        hidden_states = None
+        if hasattr(outputs, "hidden_states") and outputs.hidden_states is not None:
+            hidden_states = list(outputs.hidden_states)
+            # HF convention usually includes embedding output at index 0.
+            if len(hidden_states) > 1:
+                hidden_states = hidden_states[1:]
+        elif hasattr(outputs, "last_hidden_state"):
+            hidden_states = [outputs.last_hidden_state]
+
+        if not hidden_states:
+            raise RuntimeError(f"{source} model did not return hidden states.")
+
+        return logits, hidden_states
+
+    def _forward_with_all_hidden_dinfer(
         self, input_ids: torch.LongTensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, list]:
         """Forward with hidden states through dInfer MoE model."""
         from vllm.config import get_current_vllm_config
         from vllm.forward_context import set_forward_context
         vllm_config = get_current_vllm_config()
         with set_forward_context(None, vllm_config):
             outputs = self.model(input_ids, output_hidden_states=True)
+        return self._extract_logits_and_hidden_states(outputs, source="dinfer")
 
-        if hasattr(outputs, "logits"):
-            logits = outputs.logits
-        elif isinstance(outputs, (tuple, list)):
-            logits = outputs[0]
-        else:
-            raise RuntimeError(f"Unexpected dInfer output type: {type(outputs)}")
-
-        if hasattr(outputs, "hidden_states") and outputs.hidden_states is not None:
-            hidden = outputs.hidden_states[-1]
-        elif hasattr(outputs, "last_hidden_state"):
-            hidden = outputs.last_hidden_state
-        else:
-            raise RuntimeError("dInfer model did not return hidden_states.")
-
-        return logits, hidden
+    def _forward_with_hidden_dinfer(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        logits, hidden_states = self._forward_with_all_hidden_dinfer(input_ids)
+        return logits, hidden_states[-1]

@@ -19,6 +19,21 @@ from typing import Optional, Dict, List, Tuple
 from dataclasses import dataclass, field
 
 
+def _load_state_dict_flexible(module, state_dict: Dict[str, torch.Tensor], label: str) -> None:
+    own = module.state_dict()
+    compatible = {
+        k: v for k, v in state_dict.items()
+        if (k in own) and (own[k].shape == v.shape)
+    }
+    skipped = [
+        k for k, v in state_dict.items()
+        if (k not in own) or (k in own and own[k].shape != v.shape)
+    ]
+    module.load_state_dict(compatible, strict=False)
+    if skipped:
+        print(f"  [Checkpoint] {label}: skipped {len(skipped)} incompatible keys.")
+
+
 @dataclass
 class BenchmarkResult:
     """Results from a throughput benchmark run."""
@@ -274,7 +289,13 @@ def run_tau_r_sweep(
         policy_path = os.path.join(cfg["logging"]["output_dir"], "policy_best.pt")
         if os.path.exists(policy_path):
             policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
-            policy.load_state_dict(torch.load(policy_path, map_location=device))
+            state = torch.load(policy_path, map_location=device)
+            if isinstance(state, dict) and "policy" in state:
+                _load_state_dict_flexible(policy, state["policy"], "policy")
+            elif isinstance(state, dict):
+                _load_state_dict_flexible(policy, state, "policy")
+            else:
+                raise RuntimeError(f"Unexpected checkpoint format at {policy_path}")
             policy.eval()
             print(f"  Loaded policy from {policy_path}")
         else:

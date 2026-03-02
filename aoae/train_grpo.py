@@ -32,6 +32,21 @@ from .speculative_inference import speculative_inference, SpeculativeTrajectory
 import glob
 
 
+def _load_state_dict_flexible(module, state_dict: Dict[str, torch.Tensor], label: str) -> None:
+    own = module.state_dict()
+    compatible = {
+        k: v for k, v in state_dict.items()
+        if (k in own) and (own[k].shape == v.shape)
+    }
+    skipped = [
+        k for k, v in state_dict.items()
+        if (k not in own) or (k in own and own[k].shape != v.shape)
+    ]
+    module.load_state_dict(compatible, strict=False)
+    if skipped:
+        print(f"[Checkpoint] {label}: skipped {len(skipped)} incompatible keys.")
+
+
 # ======================================================================
 # Reward computation (Eq. reward from paper)
 # ======================================================================
@@ -94,6 +109,12 @@ def compute_reward(
     # --- Reward: correct answers always get ≥ 1.0, with additive speed bonus ---
     # R = r(y*, y) * (1 + alpha * speed_bonus) - beta * thrash
     reward = correctness * (1.0 + alpha * speed_bonus) - beta * total_thrash
+
+    # Optional dense signal for next-H positional access quality.
+    access_w = float(gc.get("access_reward_weight", 0.0))
+    if access_w > 0.0 and hasattr(trajectory, "access_metrics"):
+        spec_f1 = float(trajectory.access_metrics.get("access_next_h_spec_f1", 0.0))
+        reward = reward + access_w * torch.full_like(reward, spec_f1)
 
     return reward
 
@@ -282,9 +303,19 @@ def compute_grpo_loss(
             # policy() goes through DDP forward hook for gradient sync;
             # log_prob is a non-forward method, access via .module if DDP-wrapped
             q_scores = traj.get("quality_scores_list", [None] * n_steps)[t_idx]
+            age_list = traj.get("age_feature_list", None)
+            age_feat = age_list[t_idx] if age_list else None
+            last_action_list = traj.get("last_action_feature_list", None)
+            last_action_feat = last_action_list[t_idx] if last_action_list else None
             agreement_list = traj.get("agreement_list", None)
             agreement = agreement_list[t_idx].float() if agreement_list else None
-            policy_out = policy(H_t, mask_ind, step_frac, quality_scores=q_scores, agreement=agreement)
+            policy_out = policy(
+                H_t, mask_ind, step_frac,
+                quality_scores=q_scores,
+                agreement=agreement,
+                age_feature=age_feat,
+                last_action_feature=last_action_feat,
+            )
             pol_inner = policy.module if hasattr(policy, 'module') else policy
             new_lp = pol_inner.log_prob(policy_out, actions)  # [1]
 
@@ -383,8 +414,11 @@ def collect_rollout_group(
             "H_t_list": trajectory.H_t_list,
             "mask_ind_list": trajectory.mask_ind_list,
             "quality_scores_list": trajectory.quality_scores_list,
+            "age_feature_list": getattr(trajectory, "age_feature_list", []),
+            "last_action_feature_list": getattr(trajectory, "last_action_feature_list", []),
             "step_fracs": trajectory.step_fracs,
             "reward": reward.item(),
+            "access_metrics": getattr(trajectory, "access_metrics", {}),
         }
         # Store agreement for speculative trajectories
         if use_speculative and hasattr(trajectory, "agreement_list"):
@@ -586,9 +620,9 @@ def train(cfg: dict, resume_from: Optional[str] = None):
 
         # Restore model weights
         pol_inner = policy.module if hasattr(policy, 'module') else policy
-        pol_inner.load_state_dict(ckpt["policy"])
+        _load_state_dict_flexible(pol_inner, ckpt["policy"], "policy")
         sm_inner = soft_mask.module if hasattr(soft_mask, 'module') else soft_mask
-        sm_inner.load_state_dict(ckpt["soft_mask"])
+        _load_state_dict_flexible(sm_inner, ckpt["soft_mask"], "soft_mask")
 
         # Restore optimizer
         if "optimizer" in ckpt:

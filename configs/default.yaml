@@ -28,6 +28,7 @@ policy:
   n_layers: 1                  # N_pi transformer layers (paper §3.4)
   n_heads: 4                   # attention heads
   dropout: 0.0
+  use_positional_features: false # POC1 default: keep positional features disabled
 
 # ---- PRISM adapter ------------------------------------------
 prism:
@@ -48,6 +49,7 @@ grpo:
   clip_eps: 0.2                # epsilon for clipping (paper §3.5)
   alpha: 1.0                   # speed bonus weight (paper §3.5)
   beta: 0.1                    # cache-thrashing penalty weight (paper §3.5)
+  access_reward_weight: 0.0    # optional dense reward from next-H speculative access F1
   lr: 3.0e-4
   weight_decay: 0.01
   epochs: 5
@@ -65,8 +67,23 @@ inference:
   temperature: 0.0             # base-model sampling temp (0 = greedy)
   fallback_unmask: true        # unmask highest-confidence when u_t = 0
   disable_remask: false        # ablation: set true to disable remasking
+  positional_cache:
+    enabled: false             # set true for POC2 positional speculative caching
+    horizon: 4                 # next-H window for access prediction
+    refresh_budget: 32         # additional non-mandatory positions per step
+    use_topb_from_probs: true  # top-B by access head probability
+    force_mandatory: true      # always include unmask/remask positions in Q_t
+    age_cap: 64                # normalize age feature by this cap
   block_length: 32             # semi-AR block length
   compose_gamma: 0.5           # Composed prediction strength (paper §3.6)
+
+# ---- Analysis ------------------------------------------------
+analysis:
+  track_kv_dynamics: false
+  keep_step_traces: true
+  locality_windows: [8, 16, 32]
+  confidence_threshold: 0.9
+  attention_proxy_top_frac: 0.1
 
 # ---- Data ---------------------------------------------------
 data:

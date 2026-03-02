@@ -33,6 +33,7 @@ policy:
   n_layers: 1
   n_heads: 4
   dropout: 0.0
+  use_positional_features: false
 
 # ---- PRISM adapter ------------------------------------------
 prism:
@@ -53,6 +54,7 @@ grpo:
   clip_eps: 0.2
   alpha: 1.0
   beta: 0.1
+  access_reward_weight: 0.0
   lr: 3.0e-4
   weight_decay: 0.01
   epochs: 5
@@ -70,8 +72,28 @@ inference:
   temperature: 0.0
   fallback_unmask: true
   disable_remask: false        # ablation: set true to disable remasking
+  positional_cache:
+    enabled: false
+    horizon: 4
+    refresh_budget: 32
+    use_topb_from_probs: true
+    force_mandatory: true
+    age_cap: 64
+  reuse_signal:
+    method: "argmax_match"     # argmax_match|topk_overlap|min_confidence|min_margin|js_divergence|temporal_confidence
+    threshold: 0.0
+    top_k: 4
+    min_overlap: 1
+    min_streak: 2
   block_length: 32
   compose_gamma: 0.5          # Composed prediction strength (paper §3.6)
+
+analysis:
+  track_kv_dynamics: false
+  keep_step_traces: true
+  locality_windows: [8, 16, 32]
+  confidence_threshold: 0.9
+  attention_proxy_top_frac: 0.1
 
 # ---- Data ---------------------------------------------------
 data:

@@ -1,12 +1,12 @@
 """
 AOAE Policy Network (paper §3.2, §3.4).
 
-A lightweight 1-layer bidirectional transformer with three independent
-Bernoulli output heads (unmask, remask, cache).  Validity constraints are
+A lightweight 1-layer bidirectional transformer with four independent
+Bernoulli output heads (unmask, remask, cache, access).  Validity constraints are
 enforced via logit masking before the sigmoid.
 
 Architecture follows Jazbec et al. (2025) "Learning Unmasking Policies
-for Diffusion Language Models" — extended from 1 head to 3.
+for Diffusion Language Models" — extended from 1 head to 4.
 
 Key change from earlier AOAE formulation: the "edit" head (T2T replacement)
 is replaced by a "remask" head that simply reverts positions to [M],
@@ -24,9 +24,11 @@ class AOAEPolicy(nn.Module):
     """
     Policy pi_phi(a_t | s_t) with factorized Bernoulli likelihood.
 
-    Input per position:  (h_t^k [D], m_t^k [1], q_t^k [1], alpha_t^k [1], t/T [1])  →  projected to d_model.
+    Input per position:
+      (h_t^k [D], m_t^k [1], q_t^k [1], alpha_t^k [1], t/T [1], age_t^k [1], last_q_t^k [1])
+      → projected to d_model.
     Backbone:            N-layer bidirectional transformer.
-    Output:              3 scalar logits per position (unmask, remask, cache).
+    Output:              4 scalar logits per position (unmask, remask, cache, access).
     """
 
     def __init__(self, cfg, input_dim: int):
@@ -40,8 +42,10 @@ class AOAEPolicy(nn.Module):
         d = pc["d_model"]
         self.d_model = d
 
-        # --- Input projection: (h_t^k, m_t^k, q_t^k, alpha_t^k, t/T) → d_model ---
-        self.input_proj = nn.Linear(input_dim + 4, d)
+        self.use_positional_features = pc.get("use_positional_features", False)
+        extra_feats = 4 + (2 if self.use_positional_features else 0)
+        # --- Input projection: base + optional positional features ---
+        self.input_proj = nn.Linear(input_dim + extra_feats, d)
 
         # --- Transformer backbone (bidirectional) ---
         encoder_layer = nn.TransformerEncoderLayer(
@@ -57,10 +61,11 @@ class AOAEPolicy(nn.Module):
             encoder_layer, num_layers=pc["n_layers"]
         )
 
-        # --- Three independent output heads → scalar logit per position ---
+        # --- Four independent output heads → scalar logit per position ---
         self.head_unmask = nn.Linear(d, 1)
         self.head_remask = nn.Linear(d, 1)
         self.head_cache = nn.Linear(d, 1)
+        self.head_access = nn.Linear(d, 1)  # next-H positional access head
 
         self._init_weights()
 
@@ -82,6 +87,8 @@ class AOAEPolicy(nn.Module):
         temperature: float = 1.0,
         quality_scores: Optional[torch.Tensor] = None,
         agreement: Optional[torch.Tensor] = None,
+        age_feature: Optional[torch.Tensor] = None,
+        last_action_feature: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """
         Compute action logits with validity constraints.
@@ -95,15 +102,19 @@ class AOAEPolicy(nn.Module):
                             If None, defaults to zeros.
             agreement:      [B, L]     auxiliary-primary agreement (0/1 float).
                             If None, defaults to zeros.
+            age_feature:    [B, L]     normalized positional age feature.
+            last_action_feature: [B, L] previous-step access action.
 
         Returns:
             dict with keys:
                 "unmask_logits":  [B, L]  (masked to -inf for unmasked positions)
                 "remask_logits":  [B, L]  (masked to -inf for masked positions)
                 "cache_logits":   [B, L]
+                "access_logits":  [B, L]
                 "unmask_probs":   [B, L]  sigmoid(logit / tau_pi)
                 "remask_probs":   [B, L]
                 "cache_probs":    [B, L]
+                "access_probs":   [B, L]
         """
         B, L, D = H_t.shape
         device = H_t.device
@@ -119,7 +130,18 @@ class AOAEPolicy(nn.Module):
         else:
             a_feat = torch.zeros(B, L, 1, device=device)          # [B, L, 1]
         t_feat = torch.full((B, L, 1), step_frac, device=device)  # [B, L, 1]
-        x = torch.cat([H_t, m_feat, q_feat, a_feat, t_feat], dim=-1)  # [B, L, D+4]
+        feats = [H_t, m_feat, q_feat, a_feat, t_feat]
+        if self.use_positional_features:
+            if age_feature is not None:
+                age_feat = age_feature.unsqueeze(-1)
+            else:
+                age_feat = torch.zeros(B, L, 1, device=device)
+            if last_action_feature is not None:
+                last_feat = last_action_feature.unsqueeze(-1)
+            else:
+                last_feat = torch.zeros(B, L, 1, device=device)
+            feats.extend([age_feat, last_feat])
+        x = torch.cat(feats, dim=-1)
         x = self.input_proj(x)                                     # [B, L, d]
 
         # --- Transformer backbone ---
@@ -129,6 +151,7 @@ class AOAEPolicy(nn.Module):
         unmask_logits = self.head_unmask(x).squeeze(-1)  # [B, L]
         remask_logits = self.head_remask(x).squeeze(-1)  # [B, L]
         cache_logits = self.head_cache(x).squeeze(-1)    # [B, L]
+        access_logits = self.head_access(x).squeeze(-1)  # [B, L]
 
         # --- Validity constraints via logit masking ---
         # Unmask only on masked positions
@@ -141,14 +164,17 @@ class AOAEPolicy(nn.Module):
         unmask_probs = torch.sigmoid(unmask_logits / temperature)
         remask_probs = torch.sigmoid(remask_logits / temperature)
         cache_probs = torch.sigmoid(cache_logits / temperature)
+        access_probs = torch.sigmoid(access_logits / temperature)
 
         return {
             "unmask_logits": unmask_logits,
             "remask_logits": remask_logits,
             "cache_logits": cache_logits,
+            "access_logits": access_logits,
             "unmask_probs": unmask_probs,
             "remask_probs": remask_probs,
             "cache_probs": cache_probs,
+            "access_probs": access_probs,
         }
 
     # ------------------------------------------------------------------
@@ -163,16 +189,17 @@ class AOAEPolicy(nn.Module):
         Enforces cache-remask exclusion: kappa_t^k * r_t^k = 0.
 
         Returns:
-            dict with "u_t", "r_t", "kappa_t" — each [B, L] binary.
+            dict with "u_t", "r_t", "kappa_t", "q_t" — each [B, L] binary.
         """
         u_t = torch.bernoulli(policy_out["unmask_probs"])    # [B, L]
         r_t = torch.bernoulli(policy_out["remask_probs"])    # [B, L]
         kappa_t = torch.bernoulli(policy_out["cache_probs"])  # [B, L]
+        q_t = torch.bernoulli(policy_out["access_probs"])     # [B, L]
 
         # Enforce cache-remask exclusion: if remask is 1, cache must be 0
         kappa_t = kappa_t * (1.0 - r_t)
 
-        return {"u_t": u_t, "r_t": r_t, "kappa_t": kappa_t}
+        return {"u_t": u_t, "r_t": r_t, "kappa_t": kappa_t, "q_t": q_t}
 
     # ------------------------------------------------------------------
     def log_prob(
@@ -193,10 +220,22 @@ class AOAEPolicy(nn.Module):
         """
         total = torch.zeros(actions["u_t"].shape[0], device=actions["u_t"].device)
 
-        for key, prob_key in [("u_t", "unmask_probs"), ("r_t", "remask_probs"), ("kappa_t", "cache_probs")]:
+        heads = [
+            ("u_t", "unmask_probs"),
+            ("r_t", "remask_probs"),
+            ("kappa_t", "cache_probs"),
+            ("q_t", "access_probs"),
+        ]
+        for key, prob_key in heads:
+            if key not in actions or prob_key not in policy_out:
+                continue
             a = actions[key]        # [B, L]
             p = policy_out[prob_key].clamp(1e-7, 1.0 - 1e-7)  # [B, L]
             lp = a * torch.log(p) + (1.0 - a) * torch.log(1.0 - p)  # [B, L]
+            # Mandatory q_t positions are deterministic (forced include), so skip
+            # their Bernoulli contribution when provided by the caller.
+            if key == "q_t" and "q_t_mandatory" in actions:
+                lp = lp * (1.0 - actions["q_t_mandatory"].float())
             total = total + lp.sum(dim=-1)  # [B]
 
         return total
@@ -230,12 +269,15 @@ class DefaultPolicy(nn.Module):
         temperature: float = 1.0,
         quality_scores: Optional[torch.Tensor] = None,
         agreement: Optional[torch.Tensor] = None,
+        age_feature: Optional[torch.Tensor] = None,
+        last_action_feature: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         B, L, D = H_t.shape
         device = H_t.device
 
-        # Use agreement signal directly as cache probability
+        # Use agreement signal directly as cache and access probability
         cache_probs = agreement if agreement is not None else torch.zeros(B, L, device=device)
+        access_probs = cache_probs
 
         # Gradual unmask schedule: at diffusion step t (step_frac = t/T),
         # unmask ~1/t of the remaining masked positions per step.
@@ -251,9 +293,11 @@ class DefaultPolicy(nn.Module):
             "unmask_logits": torch.zeros(B, L, device=device),
             "remask_logits": torch.full((B, L), -1e9, device=device),
             "cache_logits": torch.zeros(B, L, device=device),
+            "access_logits": torch.zeros(B, L, device=device),
             "unmask_probs": unmask_probs,
             "remask_probs": remask_probs,
             "cache_probs": cache_probs,
+            "access_probs": access_probs,
         }
 
     def sample_actions(
@@ -265,7 +309,8 @@ class DefaultPolicy(nn.Module):
         u_t = (torch.rand_like(unmask_probs) < unmask_probs).float() * mask_indicator.float()
         r_t = torch.zeros_like(u_t)
         kappa_t = policy_out["cache_probs"]
-        return {"u_t": u_t, "r_t": r_t, "kappa_t": kappa_t}
+        q_t = policy_out["access_probs"]
+        return {"u_t": u_t, "r_t": r_t, "kappa_t": kappa_t, "q_t": q_t}
 
     def log_prob(
         self,
