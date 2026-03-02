@@ -58,6 +58,7 @@ inference:
   gen_length: 256
   temperature: 0.0
   fallback_unmask: true
+  disable_remask: false        # ablation: set true to disable remasking
   block_length: 32               # semi-AR block length for LLaDA2.X
   compose_gamma: 0.5             # Composed prediction strength (paper §3.6)
 

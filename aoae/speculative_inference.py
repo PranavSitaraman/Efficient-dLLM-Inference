@@ -75,6 +75,7 @@ def speculative_inference(
     mask_id = cfg["base_model"]["mask_token_id"]
     use_cache = cfg["cache"]["enabled"]
     use_fallback = ic["fallback_unmask"]
+    disable_remask = ic.get("disable_remask", False)
     base_temp = ic["temperature"]
     gamma = ic.get("compose_gamma", 0.0)
 
@@ -145,6 +146,9 @@ def speculative_inference(
         u_t = actions["u_t"]
         r_t = actions["r_t"]
         kappa_t = actions["kappa_t"]
+        if disable_remask:
+            r_t = torch.zeros_like(r_t)
+            actions = {**actions, "r_t": r_t}
 
         # --- Record trajectory ---
         if trajectory is not None:

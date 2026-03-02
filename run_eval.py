@@ -31,7 +31,13 @@ def main():
         cfg = yaml.safe_load(f)
 
     from aoae.evaluate import main as eval_main
-    eval_main(cfg, args.checkpoint, args.max_samples, args.mode)
+    eval_main(
+        cfg,
+        checkpoint_path=args.checkpoint,
+        max_samples=args.max_samples,
+        mode=args.mode,
+        config_path=args.config,
+    )
 
 
 if __name__ == "__main__":

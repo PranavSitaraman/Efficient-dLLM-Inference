@@ -217,6 +217,7 @@ def run_speculative_inference(
     base_temp = ic["temperature"]
     gamma = ic.get("compose_gamma", 0.0)
     use_fallback = ic["fallback_unmask"]
+    disable_remask = ic.get("disable_remask", False)
 
     B = prompt_ids.shape[0]
     P = prompt_ids.shape[1]
@@ -268,6 +269,8 @@ def run_speculative_inference(
         u_t = actions["u_t"]
         r_t = actions["r_t"]
         kappa_t = actions["kappa_t"]
+        if disable_remask:
+            r_t = torch.zeros_like(r_t)
 
         resp_tokens = resp_tokens.clone()
 
@@ -351,6 +354,7 @@ def run_policy_guided_inference(
     base_temp = ic["temperature"]
     gamma = ic.get("compose_gamma", 0.0)
     use_fallback = ic["fallback_unmask"]
+    disable_remask = ic.get("disable_remask", False)
 
     B = prompt_ids.shape[0]
     P = prompt_ids.shape[1]
@@ -404,6 +408,8 @@ def run_policy_guided_inference(
         u_t = actions["u_t"]
         r_t = actions["r_t"]
         kappa_t = actions["kappa_t"]
+        if disable_remask:
+            r_t = torch.zeros_like(r_t)
 
         resp_tokens = resp_tokens.clone()
 

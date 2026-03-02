@@ -137,7 +137,18 @@ All hyperparameters live in YAML configs. Key settings from `configs/default.yam
 | `grpo.clip_eps` | 0.2 | PPO/GRPO clipping ε |
 | `inference.steps` | 64 | Diffusion steps T |
 | `inference.compose_gamma` | 0.5 | Composed prediction strength (§3.6) |
+| `inference.disable_remask` | `false` | Ablation switch to disable remask actions while keeping other settings fixed |
 | `base_model.routing_temperature` | 0.01 | Soft routing τ_r (soft_moe backend only) |
+
+## Experiment Tracking Outputs
+
+- `run_eval.py` now writes:
+  - `outputs/<run>/eval_results.json`
+  - `outputs/<run>/eval_metadata.json`
+  - `results/experiment_manifest.jsonl` (append-only registry across runs)
+- Build a consolidated table from saved artifacts:
+  - `python3 scripts/build_comparison_table.py`
+  - Outputs: `results/comparison_table.csv` and `results/comparison_table.md`
 
 ## Architecture & Design
 

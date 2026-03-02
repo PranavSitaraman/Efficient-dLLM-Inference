@@ -68,6 +68,7 @@ def aoae_inference(
     mask_id = cfg["base_model"]["mask_token_id"]
     use_cache = cfg["cache"]["enabled"]
     use_fallback = ic["fallback_unmask"]
+    disable_remask = ic.get("disable_remask", False)
     base_temp = ic["temperature"]
     gamma = ic.get("compose_gamma", 0.0)  # Composed prediction strength
 
@@ -137,6 +138,9 @@ def aoae_inference(
         u_t = actions["u_t"]        # [B, L_gen] unmask
         r_t = actions["r_t"]        # [B, L_gen] remask
         kappa_t = actions["kappa_t"]  # [B, L_gen] cache
+        if disable_remask:
+            r_t = torch.zeros_like(r_t)
+            actions = {**actions, "r_t": r_t}
 
         # --- Record trajectory for GRPO ---
         if trajectory is not None:

@@ -16,17 +16,18 @@ import time
 import yaml
 import torch
 import numpy as np
+from datetime import datetime, timezone
 from tqdm import tqdm
 from dataclasses import dataclass, asdict
 from datasets import load_dataset
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from .models.base_model import LLaDABaseModel
 from .models.soft_mask import SoftMaskedState
 from .models.policy import AOAEPolicy, DefaultPolicy
 from .models.prism import PRISMAdapter
 from .inference import aoae_inference, uniform_decode, confidence_threshold_decode, block_smode_decode
-from .dinfer_integration import run_policy_guided_inference, CacheStats
+from .dinfer_integration import run_speculative_inference
 from .train_grpo import check_math_correctness, extract_answer
 
 
@@ -40,8 +41,19 @@ class EvalResult:
     avg_tokens_per_sec: float
     avg_gen_time_sec: float
     config_note: str = ""   # e.g., "tau_pi=0.5" or "tau_mask=0.9"
-    cache_hit_rate: float = 0.0   # dInfer cache hit rate (0 if not tracked)
-    cache_commits: int = 0        # total cache commits across all samples
+    cache_hit_rate: float = 0.0
+    cache_commits: int = 0
+    cache_invalidations: int = 0
+    agreement_rate: float = 0.0
+    draft_accept_rate: float = 0.0
+
+
+def _remask_note(cfg: dict) -> str:
+    return "remask=off" if cfg.get("inference", {}).get("disable_remask", False) else "remask=on"
+
+
+def _append_note(note: str, extra: str) -> str:
+    return f"{note},{extra}" if note else extra
 
 
 def evaluate_aoae(
@@ -133,7 +145,7 @@ def evaluate_aoae(
         avg_nfe=avg_nfe,
         avg_tokens_per_sec=avg_tps,
         avg_gen_time_sec=avg_time,
-        config_note=f"tau_pi={policy_temperature}",
+        config_note=_append_note(f"tau_pi={policy_temperature}", _remask_note(cfg)),
     )
 
 
@@ -277,6 +289,7 @@ def evaluate_baseline(
     note = method
     if method == "confidence":
         note = f"tau_mask={tau_mask},tau_edit={tau_edit}"
+    note = _append_note(note, _remask_note(cfg))
 
     return EvalResult(
         method=method,
@@ -302,8 +315,6 @@ def evaluate_speculative(
     max_samples: Optional[int] = None,
 ) -> EvalResult:
     """Evaluate speculative diffusion (dual-model) on a dataset."""
-    from .speculative_inference import speculative_inference
-
     mask_id = cfg["base_model"]["mask_token_id"]
     device = dual_model.device
     T = cfg["inference"]["steps"]
@@ -314,8 +325,10 @@ def evaluate_speculative(
     total_gen_tokens = 0
     total_nfe = 0
     total_agreement = 0.0
-    total_cache_hits = 0
-    total_cache_misses = 0
+    total_cache_commits = 0
+    total_cache_invalidations = 0
+    total_draft_accepts = 0
+    total_draft_rejects = 0
 
     n_eval = min(len(dataset), max_samples) if max_samples else len(dataset)
     tau_r = cfg["base_model"].get("routing_temperature", 0.01)
@@ -352,14 +365,13 @@ def evaluate_speculative(
             torch.cuda.synchronize()
         t0 = time.perf_counter()
         with torch.no_grad():
-            output_ids, trajectory = speculative_inference(
+            output_ids, stats = run_speculative_inference(
                 dual_model=dual_model,
                 policy=policy,
                 soft_mask_module=soft_mask,
                 prism_adapter=prism,
                 prompt_ids=prompt_ids,
                 cfg=cfg,
-                record_trajectory=False,  # enables fallback, saves memory
                 policy_temperature=policy_temperature,
             )
         if torch.cuda.is_available():
@@ -379,12 +391,23 @@ def evaluate_speculative(
         elapsed = t1 - t0
         total_time += elapsed
         total_nfe += T * 2  # 2 model forward passes per step
+        total_cache_commits += int(stats.get("total_commits", 0))
+        total_cache_invalidations += int(stats.get("total_invalidations", 0))
+        total_draft_accepts += int(stats.get("draft_accepts", 0))
+        total_draft_rejects += int(stats.get("draft_rejects", 0))
+        total_agreement += float(stats.get("mean_agreement", 0.0))
 
     accuracy = correct / max(total, 1)
     avg_time = total_time / max(total, 1)
     avg_nfe = total_nfe / max(total, 1)
     # TPS = actual generated tokens / wall time
     avg_tps = total_gen_tokens / max(total_time, 1e-6)
+    total_cache_ops = total_cache_commits + total_cache_invalidations
+    cache_hit_rate = (
+        (total_cache_commits - total_cache_invalidations) / max(total_cache_ops, 1)
+    )
+    draft_accept_rate = total_draft_accepts / max(total_draft_accepts + total_draft_rejects, 1)
+    agreement_rate = total_agreement / max(total, 1)
 
     return EvalResult(
         method="Speculative-AOAE",
@@ -394,9 +417,15 @@ def evaluate_speculative(
         avg_nfe=avg_nfe,
         avg_tokens_per_sec=avg_tps,
         avg_gen_time_sec=avg_time,
-        config_note=f"tau_r={tau_r},tau_pi={policy_temperature}",
-        cache_hit_rate=0.0,
-        cache_commits=0,
+        config_note=_append_note(
+            f"tau_r={tau_r},tau_pi={policy_temperature}",
+            _remask_note(cfg),
+        ),
+        cache_hit_rate=cache_hit_rate,
+        cache_commits=total_cache_commits,
+        cache_invalidations=total_cache_invalidations,
+        agreement_rate=agreement_rate,
+        draft_accept_rate=draft_accept_rate,
     )
 
 
@@ -419,11 +448,59 @@ def run_pareto_sweep(
     return results
 
 
+def _build_run_metadata(
+    cfg: dict,
+    mode: str,
+    config_path: Optional[str],
+    checkpoint_path: Optional[str],
+    max_samples: Optional[int],
+    results_path: str,
+    num_results: int,
+) -> Dict[str, Any]:
+    return {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "run_name": cfg.get("logging", {}).get("run_name", ""),
+        "output_dir": cfg.get("logging", {}).get("output_dir", ""),
+        "results_path": results_path,
+        "config_path": config_path,
+        "checkpoint_path": checkpoint_path,
+        "mode": mode,
+        "model_name_or_path": cfg.get("base_model", {}).get("name_or_path", ""),
+        "backend": cfg.get("base_model", {}).get("backend", "auto"),
+        "routing_temperature": cfg.get("base_model", {}).get("routing_temperature"),
+        "disable_remask": bool(cfg.get("inference", {}).get("disable_remask", False)),
+        "compose_gamma": cfg.get("inference", {}).get("compose_gamma", 0.0),
+        "eval_dataset": cfg.get("data", {}).get("eval_dataset", ""),
+        "eval_split": cfg.get("data", {}).get("eval_split", ""),
+        "eval_max_samples": max_samples,
+        "num_results": num_results,
+    }
+
+
+def _append_manifest(metadata: Dict[str, Any], all_results: List[EvalResult]) -> str:
+    manifest_path = os.path.join("results", "experiment_manifest.jsonl")
+    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+
+    run_id = (
+        f"{metadata.get('run_name', 'run')}:"
+        f"{metadata.get('created_at_utc', '')}:"
+        f"{metadata.get('mode', '')}"
+    )
+    with open(manifest_path, "a") as f:
+        for row in all_results:
+            entry = dict(metadata)
+            entry["run_id"] = run_id
+            entry.update(asdict(row))
+            f.write(json.dumps(entry) + "\n")
+    return manifest_path
+
+
 def main(
     cfg: dict,
     checkpoint_path: Optional[str] = None,
     max_samples: Optional[int] = None,
     mode: str = "standard",
+    config_path: Optional[str] = None,
 ):
     """Run full evaluation suite.
 
@@ -432,6 +509,7 @@ def main(
         checkpoint_path: path to policy checkpoint.
         max_samples: max samples to evaluate.
         mode: 'standard' for single-model, 'speculative' for dual-model.
+        config_path: path to config YAML (for metadata/manifest tracking).
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -629,14 +707,37 @@ def main(
         json.dump([asdict(r) for r in all_results], f, indent=2)
     print(f"\nResults saved to {results_path}")
 
+    metadata = _build_run_metadata(
+        cfg=cfg,
+        mode=mode,
+        config_path=config_path,
+        checkpoint_path=checkpoint_path,
+        max_samples=max_samples,
+        results_path=results_path,
+        num_results=len(all_results),
+    )
+    metadata_path = os.path.join(cfg["logging"]["output_dir"], "eval_metadata.json")
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+    print(f"Metadata saved to {metadata_path}")
+
+    manifest_path = _append_manifest(metadata, all_results)
+    print(f"Manifest updated at {manifest_path}")
+
     # --- Print summary table ---
-    print("\n" + "=" * 90)
-    print(f"{'Method':<25} {'Accuracy':>10} {'TPS':>10} {'NFE':>8} {'CacheHit':>10} {'Note':<20}")
-    print("-" * 90)
+    print("\n" + "=" * 140)
+    print(
+        f"{'Method':<25} {'Accuracy':>10} {'TPS':>10} {'NFE':>8} "
+        f"{'CacheHit':>10} {'Agree':>8} {'DraftAcc':>10} {'Note':<40}"
+    )
+    print("-" * 140)
     for r in all_results:
-        print(f"{r.method:<25} {r.accuracy:>10.4f} {r.avg_tokens_per_sec:>10.1f} "
-              f"{r.avg_nfe:>8.0f} {r.cache_hit_rate:>10.4f} {r.config_note:<20}")
-    print("=" * 90)
+        print(
+            f"{r.method:<25} {r.accuracy:>10.4f} {r.avg_tokens_per_sec:>10.1f} "
+            f"{r.avg_nfe:>8.0f} {r.cache_hit_rate:>10.4f} "
+            f"{r.agreement_rate:>8.4f} {r.draft_accept_rate:>10.4f} {r.config_note:<40}"
+        )
+    print("=" * 140)
 
     return all_results
 
@@ -655,4 +756,10 @@ if __name__ == "__main__":
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
-    main(cfg, args.checkpoint, args.max_samples, args.mode)
+    main(
+        cfg,
+        checkpoint_path=args.checkpoint,
+        max_samples=args.max_samples,
+        mode=args.mode,
+        config_path=args.config,
+    )

@@ -61,6 +61,7 @@ inference:
   gen_length: 256              # max response tokens
   temperature: 0.0             # base-model sampling temp (0 = greedy)
   fallback_unmask: true        # unmask highest-confidence when u_t = 0
+  disable_remask: false        # ablation: set true to disable remasking
   block_length: 32             # semi-AR block length for LLaDA2.X
   compose_gamma: 0.5           # Composed prediction strength (paper §3.6)
 
