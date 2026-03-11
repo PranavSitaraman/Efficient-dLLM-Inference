@@ -162,10 +162,15 @@ All hyperparameters live in YAML configs. Key settings from `configs/default.yam
 - Build a consolidated table from saved artifacts:
   - `python3 scripts/build_comparison_table.py`
   - Outputs: `results/comparison_table.csv` and `results/comparison_table.md`
-- Run a dedicated τ_r sweep for PoC1:
+- Run a speculative τ_r sweep for PoC1 / PoC1B:
   - `python3 scripts/run_tau_sweep.py --config configs/dual_mini_tau01.yaml`
   - Outputs: `outputs/sweeps/<name>/tau_sweep_summary.{json,csv,md}`
   - Plots: `outputs/sweeps/<name>/tau_sweep_vs_tau.png`, `outputs/sweeps/<name>/tau_sweep_pareto.png`
+- Run a routing-only hard-vs-soft sweep for PoC0 / PoC1A:
+  - `python3 scripts/run_routing_sweep.py`
+  - Outputs: `outputs/sweeps/<name>/routing_sweep_full.{json,csv,md}`
+  - Outputs: `outputs/sweeps/<name>/routing_sweep_summary.{json,csv,md}`
+  - Plots: `outputs/sweeps/<name>/routing_sweep_vs_condition.png`, `outputs/sweeps/<name>/routing_sweep_pareto.png`
 - Aggregate KV-dynamics summaries across runs:
   - `python3 scripts/summarize_kv_dynamics.py`
   - Outputs: `results/kv_dynamics_table.csv` and `results/kv_dynamics_table.md`
@@ -190,6 +195,15 @@ POC1 sweep example on GSM8K:
 ```bash
 python3 scripts/run_tau_sweep.py \
   --config configs/dual_mini_tau01.yaml \
+  --tau_r_values 0.001,0.01,0.05,0.1,0.2,0.5 \
+  --max_samples 200
+```
+
+POC0 / PoC1A routing-only sweep example on GSM8K:
+
+```bash
+python3 scripts/run_routing_sweep.py \
+  --summary_method block_smode \
   --tau_r_values 0.001,0.01,0.05,0.1,0.2,0.5 \
   --max_samples 200
 ```
