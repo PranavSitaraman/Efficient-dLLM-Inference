@@ -7,7 +7,7 @@ Wraps a HuggingFace LLaDA model and exposes:
   - get_embedding_weight(): token embedding matrix E (for soft-masked state).
 
 Supports four backends selected via config ``base_model.backend``:
-  - ``hf``       — HuggingFace AutoModelForCausalLM (default; inclusionAI/LLaDA2.1-mini).
+  - ``hf``       — HuggingFace AutoModelForCausalLM (default for dense LLaDA models).
   - ``dkv``      — dKV-Cache patched model (external/dKV-Cache).
   - ``dinfer``   — dInfer framework (external/dInfer; for LLaDA2.X MoE).
   - ``soft_moe`` — dInfer MoE with soft routing (all experts active; paper §3.7).
@@ -45,6 +45,52 @@ def _detect_backend(name_or_path: str, cfg: dict) -> str:
     if "llada" in lower:
         return "hf"
     return "hf"
+
+
+def _ensure_hf_rope_compatibility() -> None:
+    """Add the legacy ``rope_type='default'`` handler if transformers dropped it.
+
+    Some remote-code LLaDA2 model implementations still index
+    ``transformers.modeling_rope_utils.ROPE_INIT_FUNCTIONS['default']``.
+    Newer transformers releases removed that key, which breaks HF loading at
+    model construction time. Restore the default RoPE initializer in-place so
+    those remote modules keep working.
+    """
+    from transformers import modeling_rope_utils
+
+    if "default" in modeling_rope_utils.ROPE_INIT_FUNCTIONS:
+        return
+
+    def _compute_default_rope_parameters(
+        config=None,
+        device: Optional[torch.device] = None,
+        seq_len: Optional[int] = None,
+        **rope_kwargs,
+    ):
+        del seq_len  # Default RoPE does not depend on the runtime sequence length.
+        if config is not None and rope_kwargs:
+            raise ValueError("Pass either a config or explicit RoPE kwargs, not both.")
+
+        if config is None:
+            base = rope_kwargs["base"]
+            dim = int(rope_kwargs["dim"])
+        else:
+            base = float(getattr(config, "rope_theta", 10000.0))
+            partial_rotary_factor = float(getattr(config, "partial_rotary_factor", 1.0))
+            head_dim = getattr(config, "head_dim", None)
+            if head_dim is None:
+                head_dim = getattr(config, "hidden_size") // getattr(config, "num_attention_heads")
+            dim = int(head_dim * partial_rotary_factor)
+
+        if dim <= 0:
+            raise ValueError(f"RoPE dimension must be positive, got {dim}.")
+
+        inv_freq = 1.0 / (
+            base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / dim)
+        )
+        return inv_freq, 1.0
+
+    modeling_rope_utils.ROPE_INIT_FUNCTIONS["default"] = _compute_default_rope_parameters
 
 
 def _init_vllm_distributed(tp_size: int = 1):
@@ -145,6 +191,8 @@ class LLaDABaseModel(nn.Module):
     # ------------------------------------------------------------------
     def _init_hf(self, name_or_path: str):
         from transformers import AutoModelForCausalLM
+
+        _ensure_hf_rope_compatibility()
 
         load_kwargs = dict(
             trust_remote_code=True,

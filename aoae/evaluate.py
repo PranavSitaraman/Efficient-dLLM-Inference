@@ -28,7 +28,7 @@ from .models.policy import AOAEPolicy, DefaultPolicy
 from .models.prism import PRISMAdapter
 from .inference import aoae_inference, uniform_decode, confidence_threshold_decode, block_smode_decode
 from .dinfer_integration import run_speculative_inference
-from .train_grpo import check_math_correctness, extract_answer
+from .train_grpo import check_math_correctness, extract_answer, extract_prompt_and_reference
 
 
 @dataclass
@@ -60,6 +60,28 @@ class EvalResult:
     access_next_h_spec_f1: float = 0.0
 
 
+def _load_eval_dataset(dc: Dict[str, Any]):
+    """Load the configured evaluation dataset, optionally with a builder config."""
+    dataset_name = dc["eval_dataset"]
+    dataset_config = dc.get("eval_dataset_config")
+    split = dc["eval_split"]
+    if dataset_config in (None, "", "null") and dataset_name == "openai/gsm8k":
+        dataset_config = "main"
+    if dataset_config in (None, "", "null"):
+        return load_dataset(dataset_name, split=split)
+    return load_dataset(dataset_name, dataset_config, split=split)
+
+
+def _extract_eval_prompt_reference(sample: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    """Normalize heterogeneous benchmark samples into a prompt/reference pair."""
+    prompt, reference = extract_prompt_and_reference(sample)
+    if prompt is not None:
+        prompt = prompt.strip()
+    if reference is not None:
+        reference = reference.strip()
+    return prompt, reference
+
+
 def _remask_note(cfg: dict) -> str:
     return "remask=off" if cfg.get("inference", {}).get("disable_remask", False) else "remask=on"
 
@@ -84,6 +106,27 @@ def _load_state_dict_flexible(module, state_dict: Dict[str, torch.Tensor], label
     module.load_state_dict(compatible, strict=False)
     if skipped:
         print(f"[Checkpoint] {label}: skipped {len(skipped)} incompatible keys.")
+
+
+def _resolve_sidecar_artifact(
+    checkpoint_path: Optional[str],
+    output_dir: str,
+    filename: str,
+) -> Optional[str]:
+    """Locate an artifact stored next to the checkpoint or in the run output dir."""
+    candidates: List[str] = []
+    if checkpoint_path:
+        candidates.append(os.path.join(os.path.dirname(checkpoint_path), filename))
+    candidates.append(os.path.join(output_dir, filename))
+
+    seen = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.exists(candidate):
+            return candidate
+    return None
 
 
 def evaluate_aoae(
@@ -112,8 +155,7 @@ def evaluate_aoae(
 
     for i in tqdm(range(n_eval), desc=f"AOAE (tau_pi={policy_temperature})"):
         sample = dataset[i]
-        question = sample.get("question", sample.get("problem", ""))
-        reference = sample.get("answer", "")
+        question, reference = _extract_eval_prompt_reference(sample)
         if not question or not reference:
             continue
 
@@ -231,8 +273,7 @@ def evaluate_baseline(
 
     for i in tqdm(range(n_eval), desc=f"Baseline ({method})"):
         sample = dataset[i]
-        question = sample.get("question", sample.get("problem", ""))
-        reference = sample.get("answer", "")
+        question, reference = _extract_eval_prompt_reference(sample)
         if not question or not reference:
             continue
 
@@ -399,8 +440,7 @@ def evaluate_speculative(
 
     for i in tqdm(range(n_eval), desc=f"Speculative (tau_r={tau_r})"):
         sample = dataset[i]
-        question = sample.get("question", sample.get("problem", ""))
-        reference = sample.get("answer", "")
+        question, reference = _extract_eval_prompt_reference(sample)
         if not question or not reference:
             continue
 
@@ -717,6 +757,7 @@ def _build_run_metadata(
         "kv_confidence_threshold": cfg.get("analysis", {}).get("confidence_threshold", 0.9),
         "kv_attention_proxy_top_frac": cfg.get("analysis", {}).get("attention_proxy_top_frac", 0.1),
         "eval_dataset": cfg.get("data", {}).get("eval_dataset", ""),
+        "eval_dataset_config": cfg.get("data", {}).get("eval_dataset_config"),
         "eval_split": cfg.get("data", {}).get("eval_split", ""),
         "eval_max_samples": max_samples,
         "num_results": num_results,
@@ -747,6 +788,8 @@ def main(
     max_samples: Optional[int] = None,
     mode: str = "standard",
     config_path: Optional[str] = None,
+    skip_baselines: bool = False,
+    speculative_policy_temperatures: Optional[List[float]] = None,
 ):
     """Run full evaluation suite.
 
@@ -756,15 +799,19 @@ def main(
         max_samples: max samples to evaluate.
         mode: 'standard' for single-model, 'speculative' for dual-model.
         config_path: path to config YAML (for metadata/manifest tracking).
+        skip_baselines: skip baseline decoding methods (useful for sweeps).
+        speculative_policy_temperatures: optional tau_pi list for speculative runs.
     """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # --- Load eval dataset ---
     dc = cfg["data"]
     print(f"Loading eval dataset: {dc['eval_dataset']}...")
-    eval_ds = load_dataset(dc["eval_dataset"], "main", split=dc["eval_split"])
+    eval_ds = _load_eval_dataset(dc)
     if max_samples is None:
         max_samples = dc.get("eval_max_samples")
+    if speculative_policy_temperatures is None:
+        speculative_policy_temperatures = [0.5, 1.0, 1.5]
 
     all_results: List[EvalResult] = []
     kv_dynamics_records: List[Dict[str, Any]] = []
@@ -787,32 +834,33 @@ def main(
         base_model = dual_model._model
 
         # Block S-Mode: paper's key TPS technique (block-wise semi-AR decoding)
-        print("\n====== Baseline: Block S-Mode (tau=0.7, block=32) ======")
-        r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
-                              "block_smode", max_samples=max_samples)
-        all_results.append(r)
-        print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+        if not skip_baselines:
+            print("\n====== Baseline: Block S-Mode (tau=0.7, block=32) ======")
+            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
+                                  "block_smode", max_samples=max_samples)
+            all_results.append(r)
+            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
-        # Block S-Mode + MBE: with Multiple Block Editing
-        print("\n====== Baseline: Block S-Mode + MBE ======")
-        r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
-                              "block_smode_mbe", max_samples=max_samples)
-        all_results.append(r)
-        print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            # Block S-Mode + MBE: with Multiple Block Editing
+            print("\n====== Baseline: Block S-Mode + MBE ======")
+            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
+                                  "block_smode_mbe", max_samples=max_samples)
+            all_results.append(r)
+            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
-        # S-Mode: paper's speed baseline (tau_mask=0.7, aggressive)
-        print("\n====== Baseline: S-Mode (tau=0.7, speed) ======")
-        r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
-                              "confidence_s_mode", max_samples=max_samples)
-        all_results.append(r)
-        print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            # S-Mode: paper's speed baseline (tau_mask=0.7, aggressive)
+            print("\n====== Baseline: S-Mode (tau=0.7, speed) ======")
+            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
+                                  "confidence_s_mode", max_samples=max_samples)
+            all_results.append(r)
+            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
-        # Q-Mode: paper's quality baseline (tau_mask=0.95, conservative)
-        print("\n====== Baseline: Q-Mode (tau=0.95, quality) ======")
-        r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
-                              "confidence_q_mode", max_samples=max_samples)
-        all_results.append(r)
-        print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            # Q-Mode: paper's quality baseline (tau_mask=0.95, conservative)
+            print("\n====== Baseline: Q-Mode (tau=0.95, quality) ======")
+            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
+                                  "confidence_q_mode", max_samples=max_samples)
+            all_results.append(r)
+            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
         # --- AOAE Speculative Evaluation ---
         # Auto-detect policy checkpoint from output_dir if not explicitly provided
@@ -847,9 +895,13 @@ def main(
             policy.eval()
 
             # PRISM adapter
-            prism_path = os.path.join(cfg["logging"]["output_dir"], "prism_adapter.pt")
+            prism_path = _resolve_sidecar_artifact(
+                checkpoint_path,
+                cfg["logging"]["output_dir"],
+                "prism_adapter.pt",
+            )
             prism = None
-            if os.path.exists(prism_path):
+            if prism_path is not None:
                 prism = PRISMAdapter(cfg, embed_dim).to(device)
                 prism.load_state_dict(torch.load(prism_path, map_location=device))
                 prism.eval()
@@ -857,7 +909,7 @@ def main(
 
             tau_r = cfg["base_model"].get("routing_temperature", 0.01)
             print(f"\n====== Speculative AOAE — Trained Policy (tau_r={tau_r}) ======")
-            for tau_pi in [0.5, 1.0, 1.5]:
+            for tau_pi in speculative_policy_temperatures:
                 print(f"\n--- tau_pi = {tau_pi} ---")
                 r = evaluate_speculative(
                     dual_model, policy, soft_mask, prism, eval_ds, tokenizer, cfg,
@@ -893,30 +945,31 @@ def main(
         mask_id = cfg["base_model"]["mask_token_id"]
 
         # --- Baselines ---
-        print("\n====== Baseline: Block S-Mode (tau=0.7, block=32) ======")
-        r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "block_smode", max_samples=max_samples)
-        all_results.append(r)
-        print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+        if not skip_baselines:
+            print("\n====== Baseline: Block S-Mode (tau=0.7, block=32) ======")
+            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "block_smode", max_samples=max_samples)
+            all_results.append(r)
+            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
-        print("\n====== Baseline: Block S-Mode + MBE ======")
-        r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "block_smode_mbe", max_samples=max_samples)
-        all_results.append(r)
-        print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            print("\n====== Baseline: Block S-Mode + MBE ======")
+            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "block_smode_mbe", max_samples=max_samples)
+            all_results.append(r)
+            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
-        print("\n====== Baseline: S-Mode (aggressive) ======")
-        r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "confidence_s_mode", max_samples=max_samples)
-        all_results.append(r)
-        print(f"  Accuracy: {r.accuracy:.4f}")
+            print("\n====== Baseline: S-Mode (aggressive) ======")
+            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "confidence_s_mode", max_samples=max_samples)
+            all_results.append(r)
+            print(f"  Accuracy: {r.accuracy:.4f}")
 
-        print("\n====== Baseline: Q-Mode (conservative) ======")
-        r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "confidence_q_mode", max_samples=max_samples)
-        all_results.append(r)
-        print(f"  Accuracy: {r.accuracy:.4f}")
+            print("\n====== Baseline: Q-Mode (conservative) ======")
+            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "confidence_q_mode", max_samples=max_samples)
+            all_results.append(r)
+            print(f"  Accuracy: {r.accuracy:.4f}")
 
-        print("\n====== Baseline: Fast-dLLM (Wu et al. 2025) ======")
-        r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "fast_dllm", max_samples=max_samples)
-        all_results.append(r)
-        print(f"  Accuracy: {r.accuracy:.4f}")
+            print("\n====== Baseline: Fast-dLLM (Wu et al. 2025) ======")
+            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "fast_dllm", max_samples=max_samples)
+            all_results.append(r)
+            print(f"  Accuracy: {r.accuracy:.4f}")
 
         # --- AOAE ---
         if checkpoint_path and os.path.exists(checkpoint_path):
@@ -936,9 +989,13 @@ def main(
             soft_mask.eval()
 
             # PRISM adapter
-            prism_path = os.path.join(cfg["logging"]["output_dir"], "prism_adapter.pt")
+            prism_path = _resolve_sidecar_artifact(
+                checkpoint_path,
+                cfg["logging"]["output_dir"],
+                "prism_adapter.pt",
+            )
             prism = None
-            if os.path.exists(prism_path):
+            if prism_path is not None:
                 prism = PRISMAdapter(cfg, embed_dim).to(device)
                 prism.load_state_dict(torch.load(prism_path, map_location=device))
                 prism.eval()
@@ -1001,6 +1058,17 @@ def main(
 
 if __name__ == "__main__":
     import argparse
+    def _parse_float_list(raw: str) -> List[float]:
+        values = []
+        for chunk in raw.split(","):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            values.append(float(chunk))
+        if not values:
+            raise ValueError("Expected at least one float value.")
+        return values
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default="configs/default.yaml")
     parser.add_argument("--checkpoint", type=str, default=None)
@@ -1026,12 +1094,23 @@ if __name__ == "__main__":
                         help="Override inference.positional_cache.horizon.")
     parser.add_argument("--positional_cache_refresh_budget", type=int, default=None,
                         help="Override inference.positional_cache.refresh_budget.")
+    parser.add_argument("--policy_temperatures", type=str, default=None,
+                        help="Comma-separated tau_pi values for speculative runs.")
+    parser.add_argument("--skip_baselines", action="store_true",
+                        help="Skip baseline decoding methods.")
+    parser.add_argument("--eval_dataset", type=str, default=None,
+                        help="Override data.eval_dataset.")
+    parser.add_argument("--eval_dataset_config", type=str, default=None,
+                        help="Override data.eval_dataset_config (empty string = none).")
+    parser.add_argument("--eval_split", type=str, default=None,
+                        help="Override data.eval_split.")
     args = parser.parse_args()
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
     ic = cfg.setdefault("inference", {})
+    dc = cfg.setdefault("data", {})
     if args.reuse_signal_method is not None:
         ic.setdefault("reuse_signal", {})["method"] = args.reuse_signal_method
     if args.reuse_signal_threshold is not None:
@@ -1046,6 +1125,16 @@ if __name__ == "__main__":
         ic.setdefault("positional_cache", {})["horizon"] = int(args.positional_cache_horizon)
     if args.positional_cache_refresh_budget is not None:
         ic.setdefault("positional_cache", {})["refresh_budget"] = int(args.positional_cache_refresh_budget)
+    if args.eval_dataset is not None:
+        dc["eval_dataset"] = args.eval_dataset
+    if args.eval_dataset_config is not None:
+        dc["eval_dataset_config"] = args.eval_dataset_config or None
+    if args.eval_split is not None:
+        dc["eval_split"] = args.eval_split
+
+    policy_temperatures = None
+    if args.policy_temperatures is not None:
+        policy_temperatures = _parse_float_list(args.policy_temperatures)
 
     main(
         cfg,
@@ -1053,4 +1142,6 @@ if __name__ == "__main__":
         max_samples=args.max_samples,
         mode=args.mode,
         config_path=args.config,
+        skip_baselines=args.skip_baselines,
+        speculative_policy_temperatures=policy_temperatures,
     )

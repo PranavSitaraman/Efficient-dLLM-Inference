@@ -147,6 +147,7 @@ All hyperparameters live in YAML configs. Key settings from `configs/default.yam
 | `analysis.track_kv_dynamics` | `false` | Enable KV-dynamics proxy logging during speculative eval |
 | `analysis.attention_proxy_top_frac` | `0.1` | Fraction of highest-confidence positions used for confident-token drift proxy |
 | `base_model.routing_temperature` | 0.01 | Soft routing τ_r (soft_moe backend only) |
+| `data.eval_dataset_config` | unset | Optional HuggingFace dataset config (if unset, `openai/gsm8k` defaults to `main`) |
 
 ## Experiment Tracking Outputs
 
@@ -161,6 +162,10 @@ All hyperparameters live in YAML configs. Key settings from `configs/default.yam
 - Build a consolidated table from saved artifacts:
   - `python3 scripts/build_comparison_table.py`
   - Outputs: `results/comparison_table.csv` and `results/comparison_table.md`
+- Run a dedicated τ_r sweep for PoC1:
+  - `python3 scripts/run_tau_sweep.py --config configs/dual_mini_tau01.yaml`
+  - Outputs: `outputs/sweeps/<name>/tau_sweep_summary.{json,csv,md}`
+  - Plots: `outputs/sweeps/<name>/tau_sweep_vs_tau.png`, `outputs/sweeps/<name>/tau_sweep_pareto.png`
 - Aggregate KV-dynamics summaries across runs:
   - `python3 scripts/summarize_kv_dynamics.py`
   - Outputs: `results/kv_dynamics_table.csv` and `results/kv_dynamics_table.md`
@@ -178,6 +183,25 @@ python3 run_eval.py \
   --enable_positional_cache \
   --positional_cache_horizon 4 \
   --positional_cache_refresh_budget 32
+```
+
+POC1 sweep example on GSM8K:
+
+```bash
+python3 scripts/run_tau_sweep.py \
+  --config configs/dual_mini_tau01.yaml \
+  --tau_r_values 0.001,0.01,0.05,0.1,0.2,0.5 \
+  --max_samples 200
+```
+
+MATH benchmark override:
+
+```bash
+python3 scripts/run_tau_sweep.py \
+  --config configs/dual_mini_tau01.yaml \
+  --eval_dataset hendrycks/competition_math \
+  --eval_split test \
+  --tau_r_values 0.001,0.01,0.05,0.1,0.2,0.5
 ```
 
 ## Architecture & Design

@@ -14,11 +14,10 @@ Only ONE copy of the 16B model is loaded; routing is toggled in-place.
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Tuple, Optional, Dict, List
+from typing import Tuple, Optional, List
 from dataclasses import dataclass
 
-from .base_model import LLaDABaseModel
+from .base_model import LLaDABaseModel, _detect_backend
 from .soft_moe import (
     patch_model_with_soft_routing,
     set_hard_routing,
@@ -37,10 +36,36 @@ class DualModelOutput:
     primary_hidden_states: Optional[List[torch.Tensor]] = None  # [N][B, L, D]
 
 
+def _select_dual_base_backend(cfg: dict) -> str:
+    """Resolve the concrete backend used to load the single shared model.
+
+    Dual mode toggles MoE routing in-place, so it only works with LLaDA2-style
+    MoE backbones. Use the normal backend auto-detection rules unless the user
+    explicitly sets ``base_model.dual_backend``.
+    """
+    model_cfg = _deep_copy_cfg(cfg)["base_model"]
+    requested = model_cfg.get("dual_backend")
+    if requested is None:
+        auto_cfg = {"base_model": dict(model_cfg)}
+        auto_cfg["base_model"]["backend"] = "auto"
+        requested = _detect_backend(model_cfg["name_or_path"], auto_cfg)
+
+    if requested == "soft_moe":
+        # Dual mode starts from hard routing, then patches soft routing itself.
+        return "dinfer"
+    if requested != "dinfer":
+        raise ValueError(
+            "DualModelWrapper requires an MoE-capable backend because it toggles "
+            f"expert routing in-place, but resolved backend {requested!r}. "
+            "Use an inclusionAI/LLaDA2.X model or set base_model.dual_backend='dinfer'."
+        )
+    return "dinfer"
+
+
 class DualModelWrapper(nn.Module):
     """Single-model wrapper that toggles between hard and soft MoE routing.
 
-    Loads ONE LLaDA2.1-mini model via HF, patches its MoE gates with
+    Loads ONE LLaDA2.X MoE model via the MoE-capable backend, patches its gates with
     SoftMoERouter, then switches routing mode per forward pass:
       - auxiliary_forward(): hard routing (~1.4B active, fast)
       - primary_forward():  soft routing (~16B active, slow)
@@ -57,10 +82,10 @@ class DualModelWrapper(nn.Module):
         self._cfg = cfg
         self.tau_r = cfg["base_model"].get("routing_temperature", 0.01)
 
-        # Load ONE model via HF backend (starts with hard routing)
-        hf_cfg = _deep_copy_cfg(cfg)
-        hf_cfg["base_model"]["backend"] = "hf"
-        self._model = LLaDABaseModel(hf_cfg)
+        # Load ONE shared model with hard routing, then patch soft routing in-place.
+        base_cfg = _deep_copy_cfg(cfg)
+        base_cfg["base_model"]["backend"] = _select_dual_base_backend(cfg)
+        self._model = LLaDABaseModel(base_cfg)
 
         # Patch MoE gates with soft routing (stores originals for toggling)
         patch_model_with_soft_routing(self._model.model, tau_r=self.tau_r)

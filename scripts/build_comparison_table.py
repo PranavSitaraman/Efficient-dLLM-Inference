@@ -80,6 +80,8 @@ def _load_rows(eval_path: Path) -> List[Dict[str, Any]]:
     mode = str(metadata.get("mode", "unknown"))
     config_path = str(metadata.get("config_path", ""))
     output_dir = str(metadata.get("output_dir", str(eval_path.parent)))
+    eval_dataset = str(metadata.get("eval_dataset", ""))
+    eval_dataset_config = metadata.get("eval_dataset_config", None)
     routing_temperature = metadata.get("routing_temperature", None)
     reuse_signal_method = str(metadata.get("reuse_signal_method", "argmax_match"))
     positional_cache_enabled = bool(metadata.get("positional_cache_enabled", False))
@@ -98,6 +100,8 @@ def _load_rows(eval_path: Path) -> List[Dict[str, Any]]:
             "config_path": config_path,
             "mode": mode,
             "output_dir": output_dir,
+            "eval_dataset": eval_dataset,
+            "eval_dataset_config": "" if eval_dataset_config in (None, "") else str(eval_dataset_config),
             "model": model_name,
             "backend": backend,
             "gating": _infer_gating(backend, str(r.get("method", ""))),

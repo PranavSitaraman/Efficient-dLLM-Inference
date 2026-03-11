@@ -14,6 +14,18 @@ import argparse
 import yaml
 
 
+def _parse_float_list(raw: str):
+    values = []
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        values.append(float(chunk))
+    if not values:
+        raise ValueError("Expected at least one float value.")
+    return values
+
+
 def main():
     parser = argparse.ArgumentParser(description="AOAE Evaluation")
     parser.add_argument("--config", type=str, default="configs/default.yaml",
@@ -43,12 +55,23 @@ def main():
                         help="Override inference.positional_cache.horizon.")
     parser.add_argument("--positional_cache_refresh_budget", type=int, default=None,
                         help="Override inference.positional_cache.refresh_budget.")
+    parser.add_argument("--policy_temperatures", type=str, default=None,
+                        help="Comma-separated tau_pi values for speculative runs (e.g. 0.5,1.0,1.5).")
+    parser.add_argument("--skip_baselines", action="store_true",
+                        help="Skip baseline decoding methods and only evaluate the target policy/method.")
+    parser.add_argument("--eval_dataset", type=str, default=None,
+                        help="Override data.eval_dataset.")
+    parser.add_argument("--eval_dataset_config", type=str, default=None,
+                        help="Override data.eval_dataset_config (use empty string for no config).")
+    parser.add_argument("--eval_split", type=str, default=None,
+                        help="Override data.eval_split.")
     args = parser.parse_args()
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
     ic = cfg.setdefault("inference", {})
+    dc = cfg.setdefault("data", {})
     if args.reuse_signal_method is not None:
         ic.setdefault("reuse_signal", {})["method"] = args.reuse_signal_method
     if args.reuse_signal_threshold is not None:
@@ -63,6 +86,16 @@ def main():
         ic.setdefault("positional_cache", {})["horizon"] = int(args.positional_cache_horizon)
     if args.positional_cache_refresh_budget is not None:
         ic.setdefault("positional_cache", {})["refresh_budget"] = int(args.positional_cache_refresh_budget)
+    if args.eval_dataset is not None:
+        dc["eval_dataset"] = args.eval_dataset
+    if args.eval_dataset_config is not None:
+        dc["eval_dataset_config"] = args.eval_dataset_config or None
+    if args.eval_split is not None:
+        dc["eval_split"] = args.eval_split
+
+    policy_temperatures = None
+    if args.policy_temperatures is not None:
+        policy_temperatures = _parse_float_list(args.policy_temperatures)
 
     from aoae.evaluate import main as eval_main
     eval_main(
@@ -71,6 +104,8 @@ def main():
         max_samples=args.max_samples,
         mode=args.mode,
         config_path=args.config,
+        skip_baselines=args.skip_baselines,
+        speculative_policy_temperatures=policy_temperatures,
     )
 
 

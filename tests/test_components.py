@@ -137,6 +137,49 @@ class TestBackendDetection:
         assert _detect_backend("some-random/model", cfg) == "hf"
 
 
+class TestHFCompatibility:
+    def test_default_rope_handler_is_restored(self):
+        from aoae.models.base_model import _ensure_hf_rope_compatibility
+        from transformers import modeling_rope_utils
+
+        original_default = modeling_rope_utils.ROPE_INIT_FUNCTIONS.pop("default", None)
+        try:
+            _ensure_hf_rope_compatibility()
+            assert "default" in modeling_rope_utils.ROPE_INIT_FUNCTIONS
+
+            class DummyConfig:
+                rope_theta = 10000.0
+                partial_rotary_factor = 0.5
+                hidden_size = 32
+                num_attention_heads = 4
+
+            inv_freq, scaling = modeling_rope_utils.ROPE_INIT_FUNCTIONS["default"](
+                config=DummyConfig(),
+                device=torch.device("cpu"),
+            )
+            assert inv_freq.shape == (2,)
+            assert scaling == 1.0
+        finally:
+            if original_default is None:
+                modeling_rope_utils.ROPE_INIT_FUNCTIONS.pop("default", None)
+            else:
+                modeling_rope_utils.ROPE_INIT_FUNCTIONS["default"] = original_default
+
+
+class TestEvalExtraction:
+    def test_extract_eval_prompt_reference_supports_math_schema(self):
+        from aoae.evaluate import _extract_eval_prompt_reference
+
+        prompt, reference = _extract_eval_prompt_reference(
+            {
+                "problem": "Compute 2 + 2.",
+                "solution": "We get \\boxed{4}.",
+            }
+        )
+        assert prompt == "Compute 2 + 2."
+        assert reference == "We get \\boxed{4}."
+
+
 class TestDKVCacheManager:
     def test_init_empty(self):
         from aoae.cache import DKVCacheManager
@@ -827,6 +870,97 @@ class TestDualModelOutput:
         out = mock.dual_forward(ids, need_hidden=True)
         assert out.primary_hidden is not None
         assert out.primary_hidden.shape == (1, 15, 64)
+
+
+class TestDualModelWrapperInit:
+    @staticmethod
+    def _make_mock_moe_model():
+        class MockGateModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = 4
+                self.top_k = 2
+                self.routed_scaling_factor = 1.0
+                self.weight = torch.nn.Parameter(torch.randn(4, 16))
+                self.register_buffer("expert_bias", torch.zeros(4))
+
+            def group_limited_topk(self, scores):
+                return scores.topk(self.top_k, dim=-1)
+
+        class MockMoeBlock(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.gate = MockGateModule()
+                self.experts = torch.nn.Linear(16, 16)
+
+        class MockModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layer1 = MockMoeBlock()
+                self.layer2 = MockMoeBlock()
+
+        return MockModel()
+
+    def test_dual_wrapper_uses_dinfer_backend_for_llada2(self, monkeypatch):
+        from aoae.models import dual_model as dual_module
+        from aoae.models.soft_moe import SoftMoERouter
+
+        received = {}
+        mock_moe_model = self._make_mock_moe_model()
+
+        class StubBaseModel:
+            def __init__(self, cfg):
+                received["backend"] = cfg["base_model"]["backend"]
+                self.model = mock_moe_model
+                self.tokenizer = None
+                self.mask_id = cfg["base_model"]["mask_token_id"]
+                self.vocab_size = VOCAB
+                self.hidden_dim = DIM
+                self._embedding = torch.randn(VOCAB, DIM)
+                self._device = torch.device("cpu")
+                self._dtype = torch.float32
+
+            @property
+            def device(self):
+                return self._device
+
+            @property
+            def dtype(self):
+                return self._dtype
+
+            def get_embedding_weight(self):
+                return self._embedding
+
+            def to(self, device):
+                self._device = device
+                return self
+
+        monkeypatch.setattr(dual_module, "LLaDABaseModel", StubBaseModel)
+
+        cfg = {
+            "base_model": {
+                "name_or_path": "inclusionAI/LLaDA2.1-mini",
+                "backend": "dual",
+                "mask_token_id": MASK_ID,
+                "routing_temperature": 0.01,
+            }
+        }
+        wrapper = dual_module.DualModelWrapper(cfg)
+
+        assert received["backend"] == "dinfer"
+        assert not isinstance(wrapper._model.model.layer1.gate, SoftMoERouter)
+
+    def test_dual_wrapper_rejects_dense_models(self):
+        from aoae.models.dual_model import _select_dual_base_backend
+
+        cfg = {
+            "base_model": {
+                "name_or_path": "GSAI-ML/LLaDA-8B-Instruct",
+                "backend": "dual",
+            }
+        }
+        with pytest.raises(ValueError, match="MoE-capable backend"):
+            _select_dual_base_backend(cfg)
 
 
 # ======================================================================
