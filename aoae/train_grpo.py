@@ -62,7 +62,11 @@ def compute_reward(
     """
     Compute multiplicative reward (Eq. reward):
 
-      R = r(y*, y_T_hat) * (1 - (T - T_hat)/T)^alpha - beta * sum Thrash(t)
+      R = r(y*, y_hat) * (T_hat/T)^alpha - beta * sum Thrash(t)
+
+    Here T_hat is completion in the paper's reverse-time convention
+    (larger is faster). Internally we track used forward steps, then map
+    to reverse-time completion before applying the speed factor.
 
     Args:
         generated_tokens: [B, L_gen] generated response tokens.
@@ -88,27 +92,28 @@ def compute_reward(
         correct = check_math_correctness(gen_text, reference_answer[b])
         correctness[b] = 1.0 if correct else 0.0
 
-    # --- Speed bonus ---
-    # Count steps where the policy actively drafted (unmasked) tokens.
-    # Fewer active steps → faster completion → higher bonus.
-    n_active_steps = sum(
-        1 for a in trajectory.actions
-        if "u_t" in a and a["u_t"].sum() > 0
-    )
-    n_active_steps = max(n_active_steps, 1)
-    speed_bonus = torch.tensor(
-        max(0.0, 1.0 - n_active_steps / T),
-        dtype=torch.float32, device=device,
-    )
+    # --- Speed factor ---
+    # used_steps: forward-time steps consumed (smaller is faster).
+    # Map to reverse-time completion index T_hat in [1, T]:
+    #   T_hat = T - used_steps + 1
+    if getattr(trajectory, "completion_step", None) is not None:
+        used_steps = trajectory.completion_step.to(device).float().clamp(min=1.0, max=float(T))
+    else:
+        n_active_steps = sum(
+            1 for a in trajectory.actions
+            if "u_t" in a and a["u_t"].sum() > 0
+        )
+        used_steps = torch.full((B,), float(max(n_active_steps, 1)), device=device)
+    t_hat = (float(T) - used_steps + 1.0).clamp(min=1.0, max=float(T))
+    speed_factor = (t_hat / float(T)).pow(alpha)
 
     # --- Cache thrashing penalty ---
     total_thrash = torch.zeros(B, device=device)
     for thrash_t in trajectory.thrash_counts:
         total_thrash += thrash_t.to(device)
 
-    # --- Reward: correct answers always get ≥ 1.0, with additive speed bonus ---
-    # R = r(y*, y) * (1 + alpha * speed_bonus) - beta * thrash
-    reward = correctness * (1.0 + alpha * speed_bonus) - beta * total_thrash
+    # --- Reward ---
+    reward = correctness * speed_factor - beta * total_thrash
 
     # Optional dense signal for next-H positional access quality.
     access_w = float(gc.get("access_reward_weight", 0.0))
@@ -195,7 +200,7 @@ def extract_prompt_and_reference(sample: Dict[str, Any]) -> Tuple[Optional[str],
             break
 
     # Common target/reference fields
-    for key in ("answer", "solution", "output", "response", "completion", "final_answer"):
+    for key in ("answer", "solution", "canonical_solution", "output", "response", "completion", "final_answer"):
         value = sample.get(key)
         if isinstance(value, str) and value.strip():
             reference = value.strip()

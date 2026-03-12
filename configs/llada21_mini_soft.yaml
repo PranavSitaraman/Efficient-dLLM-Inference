@@ -19,6 +19,7 @@ base_model:
   mask_token_id: 156895
   backend: "soft_moe"
   routing_temperature: 0.01    # tau_r: low = close to hard routing
+  allow_python_fallback_ops: true
 
 # ---- Soft-masked state (Eq. softmask + gating) -------------
 soft_mask:
@@ -34,6 +35,11 @@ policy:
   n_heads: 4
   dropout: 0.0
   use_positional_features: false
+  use_age_feature: true
+  use_last_action_feature: true
+  boundary_head:
+    enabled: false
+    num_bins: 8
 
 # ---- PRISM adapter ------------------------------------------
 prism:
@@ -76,6 +82,8 @@ inference:
     enabled: false
     horizon: 4
     refresh_budget: 32
+    candidate_policy: "learned_topb"
+    window_radius: 8
     use_topb_from_probs: true
     force_mandatory: true
     age_cap: 64
@@ -85,6 +93,13 @@ inference:
     top_k: 4
     min_overlap: 1
     min_streak: 2
+    grid:
+      argmax_match: [0.0]
+      topk_overlap: [0.0]
+      min_confidence: [0.3, 0.5, 0.7, 0.9]
+      min_margin: [0.0, 0.1, 0.2, 0.4]
+      js_divergence: [0.01, 0.03, 0.05, 0.1]
+      temporal_confidence: [0.3, 0.5, 0.7]
   block_length: 32
   compose_gamma: 0.5          # Composed prediction strength (paper §3.6)
 
@@ -106,6 +121,13 @@ data:
   max_prompt_len: 512
   max_answer_len: 256
 
+evaluation:
+  task_type: "math"
+  code:
+    timeout_sec: 3.0
+    cpu_time_limit_sec: 2
+    memory_limit_mb: 1024
+
 # ---- Logging / checkpointing -------------------------------
 logging:
   project: "aoae"
@@ -121,3 +143,4 @@ hardware:
   seed: 42
   bf16: true
   tp_size: 2                   # LLaDA2.1-mini needs 2-GPU TP
+  deterministic: false

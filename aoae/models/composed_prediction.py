@@ -24,23 +24,20 @@ def compose_prediction(
     base_logits: torch.Tensor,
     cache_probs: torch.Tensor,
     gamma: float = 0.5,
-    temperature: float = 0.0,
 ) -> torch.Tensor:
     """Compose base model logits with policy's cache stability signal.
 
-    Implements Eq. (composed) from the paper:
-        p_tilde(v) ∝ p(v)^{1 + gamma * sigma_k}
+    Single-model variant: sharpens the distribution at positions the
+    policy considers stable (high cache probability).
 
-    In log-space this becomes:
-        log p_tilde(v) = (1 + gamma * sigma_k) * log p(v) + const
+        p_tilde(v) proportional to p(v)^{1 + gamma * sigma_k}
 
-    Which is equivalent to scaling the logits by (1 + gamma * sigma_k).
+    In log-space: scales logits by (1 + gamma * sigma_k).
 
     Args:
         base_logits: [B, L, V] raw logits from the base model.
         cache_probs: [B, L] policy's per-position cache probability sigma_k.
         gamma: Composition strength. 0 = no composition, higher = more sharpening.
-        temperature: Base sampling temperature (applied before composition).
 
     Returns:
         composed_logits: [B, L, V] logits after composition.
@@ -48,15 +45,9 @@ def compose_prediction(
     if gamma <= 0.0:
         return base_logits
 
-    # sigma_k: [B, L, 1] for broadcasting
     sigma_k = cache_probs.unsqueeze(-1)  # [B, L, 1]
-
-    # Scale logits: (1 + gamma * sigma_k) * logits
-    # This sharpens the distribution at high-sigma positions
     scale = 1.0 + gamma * sigma_k  # [B, L, 1]
-    composed = base_logits * scale
-
-    return composed
+    return base_logits * scale
 
 
 def sample_from_composed(

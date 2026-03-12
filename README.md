@@ -20,7 +20,7 @@ Efficient-dLLM-Inference/
 │   ├── models/
 │   │   ├── base_model.py       # Multi-backend LLaDA wrapper (HF/dKV/dInfer/soft_moe)
 │   │   ├── soft_mask.py        # Soft-masked state construction (Eq. 5-6)
-│   │   ├── policy.py           # 1-layer transformer, 3 Bernoulli heads (unmask/remask/cache)
+│   │   ├── policy.py           # 1-layer transformer, 4 Bernoulli heads (+ optional boundary head)
 │   │   ├── prism.py            # PRISM quality adapter (§2.4)
 │   │   ├── soft_moe.py         # Soft-routed MoE wrapper (§3.7)
 │   │   └── composed_prediction.py  # Cache-aligned token selection (§3.6)
@@ -74,6 +74,12 @@ Efficient-dLLM-Inference/
 ```bash
 bash setup.sh            # Full install (core + dInfer + SGLang)
 # Or: bash setup.sh --minimal  # Core only (for LLaDA-8B)
+```
+
+### 1.5 Preflight (Environment + Runtime + Config)
+
+```bash
+python3 scripts/preflight.py --config configs/llada21_mini_hard.yaml --strict_moe
 ```
 
 ### 2. Quick smoke test (baselines only, no training)
@@ -142,7 +148,14 @@ All hyperparameters live in YAML configs. Key settings from `configs/default.yam
 | `inference.positional_cache.enabled` | `false` | Enable next-H positional speculative caching (`q_t` access head) |
 | `inference.positional_cache.horizon` | `4` | Next-H window for access prediction metrics |
 | `inference.positional_cache.refresh_budget` | `32` | Top-B non-mandatory refresh positions per step |
+| `inference.positional_cache.candidate_policy` | `learned_topb` | Access candidate policy (`learned_topb`, `sliding_window`, `confidence_topb`) |
 | `policy.use_positional_features` | `false` | Adds age + last-access features to policy state (enable for POC2) |
+| `policy.boundary_head.enabled` | `false` | Enable optional boundary action head (layer-wise refresh-depth proxy) |
+| `policy.boundary_head.num_bins` | `8` | Number of categorical bins for boundary action |
+| `evaluation.task_type` | `math` | Evaluator selection (`math` or `code`) |
+| `evaluation.code.timeout_sec` | `3.0` | Subprocess timeout for execution-based code evaluation |
+| `evaluation.code.cpu_time_limit_sec` | `2` | CPU RLIMIT for code evaluation subprocess |
+| `evaluation.code.memory_limit_mb` | `1024` | Memory RLIMIT for code evaluation subprocess |
 | `grpo.access_reward_weight` | `0.0` | Optional dense reward coefficient for next-H speculative access F1 |
 | `analysis.track_kv_dynamics` | `false` | Enable KV-dynamics proxy logging during speculative eval |
 | `analysis.attention_proxy_top_frac` | `0.1` | Fraction of highest-confidence positions used for confident-token drift proxy |
@@ -171,6 +184,14 @@ All hyperparameters live in YAML configs. Key settings from `configs/default.yam
   - Outputs: `outputs/sweeps/<name>/routing_sweep_full.{json,csv,md}`
   - Outputs: `outputs/sweeps/<name>/routing_sweep_summary.{json,csv,md}`
   - Plots: `outputs/sweeps/<name>/routing_sweep_vs_condition.png`, `outputs/sweeps/<name>/routing_sweep_pareto.png`
+  - Note: remasking is forced off in this sweep for clean routing attribution.
+- Run POC2 reuse-signal reliability sweep:
+  - `python3 scripts/run_reuse_signal_sweep.py --config configs/dual_mini_tau01.yaml --max_samples 200`
+  - Outputs: `outputs/sweeps/<name>/reuse_signal_sweep_full.{json,csv,md}`
+  - Decision artifact: `outputs/sweeps/<name>/best_method_by_constraint.{json,csv,md}`
+- Run ablation matrix:
+  - `python3 scripts/run_ablation_matrix.py --config configs/dual_mini_tau01.yaml --max_samples 200`
+  - Outputs: `outputs/ablations/<name>/ablation_matrix_results.{json,csv,md}`
 - Aggregate KV-dynamics summaries across runs:
   - `python3 scripts/summarize_kv_dynamics.py`
   - Outputs: `results/kv_dynamics_table.csv` and `results/kv_dynamics_table.md`
@@ -208,6 +229,14 @@ python3 scripts/run_routing_sweep.py \
   --max_samples 200
 ```
 
+POC2 reuse-signal reliability sweep:
+
+```bash
+python3 scripts/run_reuse_signal_sweep.py \
+  --config configs/dual_mini_tau01.yaml \
+  --max_samples 200
+```
+
 MATH benchmark override:
 
 ```bash
@@ -216,6 +245,20 @@ python3 scripts/run_tau_sweep.py \
   --eval_dataset hendrycks/competition_math \
   --eval_split test \
   --tau_r_values 0.001,0.01,0.05,0.1,0.2,0.5
+```
+
+HumanEval pass@1-style override (execution-based):
+
+```bash
+python3 run_eval.py \
+  --config configs/default.yaml \
+  --task_type code \
+  --eval_dataset openai_humaneval \
+  --eval_split test \
+  --skip_baselines \
+  --code_timeout_sec 3.0 \
+  --code_cpu_time_limit_sec 2 \
+  --code_memory_limit_mb 1024
 ```
 
 ## Architecture & Design

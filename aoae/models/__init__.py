@@ -9,3 +9,22 @@ Modules:
   - composed_prediction: Dual-model composed prediction for cache-aligned tokens.
   - prism: PRISM quality adapter for self-correction signals.
 """
+
+from .policy import AOAEPolicy, DefaultPolicy
+from .soft_mask import SoftMaskedState
+from .prism import PRISMAdapter
+from .composed_prediction import (
+    compose_prediction,
+    compose_prediction_dual,
+    sample_from_composed,
+)
+
+__all__ = [
+    "AOAEPolicy",
+    "DefaultPolicy",
+    "SoftMaskedState",
+    "PRISMAdapter",
+    "compose_prediction",
+    "compose_prediction_dual",
+    "sample_from_composed",
+]

@@ -13,6 +13,7 @@ Usage:
 import argparse
 import yaml
 
+from aoae.preflight import run_preflight
 
 def _parse_float_list(raw: str):
     values = []
@@ -59,6 +60,20 @@ def main():
                         help="Comma-separated tau_pi values for speculative runs (e.g. 0.5,1.0,1.5).")
     parser.add_argument("--skip_baselines", action="store_true",
                         help="Skip baseline decoding methods and only evaluate the target policy/method.")
+    parser.add_argument("--task_type", type=str, default=None, choices=["math", "code"],
+                        help="Override evaluation.task_type.")
+    parser.add_argument("--code_timeout_sec", type=float, default=None,
+                        help="Override evaluation.code.timeout_sec for task_type=code.")
+    parser.add_argument("--code_cpu_time_limit_sec", type=int, default=None,
+                        help="Override evaluation.code.cpu_time_limit_sec.")
+    parser.add_argument("--code_memory_limit_mb", type=int, default=None,
+                        help="Override evaluation.code.memory_limit_mb.")
+    parser.add_argument("--preflight", action="store_true",
+                        help="Run environment+runtime+config preflight and exit.")
+    parser.add_argument("--strict_moe", action="store_true",
+                        help="When used with --preflight, fail if required MoE ops are unavailable.")
+    parser.add_argument("--dry_run", action="store_true",
+                        help="Validate config + create output dir, then exit without model loading.")
     parser.add_argument("--eval_dataset", type=str, default=None,
                         help="Override data.eval_dataset.")
     parser.add_argument("--eval_dataset_config", type=str, default=None,
@@ -69,6 +84,12 @@ def main():
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
+
+    if args.preflight:
+        report = run_preflight(args.config, strict_moe=args.strict_moe)
+        import json as _json
+        print(_json.dumps(report, indent=2))
+        return
 
     ic = cfg.setdefault("inference", {})
     dc = cfg.setdefault("data", {})
@@ -92,6 +113,21 @@ def main():
         dc["eval_dataset_config"] = args.eval_dataset_config or None
     if args.eval_split is not None:
         dc["eval_split"] = args.eval_split
+    if args.task_type is not None:
+        cfg.setdefault("evaluation", {})["task_type"] = args.task_type
+    if args.code_timeout_sec is not None:
+        cfg.setdefault("evaluation", {}).setdefault("code", {})["timeout_sec"] = float(args.code_timeout_sec)
+    if args.code_cpu_time_limit_sec is not None:
+        cfg.setdefault("evaluation", {}).setdefault("code", {})["cpu_time_limit_sec"] = int(args.code_cpu_time_limit_sec)
+    if args.code_memory_limit_mb is not None:
+        cfg.setdefault("evaluation", {}).setdefault("code", {})["memory_limit_mb"] = int(args.code_memory_limit_mb)
+
+    if args.dry_run:
+        out_dir = cfg.setdefault("logging", {}).get("output_dir", "outputs/default/")
+        import os as _os
+        _os.makedirs(out_dir, exist_ok=True)
+        print(f"[DryRun] Config parsed OK. Output dir ready: {out_dir}")
+        return
 
     policy_temperatures = None
     if args.policy_temperatures is not None:

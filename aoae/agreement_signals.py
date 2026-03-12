@@ -61,6 +61,24 @@ def compute_reuse_signal(
     sc = ic.get("reuse_signal", {})
     method = sc.get("method", "argmax_match")
     threshold = float(sc.get("threshold", 0.0))
+
+    # Fast path for argmax_match: skip softmax, JS divergence, margins
+    if method == "argmax_match":
+        pri_tok = primary_logits.argmax(dim=-1)
+        aux_tok = auxiliary_logits.argmax(dim=-1)
+        match = (pri_tok == aux_tok)
+        match_rate = float(match.float().mean().item())
+        diagnostics = {
+            "mean_match": match_rate,
+            "mean_safe_reuse": match_rate,
+            "mean_js_divergence": 0.0,
+            "mean_min_conf": 0.0,
+            "mean_min_margin": 0.0,
+            "mean_streak": 0.0,
+        }
+        new_state = state if state is not None else {}
+        return match.float(), new_state, diagnostics
+
     top_k = int(sc.get("top_k", 4))
     min_overlap = int(sc.get("min_overlap", 1))
     min_streak = int(sc.get("min_streak", 2))
@@ -80,9 +98,7 @@ def compute_reuse_signal(
         match_streak = state["match_streak"]
     match_streak = torch.where(match, match_streak + 1, torch.zeros_like(match_streak))
 
-    if method == "argmax_match":
-        safe = match
-    elif method == "topk_overlap":
+    if method == "topk_overlap":
         safe = _topk_overlap(primary_logits, auxiliary_logits, top_k=top_k, min_overlap=min_overlap)
     elif method == "min_confidence":
         safe = match & (torch.minimum(pri_conf, aux_conf) >= threshold)

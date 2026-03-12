@@ -42,6 +42,7 @@ echo ""
 echo "[Step 0] Checking environment..."
 python3 -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}, GPUs: {torch.cuda.device_count()}')"
 python3 -c "import transformers; print(f'Transformers {transformers.__version__}')"
+python3 scripts/preflight.py --config "$CONFIG" || true
 
 if $USE_SLURM; then
     # ==============================

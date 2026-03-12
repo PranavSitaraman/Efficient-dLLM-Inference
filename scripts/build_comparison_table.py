@@ -87,6 +87,10 @@ def _load_rows(eval_path: Path) -> List[Dict[str, Any]]:
     positional_cache_enabled = bool(metadata.get("positional_cache_enabled", False))
     positional_cache_horizon = metadata.get("positional_cache_horizon", "")
     positional_cache_budget = metadata.get("positional_cache_refresh_budget", "")
+    candidate_policy = str(metadata.get("candidate_policy", "learned_topb"))
+    task_type = str(metadata.get("task_type", "math"))
+    host = str(metadata.get("host", ""))
+    git_commit = str(metadata.get("git_commit", ""))
 
     rows: List[Dict[str, Any]] = []
     for r in results:
@@ -107,9 +111,11 @@ def _load_rows(eval_path: Path) -> List[Dict[str, Any]]:
             "gating": _infer_gating(backend, str(r.get("method", ""))),
             "tau_r": "" if tau_r is None else f"{_safe_float(tau_r):.4f}",
             "reuse_signal": reuse_signal_method,
+            "task_type": task_type,
             "positional_cache": "on" if positional_cache_enabled else "off",
             "positional_horizon": positional_cache_horizon,
             "positional_budget": positional_cache_budget,
+            "candidate_policy": candidate_policy,
             "remask": _parse_remask(config_note, metadata.get("disable_remask")),
             "method": str(r.get("method", "")),
             "note": config_note,
@@ -125,14 +131,24 @@ def _load_rows(eval_path: Path) -> List[Dict[str, Any]]:
             "access_mandatory_rate": f"{_safe_float(r.get('access_mandatory_rate')):.6f}",
             "access_optional_rate": f"{_safe_float(r.get('access_optional_rate')):.6f}",
             "access_budget_utilization": f"{_safe_float(r.get('access_budget_utilization')):.6f}",
+            "access_effective_budget": f"{_safe_float(r.get('access_effective_budget')):.6f}",
             "access_next_h_precision": f"{_safe_float(r.get('access_next_h_precision')):.6f}",
             "access_next_h_recall": f"{_safe_float(r.get('access_next_h_recall')):.6f}",
             "access_next_h_f1": f"{_safe_float(r.get('access_next_h_f1')):.6f}",
             "access_next_h_spec_precision": f"{_safe_float(r.get('access_next_h_spec_precision')):.6f}",
             "access_next_h_spec_recall": f"{_safe_float(r.get('access_next_h_spec_recall')):.6f}",
             "access_next_h_spec_f1": f"{_safe_float(r.get('access_next_h_spec_f1')):.6f}",
+            "mean_boundary_depth": f"{_safe_float(r.get('mean_boundary_depth')):.6f}",
+            "boundary_distribution": str(r.get("boundary_distribution", "{}")),
             "total_samples": _safe_int(r.get("total_samples")),
+            "host": host,
+            "git_commit": git_commit,
         }
+        commits = _safe_int(r.get("cache_commits"))
+        invalids = _safe_int(r.get("cache_invalidations"))
+        row["cache_invalidation_rate"] = (
+            f"{(invalids / max(commits + invalids, 1)):.6f}"
+        )
         rows.append(row)
 
     return rows

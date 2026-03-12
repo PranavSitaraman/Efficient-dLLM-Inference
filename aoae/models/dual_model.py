@@ -22,6 +22,8 @@ from .soft_moe import (
     patch_model_with_soft_routing,
     set_hard_routing,
     set_soft_routing,
+    set_routing_temperature,
+    set_soft_topk,
 )
 
 
@@ -81,15 +83,15 @@ class DualModelWrapper(nn.Module):
 
         self._cfg = cfg
         self.tau_r = cfg["base_model"].get("routing_temperature", 0.01)
+        self._soft_topk = cfg["base_model"].get("soft_topk", None)
 
-        # Load ONE shared model with hard routing, then patch soft routing in-place.
         base_cfg = _deep_copy_cfg(cfg)
         base_cfg["base_model"]["backend"] = _select_dual_base_backend(cfg)
         self._model = LLaDABaseModel(base_cfg)
 
-        # Patch MoE gates with soft routing (stores originals for toggling)
-        patch_model_with_soft_routing(self._model.model, tau_r=self.tau_r)
-        # Start in hard-routing mode (auxiliary is default)
+        patch_model_with_soft_routing(
+            self._model.model, tau_r=self.tau_r, soft_topk=self._soft_topk,
+        )
         set_hard_routing(self._model.model)
 
         # Expose shared attributes
@@ -114,6 +116,16 @@ class DualModelWrapper(nn.Module):
         self._model = self._model.to(device)
         return self
 
+    def set_tau_r(self, tau_r: float) -> None:
+        """Update routing temperature on the fly (for sweeps)."""
+        self.tau_r = tau_r
+        set_routing_temperature(self._model.model, tau_r)
+
+    def set_soft_topk(self, soft_topk: int) -> None:
+        """Update the number of active experts for soft routing."""
+        self._soft_topk = soft_topk
+        set_soft_topk(self._model.model, soft_topk)
+
     # ------------------------------------------------------------------
     @torch.no_grad()
     def auxiliary_forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
@@ -125,9 +137,10 @@ class DualModelWrapper(nn.Module):
     def primary_forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
         """Slow forward: soft-routed MoE (~16B active) → [B, L, V] logits."""
         set_soft_routing(self._model.model)
-        out = self._model.forward(input_ids)
-        set_hard_routing(self._model.model)  # restore default
-        return out
+        try:
+            return self._model.forward(input_ids)
+        finally:
+            set_hard_routing(self._model.model)
 
     @torch.no_grad()
     def primary_forward_with_hidden(
@@ -135,9 +148,10 @@ class DualModelWrapper(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Soft-routed forward → (logits [B,L,V], hidden [B,L,D])."""
         set_soft_routing(self._model.model)
-        out = self._model.forward_with_hidden(input_ids)
-        set_hard_routing(self._model.model)  # restore default
-        return out
+        try:
+            return self._model.forward_with_hidden(input_ids)
+        finally:
+            set_hard_routing(self._model.model)
 
     @torch.no_grad()
     def primary_forward_with_all_hidden(
@@ -145,9 +159,10 @@ class DualModelWrapper(nn.Module):
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """Soft-routed forward → (logits [B,L,V], all hidden states)."""
         set_soft_routing(self._model.model)
-        out = self._model.forward_with_all_hidden(input_ids)
-        set_hard_routing(self._model.model)
-        return out
+        try:
+            return self._model.forward_with_all_hidden(input_ids)
+        finally:
+            set_hard_routing(self._model.model)
 
     # ------------------------------------------------------------------
     @torch.no_grad()

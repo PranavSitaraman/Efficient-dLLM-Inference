@@ -14,6 +14,7 @@ The key integration points are:
 
 import torch
 import torch.nn.functional as F
+import json
 from typing import Optional, Dict, Tuple, List
 from dataclasses import dataclass
 
@@ -230,6 +231,9 @@ def run_speculative_inference(
     track_kv_dynamics = bool(cfg.get("analysis", {}).get("track_kv_dynamics", False))
     use_positional_cache = bool(ic.get("positional_cache", {}).get("enabled", False))
 
+    from .models.policy import DefaultPolicy
+    _skip_soft_mask = isinstance(policy, DefaultPolicy) and not use_positional_cache
+
     B = prompt_ids.shape[0]
     P = prompt_ids.shape[1]
     device = prompt_ids.device
@@ -247,10 +251,18 @@ def run_speculative_inference(
     reuse_diag_steps = 0
     access_diag_sum: Dict[str, float] = {}
     access_diag_steps = 0
-    access_exec_steps: List[torch.Tensor] = []
-    changed_steps: List[torch.Tensor] = []
-    mandatory_steps: List[torch.Tensor] = []
-    pos_state = init_positional_state(B, L_gen, device)
+    access_exec_steps: List[torch.Tensor] = [] if use_positional_cache else None
+    changed_steps: List[torch.Tensor] = [] if use_positional_cache else None
+    mandatory_steps: List[torch.Tensor] = [] if use_positional_cache else None
+    boundary_actions: List[torch.Tensor] = []
+    pos_state = init_positional_state(B, L_gen, device) if use_positional_cache else None
+
+    primary_every_n = max(1, int(ic.get("primary_every_n", 1)))
+    primary_agree_threshold = float(ic.get("primary_agree_threshold", 0.0))
+    force_primary_endpoints = bool(ic.get("force_primary_first_last", True))
+    _ema_agreement = 1.0  # optimistic init: first step is always primary, will update
+    _primary_steps = 0
+    _aux_only_steps = 0
 
     for t in range(T, 0, -1):
         step_frac = t / T
@@ -260,45 +272,69 @@ def run_speculative_inference(
         if not mask_ind.any():
             break
 
-        # Dual-model forward
         need_hidden = (prism_adapter is not None) or track_kv_dynamics
         need_all_hidden = track_kv_dynamics
-        dual_out = dual_model.dual_forward_resp(
-            y, resp_slice, need_hidden=need_hidden, need_all_hidden=need_all_hidden
+
+        step_idx = T - t
+        run_primary = (
+            primary_every_n <= 1
+            or (step_idx > 0 and step_idx % primary_every_n == 0)
+            or (force_primary_endpoints and (t == T or t == 1))
+            or _ema_agreement < primary_agree_threshold
         )
 
-        resp_logits = dual_out.primary_logits
-        aux_logits = dual_out.auxiliary_logits
-        agreement, reuse_state, reuse_diag = compute_reuse_signal(
-            resp_logits, aux_logits, cfg, state=reuse_state
-        )
-        agreement = agreement.bool()
-        for k, v in reuse_diag.items():
-            reuse_diag_sum[k] = reuse_diag_sum.get(k, 0.0) + float(v)
-        reuse_diag_steps += 1
+        if run_primary:
+            dual_out = dual_model.dual_forward_resp(
+                y, resp_slice, need_hidden=need_hidden,
+                need_all_hidden=need_all_hidden,
+            )
+            resp_logits = dual_out.primary_logits
+            aux_logits = dual_out.auxiliary_logits
+            agreement, reuse_state, reuse_diag = compute_reuse_signal(
+                resp_logits, aux_logits, cfg, state=reuse_state,
+            )
+            agreement = agreement.bool()
+            _ema_agreement = 0.8 * _ema_agreement + 0.2 * dual_out.agreement_rate
+            _primary_steps += 1
+            for k, v in reuse_diag.items():
+                reuse_diag_sum[k] = reuse_diag_sum.get(k, 0.0) + float(v)
+            reuse_diag_steps += 1
+        else:
+            aux_logits = dual_model.auxiliary_forward(y)[:, resp_slice, :]
+            resp_logits = aux_logits
+            agreement = torch.ones(B, L_gen, dtype=torch.bool, device=device)
+            _aux_only_steps += 1
 
-        # PRISM quality scores
         q_scores = None
-        if prism_adapter is not None and dual_out.primary_hidden is not None:
-            with torch.no_grad():
-                q_scores = prism_adapter(dual_out.primary_hidden.float())
+        if run_primary and prism_adapter is not None:
+            pri_hidden = getattr(dual_out, "primary_hidden", None)
+            if pri_hidden is not None:
+                with torch.no_grad():
+                    q_scores = prism_adapter(pri_hidden.float())
 
-        # Soft-masked state
-        H_t, confidence, entropy = soft_mask_module(resp_logits, mask_ind, step_frac)
-        age_feat = None
-        last_action_feat = None
-        if use_positional_cache:
-            age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
-
-        # Policy forward
-        policy_out = policy(
-            H_t, mask_ind, step_frac,
-            temperature=policy_temperature,
-            quality_scores=q_scores,
-            agreement=agreement.float(),
-            age_feature=age_feat,
-            last_action_feature=last_action_feat,
-        )
+        if _skip_soft_mask:
+            confidence = None
+            H_t_dummy = resp_logits[:, :, :1].expand(-1, -1, 1)
+            policy_out = policy(
+                H_t_dummy, mask_ind, step_frac,
+                temperature=policy_temperature,
+                quality_scores=q_scores,
+                agreement=agreement.float(),
+            )
+        else:
+            H_t, confidence, entropy = soft_mask_module(resp_logits, mask_ind, step_frac)
+            age_feat = None
+            last_action_feat = None
+            if use_positional_cache:
+                age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
+            policy_out = policy(
+                H_t, mask_ind, step_frac,
+                temperature=policy_temperature,
+                quality_scores=q_scores,
+                agreement=agreement.float(),
+                age_feature=age_feat,
+                last_action_feature=last_action_feat,
+            )
         pol_inner = policy.module if hasattr(policy, "module") else policy
         actions = pol_inner.sample_actions(policy_out, mask_ind)
 
@@ -308,14 +344,25 @@ def run_speculative_inference(
         if disable_remask:
             r_t = torch.zeros_like(r_t)
             actions = {**actions, "r_t": r_t}
-        q_exec, q_mandatory, access_diag = build_access_set(actions, policy_out, cfg)
+        q_exec, q_mandatory, access_diag = build_access_set(
+            actions,
+            policy_out,
+            cfg,
+            confidence=confidence,
+            boundary_action=actions.get("ell_t"),
+            boundary_num_bins=(
+                int(policy_out["boundary_probs"].shape[-1])
+                if "boundary_probs" in policy_out
+                else None
+            ),
+        )
+        if "ell_t" in actions:
+            boundary_actions.append(actions["ell_t"].detach())
         for k, v in access_diag.items():
             access_diag_sum[k] = access_diag_sum.get(k, 0.0) + float(v)
         access_diag_steps += 1
 
-        resp_tokens = resp_tokens.clone()
-
-        # Phase 1: Remask
+        # Phase 1: Remask (modify y via view for zero-copy)
         remask_positions = r_t.bool() & ~mask_ind
         if remask_positions.any():
             resp_tokens[remask_positions] = mask_id
@@ -323,7 +370,8 @@ def run_speculative_inference(
         # Phase 2: Unmask with composed prediction
         unmask_positions = u_t.bool() & mask_ind
         if unmask_positions.any():
-            if gamma > 0:
+            use_composition = gamma > 0 and run_primary and resp_logits is not aux_logits
+            if use_composition:
                 composed_logits = compose_prediction_dual(
                     resp_logits, aux_logits, agreement, gamma=gamma,
                 )
@@ -339,18 +387,21 @@ def run_speculative_inference(
                 sampled = composed_logits.argmax(dim=-1)
             resp_tokens[unmask_positions] = sampled[unmask_positions]
 
-        # Fallback
+        # Fallback: if policy produced no unmask actions, force-unmask most confident
         if use_fallback:
             still_masked = (resp_tokens == mask_id)
             no_unmasks = (u_t.sum(dim=-1) == 0) & still_masked.any(dim=-1)
             if no_unmasks.any():
+                if confidence is None:
+                    confidence = resp_logits.max(dim=-1).values
+                fallback_conf = confidence.clone()
+                fallback_conf[~still_masked] = -1.0
+                best_pos = fallback_conf.argmax(dim=-1)
+                best_tok = resp_logits.argmax(dim=-1)
                 for b_idx in no_unmasks.nonzero(as_tuple=True)[0]:
-                    masked_pos = still_masked[b_idx].nonzero(as_tuple=True)[0]
-                    if len(masked_pos) > 0:
-                        best_pos = masked_pos[confidence[b_idx, masked_pos].argmax()]
-                        resp_tokens[b_idx, best_pos] = resp_logits[b_idx, best_pos].argmax()
+                    resp_tokens[b_idx, best_pos[b_idx]] = best_tok[b_idx, best_pos[b_idx]]
 
-        if dynamics_tracker is not None:
+        if dynamics_tracker is not None and run_primary:
             layer_hiddens = dual_out.primary_hidden_states
             if not layer_hiddens:
                 if dual_out.primary_hidden is not None:
@@ -378,25 +429,26 @@ def run_speculative_inference(
         cache_mgr.step(r_t, kappa_t * q_exec, u_t, agreement)
 
         changed = (u_t.bool() | r_t.bool()).float()
-        access_exec_steps.append(q_exec.detach())
-        changed_steps.append(changed.detach())
-        mandatory_steps.append(q_mandatory.detach())
         if use_positional_cache:
+            access_exec_steps.append(q_exec.detach())
+            changed_steps.append(changed.detach())
+            mandatory_steps.append(q_mandatory.detach())
             update_positional_state(pos_state, q_exec=q_exec, changed=changed, cfg=cfg)
 
-        y = y.clone()
         y[:, resp_slice] = resp_tokens
 
     stats = cache_mgr.get_stats()
+    stats["primary_steps"] = _primary_steps
+    stats["aux_only_steps"] = _aux_only_steps
+    stats["primary_skip_ratio"] = _aux_only_steps / max(_primary_steps + _aux_only_steps, 1)
     reuse_method = cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")
     stats["reuse_signal_method"] = reuse_method
     for k, v in reuse_diag_sum.items():
         stats[f"reuse_{k}"] = v / max(reuse_diag_steps, 1)
     for k, v in access_diag_sum.items():
         stats[f"access_{k}"] = v / max(access_diag_steps, 1)
-    pc_cfg = cfg.get("inference", {}).get("positional_cache", {})
-    if pc_cfg.get("enabled", False):
-        horizon = int(pc_cfg.get("horizon", 4))
+    if use_positional_cache and access_exec_steps:
+        horizon = int(ic.get("positional_cache", {}).get("horizon", 4))
         stats.update(
             compute_next_h_access_metrics(
                 access_exec_steps=access_exec_steps,
@@ -407,6 +459,16 @@ def run_speculative_inference(
         )
     else:
         stats.update(compute_next_h_access_metrics([], [], None, 1))
+    if boundary_actions:
+        all_boundary = torch.cat([x.reshape(-1) for x in boundary_actions], dim=0)
+        max_bin = int(all_boundary.max().item()) if all_boundary.numel() > 0 else 0
+        denom = max(max_bin, 1)
+        stats["mean_boundary_depth"] = float((all_boundary.float() / denom).mean().item())
+        counts = torch.bincount(all_boundary, minlength=max_bin + 1).tolist()
+        stats["boundary_distribution"] = json.dumps({str(i): int(v) for i, v in enumerate(counts)})
+    else:
+        stats["mean_boundary_depth"] = 0.0
+        stats["boundary_distribution"] = "{}"
     if dynamics_tracker is not None:
         stats["kv_dynamics"] = dynamics_tracker.summarize()
     return y, stats
@@ -513,7 +575,18 @@ def run_policy_guided_inference(
         if disable_remask:
             r_t = torch.zeros_like(r_t)
             actions = {**actions, "r_t": r_t}
-        q_exec, _q_mandatory, _ = build_access_set(actions, policy_out, cfg)
+        q_exec, _q_mandatory, _ = build_access_set(
+            actions,
+            policy_out,
+            cfg,
+            confidence=confidence,
+            boundary_action=actions.get("ell_t"),
+            boundary_num_bins=(
+                int(policy_out["boundary_probs"].shape[-1])
+                if "boundary_probs" in policy_out
+                else None
+            ),
+        )
 
         resp_tokens = resp_tokens.clone()
 
@@ -559,7 +632,6 @@ def run_policy_guided_inference(
         if use_positional_cache:
             update_positional_state(pos_state, q_exec=q_exec, changed=changed, cfg=cfg)
 
-        y = y.clone()
         y[:, resp_slice] = resp_tokens
 
     return y, cache_mgr.get_stats()

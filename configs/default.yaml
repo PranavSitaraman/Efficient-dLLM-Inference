@@ -14,6 +14,7 @@ base_model:
   torch_dtype: "bfloat16"
   mask_token_id: 126336                          # [M] in LLaDA vocab
   backend: "hf"
+  attn_implementation: "eager"
 
 # ---- Soft-masked state (Eq. softmask + gating) -------------
 soft_mask:
@@ -29,6 +30,11 @@ policy:
   n_heads: 4                   # attention heads
   dropout: 0.0
   use_positional_features: false # POC1 default: keep positional features disabled
+  use_age_feature: true
+  use_last_action_feature: true
+  boundary_head:
+    enabled: false
+    num_bins: 8
 
 # ---- PRISM adapter ------------------------------------------
 prism:
@@ -71,9 +77,24 @@ inference:
     enabled: false             # set true for POC2 positional speculative caching
     horizon: 4                 # next-H window for access prediction
     refresh_budget: 32         # additional non-mandatory positions per step
+    candidate_policy: "learned_topb"  # learned_topb|sliding_window|confidence_topb
+    window_radius: 8           # used by sliding_window candidate policy
     use_topb_from_probs: true  # top-B by access head probability
     force_mandatory: true      # always include unmask/remask positions in Q_t
     age_cap: 64                # normalize age feature by this cap
+  reuse_signal:
+    method: "argmax_match"
+    threshold: 0.0
+    top_k: 4
+    min_overlap: 1
+    min_streak: 2
+    grid:
+      argmax_match: [0.0]
+      topk_overlap: [0.0]
+      min_confidence: [0.3, 0.5, 0.7, 0.9]
+      min_margin: [0.0, 0.1, 0.2, 0.4]
+      js_divergence: [0.01, 0.03, 0.05, 0.1]
+      temporal_confidence: [0.3, 0.5, 0.7]
   block_length: 32             # semi-AR block length
   compose_gamma: 0.5           # Composed prediction strength (paper §3.6)
 
@@ -96,6 +117,14 @@ data:
   max_prompt_len: 512
   max_answer_len: 256
 
+# ---- Evaluation ---------------------------------------------
+evaluation:
+  task_type: "math"            # math|code
+  code:
+    timeout_sec: 3.0
+    cpu_time_limit_sec: 2
+    memory_limit_mb: 1024
+
 # ---- Logging / checkpointing -------------------------------
 logging:
   project: "aoae"
@@ -110,3 +139,4 @@ logging:
 hardware:
   seed: 42
   bf16: true
+  deterministic: false

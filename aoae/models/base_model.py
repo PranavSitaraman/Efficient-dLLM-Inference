@@ -22,6 +22,7 @@ import torch
 import torch.nn as nn
 from typing import Tuple, Optional
 from transformers import AutoTokenizer
+from ..runtime_checks import ensure_vllm_moe_runtime, is_global_rank_zero
 
 
 _CODE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -111,6 +112,8 @@ def _init_vllm_distributed(tp_size: int = 1):
 
         os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
         os.environ.setdefault("MASTER_PORT", "29500")
+        if os.environ.get("MASTER_ADDR") == "localhost":
+            os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ.setdefault("NCCL_SOCKET_FAMILY", "AF_INET")
         
         torch.distributed.init_process_group(
@@ -123,6 +126,19 @@ def _init_vllm_distributed(tp_size: int = 1):
     rank = torch.distributed.get_rank()
     vllm_dist.init_distributed_environment(world_size, rank, "env://", rank, "nccl")
     vllm_dist.initialize_model_parallel(tp_size, backend="nccl")
+
+
+def _patch_missing_moe_align_block_size(cfg: Optional[dict] = None) -> None:
+    """Back-compat wrapper: ensure required vLLM MoE runtime capability."""
+    cfg = cfg or {}
+    allow_python_fallback = bool(cfg.get("base_model", {}).get("allow_python_fallback_ops", True))
+    report = ensure_vllm_moe_runtime(
+        strict=True,
+        verbose=is_global_rank_zero(),
+        allow_python_fallback=allow_python_fallback,
+    )
+    if report.get("patched_fallback_ops") and is_global_rank_zero():
+        print(f"[Model] Runtime patched fallback ops: {report['patched_fallback_ops']}")
 
 
 class LLaDABaseModel(nn.Module):
@@ -194,10 +210,13 @@ class LLaDABaseModel(nn.Module):
 
         _ensure_hf_rope_compatibility()
 
+        # LLaDA HF remote-code models currently require eager attention in
+        # Transformers (SDPA dispatch is not implemented for this architecture).
+        attn_impl = self.cfg.get("base_model", {}).get("attn_implementation", "eager")
         load_kwargs = dict(
             trust_remote_code=True,
             dtype=self.dtype,
-            attn_implementation="sdpa",  # use PyTorch scaled dot-product attention
+            attn_implementation=attn_impl,
         )
 
         # Optional: load with quantization if configured
@@ -225,7 +244,16 @@ class LLaDABaseModel(nn.Module):
             except ImportError:
                 print("[Model] bitsandbytes not available, skipping INT4 quantization")
 
-        self.model = AutoModelForCausalLM.from_pretrained(name_or_path, **load_kwargs)
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(name_or_path, **load_kwargs)
+        except ValueError as exc:
+            msg = str(exc)
+            if ("scaled_dot_product_attention" in msg) and (load_kwargs.get("attn_implementation") != "eager"):
+                print("[Model] WARNING: HF backend SDPA is unsupported for this architecture; retrying with eager attention.")
+                load_kwargs["attn_implementation"] = "eager"
+                self.model = AutoModelForCausalLM.from_pretrained(name_or_path, **load_kwargs)
+            else:
+                raise
         print(f"[Model] Loaded {type(self.model).__name__} (backend=hf)")
         self._freeze()
 
@@ -273,43 +301,44 @@ class LLaDABaseModel(nn.Module):
 
         # Step 1: Initialize vLLM distributed state
         _init_vllm_distributed(tp_size)
+        _patch_missing_moe_align_block_size(self.cfg)
 
-        # Step 2: Set vLLM config context with expert parallelism
         parallel_config = ParallelConfig(enable_expert_parallel=True)
         self._vllm_config = VllmConfig(parallel_config=parallel_config)
         self._vllm_config_ctx = set_current_vllm_config(self._vllm_config)
         self._vllm_config_ctx.__enter__()
 
-        # Step 3: Download model from HuggingFace if needed
-        # dInfer's load_weights expects a local path to model.safetensors.index.json
-        local_model_path = snapshot_download(
-            name_or_path,
-            allow_patterns=["*.json", "*.safetensors", "*.model"],
-            ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
-        )
+        try:
+            local_model_path = snapshot_download(
+                name_or_path,
+                allow_patterns=["*.json", "*.safetensors", "*.model"],
+                ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
+            )
 
-        # Step 4: Load model inside vLLM config context
-        model_config = AutoConfig.from_pretrained(
-            name_or_path, trust_remote_code=True,
-        )
-        self.model = LLaDA2MoeModelLM(config=model_config).eval()
-        self.model.load_weights(local_model_path, torch_dtype=self.dtype)
-        self._freeze()
+            model_config = AutoConfig.from_pretrained(
+                name_or_path, trust_remote_code=True,
+            )
+            self.model = LLaDA2MoeModelLM(config=model_config).eval()
+            self.model.load_weights(local_model_path, torch_dtype=self.dtype)
+            self._freeze()
+        except Exception:
+            self._vllm_config_ctx.__exit__(None, None, None)
+            self._vllm_config_ctx = None
+            raise
 
     def _init_soft_moe(self, name_or_path: str):
         """Initialize dInfer MoE model with soft routing (paper §3.7).
 
         Same as _init_dinfer but replaces hard top-k routing with
-        temperature-controlled soft routing so all experts are active.
+        temperature-controlled soft routing using top-K_soft pruning.
         """
-        # First, initialize exactly like dinfer
         self._init_dinfer(name_or_path)
 
-        # Then patch with soft routing
         from .soft_moe import patch_model_with_soft_routing
         tau_r = self.cfg.get("base_model", {}).get("routing_temperature", 0.01)
-        patch_model_with_soft_routing(self.model, tau_r=tau_r)
-        self._backend = "soft_moe"  # restore after _init_dinfer sets it
+        soft_topk = self.cfg.get("base_model", {}).get("soft_topk", None)
+        patch_model_with_soft_routing(self.model, tau_r=tau_r, soft_topk=soft_topk)
+        self._backend = "soft_moe"
 
     def _freeze(self):
         self.model.eval()
@@ -365,27 +394,39 @@ class LLaDABaseModel(nn.Module):
         LLaDA2 is a masked diffusion model requiring bidirectional attention.
         - block_length=0: full attention (every position sees every other)
         - block_length>0: block-causal (full within block, causal across blocks)
+
+        Returns a float mask for HF backends (0.0=attend, -inf=block) or a
+        boolean mask for dInfer/SDPA backends (True=attend, False=block).
         """
         if block_length > 0:
-            # Block-causal: full attention within each block,
-            # causal across blocks (can see all previous blocks).
-            # SDPA additive mask: 0.0 = attend, -inf = don't attend.
-            mask = torch.full(
-                (seq_len, seq_len), float("-inf"), dtype=self.dtype, device=device,
-            )
-            for i in range(seq_len):
-                block_i = i // block_length
-                see_end = (block_i + 1) * block_length
-                mask[i, :min(see_end, seq_len)] = 0.0
-            return mask.unsqueeze(0).unsqueeze(0).expand(batch_size, -1, -1, -1)
+            pos = torch.arange(seq_len, device=device)
+            block_ends = (pos // block_length + 1) * block_length  # [L]
+            col = pos.unsqueeze(0)       # [1, L]
+            ends = block_ends.unsqueeze(1)  # [L, 1]
+            if self._backend in ("dinfer", "soft_moe"):
+                # dInfer SDPA converts to .bool() — True=attend, False=block
+                mask = (col < ends)  # [L, L] bool
+                return mask.unsqueeze(0).unsqueeze(0).expand(
+                    batch_size, -1, -1, -1,
+                )
+            else:
+                mask = torch.where(col < ends, 0.0, float("-inf"))  # [L, L]
+                return mask.to(dtype=self.dtype).unsqueeze(0).unsqueeze(0).expand(
+                    batch_size, -1, -1, -1,
+                )
         else:
-            # Full bidirectional attention (standard diffusion).
-            # SDPA additive mask: all-zeros = no masking = full attention.
-            return torch.zeros(
-                (batch_size, 1, seq_len, seq_len),
-                dtype=self.dtype,
-                device=device,
-            )
+            if self._backend in ("dinfer", "soft_moe"):
+                return torch.ones(
+                    (batch_size, 1, seq_len, seq_len),
+                    dtype=torch.bool,
+                    device=device,
+                )
+            else:
+                return torch.zeros(
+                    (batch_size, 1, seq_len, seq_len),
+                    dtype=self.dtype,
+                    device=device,
+                )
 
     # ------------------------------------------------------------------
     @torch.no_grad()
@@ -405,12 +446,12 @@ class LLaDABaseModel(nn.Module):
         Full attention within each block, causal across blocks.
         This allows KV caching of completed blocks.
         """
-        if self._backend in ("dinfer", "soft_moe"):
-            return self._forward_dinfer(input_ids)
         batch_size, seq_len = input_ids.shape
         attention_mask = self._make_attention_mask(
             batch_size, seq_len, input_ids.device, block_length=block_length,
         )
+        if self._backend in ("dinfer", "soft_moe"):
+            return self._forward_dinfer(input_ids, attention_mask=attention_mask)
         outputs = self.model(input_ids, attention_mask=attention_mask)
         if hasattr(outputs, "logits"):
             return outputs.logits
@@ -421,13 +462,27 @@ class LLaDABaseModel(nn.Module):
         except (TypeError, IndexError):
             raise RuntimeError(f"Unexpected model output type: {type(outputs)}")
 
-    def _forward_dinfer(self, input_ids: torch.LongTensor) -> torch.Tensor:
-        """Forward pass through dInfer MoE model with vLLM context."""
-        from vllm.config import get_current_vllm_config
-        from vllm.forward_context import set_forward_context
-        vllm_config = get_current_vllm_config()
-        with set_forward_context(None, vllm_config):
-            outputs = self.model(input_ids)
+    def _forward_dinfer(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Forward pass through dInfer MoE model with vLLM context.
+
+        Args:
+            input_ids: [B, L] token ids.
+            attention_mask: [B, 1, L, L] block-causal attention mask.
+                For dInfer SDPA, this should be a boolean tensor where
+                True = attend, False = block.
+        """
+        if self._vllm_config is None:
+            from vllm.config import get_current_vllm_config
+            self._vllm_config = get_current_vllm_config()
+        if not hasattr(self, '_set_forward_context'):
+            from vllm.forward_context import set_forward_context
+            self._set_forward_context = set_forward_context
+        with self._set_forward_context(None, self._vllm_config):
+            outputs = self.model(input_ids, attention_mask=attention_mask)
         if hasattr(outputs, "logits"):
             return outputs.logits
         if isinstance(outputs, (tuple, list)):
@@ -446,13 +501,13 @@ class LLaDABaseModel(nn.Module):
         self, input_ids: torch.LongTensor,
     ) -> Tuple[torch.Tensor, list]:
         """Forward pass → (logits [B,L,V], hidden_states [num_layers][B,L,D])."""
-        if self._backend in ("dinfer", "soft_moe"):
-            return self._forward_with_all_hidden_dinfer(input_ids)
-
         batch_size, seq_len = input_ids.shape
         attention_mask = self._make_attention_mask(
             batch_size, seq_len, input_ids.device, block_length=self._block_length,
         )
+        if self._backend in ("dinfer", "soft_moe"):
+            return self._forward_with_all_hidden_dinfer(input_ids, attention_mask=attention_mask)
+
         outputs = self.model(input_ids, attention_mask=attention_mask, output_hidden_states=True)
         return self._extract_logits_and_hidden_states(outputs, source="hf")
 
@@ -516,13 +571,19 @@ class LLaDABaseModel(nn.Module):
 
     def _forward_with_all_hidden_dinfer(
         self, input_ids: torch.LongTensor,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, list]:
         """Forward with hidden states through dInfer MoE model."""
-        from vllm.config import get_current_vllm_config
-        from vllm.forward_context import set_forward_context
-        vllm_config = get_current_vllm_config()
-        with set_forward_context(None, vllm_config):
-            outputs = self.model(input_ids, output_hidden_states=True)
+        if self._vllm_config is None:
+            from vllm.config import get_current_vllm_config
+            self._vllm_config = get_current_vllm_config()
+        if not hasattr(self, '_set_forward_context'):
+            from vllm.forward_context import set_forward_context
+            self._set_forward_context = set_forward_context
+        with self._set_forward_context(None, self._vllm_config):
+            outputs = self.model(
+                input_ids, attention_mask=attention_mask, output_hidden_states=True,
+            )
         return self._extract_logits_and_hidden_states(outputs, source="dinfer")
 
     def _forward_with_hidden_dinfer(

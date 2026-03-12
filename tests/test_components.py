@@ -233,6 +233,7 @@ class TestSoftMaskedState:
         from aoae.models.soft_mask import SoftMaskedState
 
         sm = SoftMaskedState(DEFAULT_CFG, embed_w)
+        sm.set_mask_embedding(MASK_ID)
         logits = torch.randn(2, 10, VOCAB)
         mask_ind = torch.randint(0, 2, (2, 10)).bool()
         H, conf, ent = sm(logits, mask_ind, 0.5)
@@ -244,6 +245,7 @@ class TestSoftMaskedState:
         from aoae.models.soft_mask import SoftMaskedState
 
         sm = SoftMaskedState(DEFAULT_CFG, embed_w)
+        sm.set_mask_embedding(MASK_ID)
         logits = torch.randn(1, 5, VOCAB)
         mask_ind = torch.ones(1, 5, dtype=torch.bool)
         _, conf, _ = sm(logits, mask_ind, 0.5)
@@ -253,6 +255,7 @@ class TestSoftMaskedState:
         from aoae.models.soft_mask import SoftMaskedState
 
         sm = SoftMaskedState(DEFAULT_CFG, embed_w)
+        sm.set_mask_embedding(MASK_ID)
         logits = torch.randn(1, 5, VOCAB)
         mask_ind = torch.ones(1, 5, dtype=torch.bool)
         _, _, ent = sm(logits, mask_ind, 0.5)
@@ -277,6 +280,7 @@ class TestAOAEPolicy:
         from aoae.models.soft_mask import SoftMaskedState
 
         sm = SoftMaskedState(DEFAULT_CFG, embed_w)
+        sm.set_mask_embedding(MASK_ID)
         pol = AOAEPolicy(DEFAULT_CFG, input_dim=DIM)
 
         logits = torch.randn(2, 10, VOCAB)
@@ -294,6 +298,7 @@ class TestAOAEPolicy:
         from aoae.models.soft_mask import SoftMaskedState
 
         sm = SoftMaskedState(DEFAULT_CFG, embed_w)
+        sm.set_mask_embedding(MASK_ID)
         pol = AOAEPolicy(DEFAULT_CFG, input_dim=DIM)
 
         logits = torch.randn(2, 10, VOCAB)
@@ -304,9 +309,7 @@ class TestAOAEPolicy:
         H, _, _ = sm(logits, mask_ind, 0.5)
         out = pol(H, mask_ind, 0.5)
 
-        # Unmask logits should be -inf for unmasked positions
         assert (out["unmask_logits"][~mask_ind] < -1e8).all()
-        # Remask logits should be -inf for masked positions
         assert (out["remask_logits"][mask_ind] < -1e8).all()
 
     def test_cache_remask_exclusion(self, embed_w):
@@ -314,6 +317,7 @@ class TestAOAEPolicy:
         from aoae.models.soft_mask import SoftMaskedState
 
         sm = SoftMaskedState(DEFAULT_CFG, embed_w)
+        sm.set_mask_embedding(MASK_ID)
         pol = AOAEPolicy(DEFAULT_CFG, input_dim=DIM)
 
         logits = torch.randn(4, 10, VOCAB)
@@ -322,7 +326,6 @@ class TestAOAEPolicy:
         out = pol(H, mask_ind, 0.5)
         actions = pol.sample_actions(out, mask_ind)
 
-        # kappa * r must be 0 everywhere
         assert (actions["kappa_t"] * actions["r_t"]).sum() == 0
 
     def test_log_prob_finite(self, embed_w):
@@ -330,6 +333,7 @@ class TestAOAEPolicy:
         from aoae.models.soft_mask import SoftMaskedState
 
         sm = SoftMaskedState(DEFAULT_CFG, embed_w)
+        sm.set_mask_embedding(MASK_ID)
         pol = AOAEPolicy(DEFAULT_CFG, input_dim=DIM)
 
         logits = torch.randn(2, 10, VOCAB)
@@ -1074,7 +1078,7 @@ class TestDefaultPolicy:
         assert out["unmask_probs"][0, 0].item() > 0
         assert out["unmask_probs"][0, 1].item() == 0.0
         # At step_frac=0.5, rate = 1/(0.5*200) = 0.01
-        expected_rate = 1.0 / (0.5 * 200.0)
+        expected_rate = 1.0 / max(0.5 * 8, 1.0)
         assert abs(out["unmask_probs"][0, 0].item() - expected_rate) < 1e-6
 
     def test_unmask_rate_increases_as_step_frac_decreases(self):

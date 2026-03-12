@@ -190,12 +190,14 @@ def train_prism_adapter(
     wrapped in DistributedDataParallel and each rank processes its own shard
     of the training data so gradients sync correctly.
     """
+    import random as _random
     import torch.distributed as dist
     pc = cfg["prism"]
     batch_size = pc["batch_size"]
     epochs = pc["epochs"]
+    max_grad_norm = pc.get("max_grad_norm", 1.0)
+    save_dir = pc.get("save_dir")
 
-    # --- Shard data across ranks when using DDP ---
     ddp_active = dist.is_initialized() and dist.get_world_size() > 1
     if ddp_active:
         rank = dist.get_rank()
@@ -207,23 +209,24 @@ def train_prism_adapter(
 
     adapter = adapter.to(device).train()
 
-    # --- Wrap in DDP for gradient synchronisation ---
     if ddp_active:
         from torch.nn.parallel import DistributedDataParallel as DDP
-        adapter_ddp = DDP(adapter, device_ids=[device.index])
+        dev_id = device.index if device.index is not None else 0
+        adapter_ddp = DDP(adapter, device_ids=[dev_id])
     else:
         adapter_ddp = adapter
 
     optimizer = torch.optim.AdamW(adapter_ddp.parameters(), lr=pc["lr"])
 
+    best_loss = float("inf")
     for epoch in range(epochs):
+        _random.shuffle(training_data)
         total_loss = 0.0
         n_batches = 0
 
         for i in range(0, len(training_data), batch_size):
             batch = training_data[i : i + batch_size]
 
-            # Pad to same length
             max_len = max(d["input_ids"].shape[0] for d in batch)
             input_ids = torch.zeros(len(batch), max_len, dtype=torch.long, device=device)
             labels = torch.zeros(len(batch), max_len, device=device)
@@ -233,27 +236,33 @@ def train_prism_adapter(
                 input_ids[j, :L] = d["input_ids"]
                 labels[j, :L] = d["labels"]
 
-            # Get hidden states from frozen base model (no LM head — saves ~7 GiB)
             with torch.no_grad():
                 hidden = base_model.forward_hidden_only(input_ids)
                 hidden = hidden.float()
 
-            # Forward through adapter (DDP-wrapped or bare)
             q_scores = adapter_ddp(hidden)  # [B, L]
             loss = F.binary_cross_entropy(q_scores, labels)
 
             optimizer.zero_grad()
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(adapter_ddp.parameters(), max_grad_norm)
             optimizer.step()
 
             total_loss += loss.item()
             n_batches += 1
 
         avg_loss = total_loss / max(n_batches, 1)
-        if not ddp_active or dist.get_rank() == 0:
+        is_rank0 = not ddp_active or dist.get_rank() == 0
+        if is_rank0:
             print(f"  PRISM epoch {epoch+1}/{epochs}  loss={avg_loss:.4f}")
 
-    # Unwrap DDP to get the bare module for saving / returning
+        if avg_loss < best_loss and is_rank0 and save_dir:
+            best_loss = avg_loss
+            import os
+            os.makedirs(save_dir, exist_ok=True)
+            bare = adapter_ddp.module if ddp_active else adapter_ddp
+            torch.save(bare.state_dict(), os.path.join(save_dir, "prism_best.pt"))
+
     final_adapter = adapter_ddp.module if ddp_active else adapter_ddp
     final_adapter.eval()
     for p in final_adapter.parameters():

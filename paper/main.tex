@@ -436,6 +436,7 @@ Policy: 1-layer transformer (${\sim}$500K parameters, input dimension $D{+}4$).
 PRISM adapter fine-tuned on 10K samples.
 Hyperparameters: $K{=}5$ (soft-masking), $G{=}8$ (GRPO group size), $\alpha{=}1.0$, $\beta{=}0.1$, $\epsilon{=}0.2$, $\gamma{=}0.5$ (composed prediction).
 Primary experiment: sweep $\tau_r \in \{0.001, 0.01, 0.05, 0.1, 0.2, 0.5\}$.
+For the routing-only POC1 sweep, we disable remasking to isolate the routing-temperature speed--quality effect.
 All evaluations integrated into dInfer and SGLang.
 
 \paragraph{Datasets.}

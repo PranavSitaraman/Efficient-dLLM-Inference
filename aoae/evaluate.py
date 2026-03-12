@@ -13,6 +13,7 @@ Usage:
 import os
 import json
 import time
+import collections
 import yaml
 import torch
 import numpy as np
@@ -28,7 +29,9 @@ from .models.policy import AOAEPolicy, DefaultPolicy
 from .models.prism import PRISMAdapter
 from .inference import aoae_inference, uniform_decode, confidence_threshold_decode, block_smode_decode
 from .dinfer_integration import run_speculative_inference
-from .train_grpo import check_math_correctness, extract_answer, extract_prompt_and_reference
+from .train_grpo import extract_answer, extract_prompt_and_reference
+from .runtime_checks import collect_runtime_info, set_global_seed, is_global_rank_zero
+from .evaluators import build_evaluator
 
 
 @dataclass
@@ -52,12 +55,17 @@ class EvalResult:
     access_mandatory_rate: float = 0.0
     access_optional_rate: float = 0.0
     access_budget_utilization: float = 0.0
+    access_effective_budget: float = 0.0
     access_next_h_precision: float = 0.0
     access_next_h_recall: float = 0.0
     access_next_h_f1: float = 0.0
     access_next_h_spec_precision: float = 0.0
     access_next_h_spec_recall: float = 0.0
     access_next_h_spec_f1: float = 0.0
+    mean_boundary_depth: float = 0.0
+    boundary_distribution: str = "{}"
+    routing_entropy: float = 0.0
+    max_routing_entropy: float = 0.0
 
 
 def _load_eval_dataset(dc: Dict[str, Any]):
@@ -150,10 +158,11 @@ def evaluate_aoae(
     total_time = 0.0
     total_nfe = 0
     total_gen_tokens = 0
+    evaluator = build_evaluator(cfg)
 
     n_eval = min(len(dataset), max_samples) if max_samples else len(dataset)
 
-    for i in tqdm(range(n_eval), desc=f"AOAE (tau_pi={policy_temperature})"):
+    for i in tqdm(range(n_eval), desc=f"AOAE (tau_pi={policy_temperature})", disable=not is_global_rank_zero()):
         sample = dataset[i]
         question, reference = _extract_eval_prompt_reference(sample)
         if not question or not reference:
@@ -196,7 +205,8 @@ def evaluate_aoae(
         total_gen_tokens += n_gen
         gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
 
-        is_correct = check_math_correctness(gen_text, reference)
+        decision = evaluator.evaluate(gen_text, reference, sample=sample)
+        is_correct = decision.correct
         if is_correct:
             correct += 1
         total += 1
@@ -247,18 +257,23 @@ def evaluate_baseline(
     total = 0
     total_time = 0.0
     total_gen_tokens = 0
+    evaluator = build_evaluator(cfg)
+    debug_eval = bool(cfg.get("evaluation", {}).get("debug_logging", False))
+    rank0 = is_global_rank_zero()
 
     n_eval = min(len(dataset), max_samples) if max_samples else len(dataset)
 
-    # Warm-up forward pass
-    warmup_ids = torch.full((1, 32), mask_id, dtype=torch.long, device=device)
+    # Warm-up with realistic size to trigger Triton kernel compilation
+    warmup_len = cfg["data"].get("max_prompt_len", 512) + cfg["inference"]["gen_length"]
+    warmup_ids = torch.full((1, warmup_len), mask_id, dtype=torch.long, device=device)
     with torch.no_grad():
         base_model.forward(warmup_ids)
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+    del warmup_ids
 
     # Debug: show prompt format for first sample
-    if n_eval > 0:
+    if debug_eval and rank0 and n_eval > 0:
         s0 = dataset[0]
         q0 = s0.get("question", s0.get("problem", ""))
         try:
@@ -271,7 +286,8 @@ def evaluate_baseline(
             print(f"  [DEBUG] apply_chat_template FAILED: {e}")
             print(f"  [DEBUG] Falling back to raw question: {q0[:100]}")
 
-    for i in tqdm(range(n_eval), desc=f"Baseline ({method})"):
+    progress = tqdm(range(n_eval), desc=f"Baseline ({method})", disable=not rank0)
+    for i in progress:
         sample = dataset[i]
         question, reference = _extract_eval_prompt_reference(sample)
         if not question or not reference:
@@ -340,14 +356,15 @@ def evaluate_baseline(
         total_gen_tokens += n_gen
         gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
 
-        is_correct = check_math_correctness(gen_text, reference)
+        decision = evaluator.evaluate(gen_text, reference, sample=sample)
+        is_correct = decision.correct
         if is_correct:
             correct += 1
         total += 1
         total_time += (t1 - t0)
 
         # Debug output for first 3 samples
-        if i < 3:
+        if debug_eval and rank0 and i < 3:
             gen_answer = extract_answer(gen_text)
             ref_answer = extract_answer(reference)
             print(f"\n  [DEBUG sample {i}] method={method}")
@@ -414,12 +431,16 @@ def evaluate_speculative(
     total_access_mandatory = 0.0
     total_access_optional = 0.0
     total_access_budget_util = 0.0
+    total_access_effective_budget = 0.0
     total_access_next_h_precision = 0.0
     total_access_next_h_recall = 0.0
     total_access_next_h_f1 = 0.0
     total_access_next_h_spec_precision = 0.0
     total_access_next_h_spec_recall = 0.0
     total_access_next_h_spec_f1 = 0.0
+    total_boundary_depth = 0.0
+    boundary_dist_counter: collections.Counter[str] = collections.Counter()
+    evaluator = build_evaluator(cfg)
 
     n_eval = min(len(dataset), max_samples) if max_samples else len(dataset)
     tau_r = cfg["base_model"].get("routing_temperature", 0.01)
@@ -431,14 +452,17 @@ def evaluate_speculative(
         else "pc=off"
     )
 
-    # Warm-up forward pass (exclude from timing)
-    warmup_ids = torch.full((1, 32), mask_id, dtype=torch.long, device=device)
+    # Warm-up with realistic input size to trigger Triton kernel compilation
+    warmup_len = cfg["data"].get("max_prompt_len", 512) + cfg["inference"]["gen_length"]
+    warmup_ids = torch.full((1, warmup_len), mask_id, dtype=torch.long, device=device)
     with torch.no_grad():
         dual_model.auxiliary_forward(warmup_ids)
+        dual_model.primary_forward(warmup_ids)
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+    del warmup_ids
 
-    for i in tqdm(range(n_eval), desc=f"Speculative (tau_r={tau_r})"):
+    for i in tqdm(range(n_eval), desc=f"Speculative (tau_r={tau_r})", disable=not is_global_rank_zero()):
         sample = dataset[i]
         question, reference = _extract_eval_prompt_reference(sample)
         if not question or not reference:
@@ -481,14 +505,17 @@ def evaluate_speculative(
         total_gen_tokens += n_gen
         gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
 
-        is_correct = check_math_correctness(gen_text, reference)
+        decision = evaluator.evaluate(gen_text, reference, sample=sample)
+        is_correct = decision.correct
         if is_correct:
             correct += 1
         total += 1
 
         elapsed = t1 - t0
         total_time += elapsed
-        total_nfe += T * 2  # 2 model forward passes per step
+        pri_steps = int(stats.get("primary_steps", T))
+        aux_steps = int(stats.get("aux_only_steps", 0))
+        total_nfe += pri_steps * 2 + aux_steps  # 2 fwd per primary step, 1 per aux-only
         total_cache_commits += int(stats.get("total_commits", 0))
         total_cache_invalidations += int(stats.get("total_invalidations", 0))
         total_draft_accepts += int(stats.get("draft_accepts", 0))
@@ -500,12 +527,20 @@ def evaluate_speculative(
         total_access_mandatory += float(stats.get("access_access_mandatory_rate", 0.0))
         total_access_optional += float(stats.get("access_access_optional_rate", 0.0))
         total_access_budget_util += float(stats.get("access_access_budget_utilization", 0.0))
+        total_access_effective_budget += float(stats.get("access_access_effective_budget", 0.0))
         total_access_next_h_precision += float(stats.get("access_next_h_precision", 0.0))
         total_access_next_h_recall += float(stats.get("access_next_h_recall", 0.0))
         total_access_next_h_f1 += float(stats.get("access_next_h_f1", 0.0))
         total_access_next_h_spec_precision += float(stats.get("access_next_h_spec_precision", 0.0))
         total_access_next_h_spec_recall += float(stats.get("access_next_h_spec_recall", 0.0))
         total_access_next_h_spec_f1 += float(stats.get("access_next_h_spec_f1", 0.0))
+        total_boundary_depth += float(stats.get("mean_boundary_depth", 0.0))
+        try:
+            bd = json.loads(stats.get("boundary_distribution", "{}"))
+            for k, v in bd.items():
+                boundary_dist_counter[str(k)] += int(v)
+        except Exception:
+            pass
         if dynamics_sink is not None and "kv_dynamics" in stats:
             dynamics_sink.append(
                 {
@@ -535,12 +570,25 @@ def evaluate_speculative(
     access_mandatory_rate = total_access_mandatory / max(total, 1)
     access_optional_rate = total_access_optional / max(total, 1)
     access_budget_utilization = total_access_budget_util / max(total, 1)
+    access_effective_budget = total_access_effective_budget / max(total, 1)
     access_next_h_precision = total_access_next_h_precision / max(total, 1)
     access_next_h_recall = total_access_next_h_recall / max(total, 1)
     access_next_h_f1 = total_access_next_h_f1 / max(total, 1)
     access_next_h_spec_precision = total_access_next_h_spec_precision / max(total, 1)
     access_next_h_spec_recall = total_access_next_h_spec_recall / max(total, 1)
     access_next_h_spec_f1 = total_access_next_h_spec_f1 / max(total, 1)
+    mean_boundary_depth = total_boundary_depth / max(total, 1)
+    boundary_distribution = json.dumps(dict(sorted(boundary_dist_counter.items(), key=lambda kv: int(kv[0]))))
+
+    routing_ent = 0.0
+    max_routing_ent = 0.0
+    try:
+        from aoae.models.soft_moe import compute_routing_entropy
+        ent_info = compute_routing_entropy(dual_model._model.model)
+        routing_ent = ent_info.get("mean_entropy", 0.0)
+        max_routing_ent = ent_info.get("max_possible_entropy", 0.0)
+    except Exception:
+        pass
 
     return EvalResult(
         method="Speculative-AOAE",
@@ -565,12 +613,17 @@ def evaluate_speculative(
         access_mandatory_rate=access_mandatory_rate,
         access_optional_rate=access_optional_rate,
         access_budget_utilization=access_budget_utilization,
+        access_effective_budget=access_effective_budget,
         access_next_h_precision=access_next_h_precision,
         access_next_h_recall=access_next_h_recall,
         access_next_h_f1=access_next_h_f1,
         access_next_h_spec_precision=access_next_h_spec_precision,
         access_next_h_spec_recall=access_next_h_spec_recall,
         access_next_h_spec_f1=access_next_h_spec_f1,
+        mean_boundary_depth=mean_boundary_depth,
+        boundary_distribution=boundary_distribution,
+        routing_entropy=routing_ent,
+        max_routing_entropy=max_routing_ent,
     )
 
 
@@ -734,7 +787,10 @@ def _build_run_metadata(
     results_path: str,
     num_results: int,
 ) -> Dict[str, Any]:
+    runtime = collect_runtime_info()
+    eval_cfg = cfg.get("evaluation", {})
     return {
+        "schema_version": "aoae_eval_v2",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "run_name": cfg.get("logging", {}).get("run_name", ""),
         "output_dir": cfg.get("logging", {}).get("output_dir", ""),
@@ -745,13 +801,22 @@ def _build_run_metadata(
         "model_name_or_path": cfg.get("base_model", {}).get("name_or_path", ""),
         "backend": cfg.get("base_model", {}).get("backend", "auto"),
         "routing_temperature": cfg.get("base_model", {}).get("routing_temperature"),
+        "seed": int(cfg.get("hardware", {}).get("seed", 42)),
+        "deterministic": bool(cfg.get("hardware", {}).get("deterministic", False)),
+        "task_type": eval_cfg.get("task_type", "math"),
+        "code_timeout_sec": eval_cfg.get("code", {}).get("timeout_sec"),
+        "code_cpu_time_limit_sec": eval_cfg.get("code", {}).get("cpu_time_limit_sec"),
+        "code_memory_limit_mb": eval_cfg.get("code", {}).get("memory_limit_mb"),
         "disable_remask": bool(cfg.get("inference", {}).get("disable_remask", False)),
         "reuse_signal_method": cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match"),
         "reuse_signal_threshold": cfg.get("inference", {}).get("reuse_signal", {}).get("threshold", 0.0),
         "compose_gamma": cfg.get("inference", {}).get("compose_gamma", 0.0),
+        "candidate_policy": cfg.get("inference", {}).get("positional_cache", {}).get("candidate_policy", "learned_topb"),
         "positional_cache_enabled": bool(cfg.get("inference", {}).get("positional_cache", {}).get("enabled", False)),
         "positional_cache_horizon": int(cfg.get("inference", {}).get("positional_cache", {}).get("horizon", 4)),
         "positional_cache_refresh_budget": int(cfg.get("inference", {}).get("positional_cache", {}).get("refresh_budget", 0)),
+        "boundary_head_enabled": bool(cfg.get("policy", {}).get("boundary_head", {}).get("enabled", False)),
+        "boundary_num_bins": int(cfg.get("policy", {}).get("boundary_head", {}).get("num_bins", 0)),
         "track_kv_dynamics": bool(cfg.get("analysis", {}).get("track_kv_dynamics", False)),
         "kv_locality_windows": cfg.get("analysis", {}).get("locality_windows", [8, 16, 32]),
         "kv_confidence_threshold": cfg.get("analysis", {}).get("confidence_threshold", 0.9),
@@ -761,6 +826,14 @@ def _build_run_metadata(
         "eval_split": cfg.get("data", {}).get("eval_split", ""),
         "eval_max_samples": max_samples,
         "num_results": num_results,
+        "host": runtime.get("host"),
+        "git_commit": runtime.get("git_commit"),
+        "torch_version": runtime.get("torch_version"),
+        "vllm_version": runtime.get("vllm_version"),
+        "transformers_version": runtime.get("transformers_version"),
+        "cuda_available": runtime.get("cuda_available"),
+        "cuda_device_count": runtime.get("cuda_device_count"),
+        "cuda_devices": runtime.get("cuda_devices"),
     }
 
 
@@ -778,7 +851,7 @@ def _append_manifest(metadata: Dict[str, Any], all_results: List[EvalResult]) ->
             entry = dict(metadata)
             entry["run_id"] = run_id
             entry.update(asdict(row))
-            f.write(json.dumps(entry) + "\n")
+            f.write(json.dumps(entry, sort_keys=True) + "\n")
     return manifest_path
 
 
@@ -790,6 +863,8 @@ def main(
     config_path: Optional[str] = None,
     skip_baselines: bool = False,
     speculative_policy_temperatures: Optional[List[float]] = None,
+    preloaded_dual_model=None,
+    preloaded_eval_ds=None,
 ):
     """Run full evaluation suite.
 
@@ -801,13 +876,24 @@ def main(
         config_path: path to config YAML (for metadata/manifest tracking).
         skip_baselines: skip baseline decoding methods (useful for sweeps).
         speculative_policy_temperatures: optional tau_pi list for speculative runs.
+        preloaded_dual_model: reuse a previously loaded DualModelWrapper (avoids reload).
+        preloaded_eval_ds: reuse a previously loaded eval dataset.
     """
+    seed = int(cfg.get("hardware", {}).get("seed", 42))
+    deterministic = bool(cfg.get("hardware", {}).get("deterministic", False))
+    set_global_seed(seed, deterministic=deterministic)
+    if not deterministic:
+        torch.backends.cudnn.benchmark = True
+        torch.set_float32_matmul_precision('high')
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # --- Load eval dataset ---
     dc = cfg["data"]
-    print(f"Loading eval dataset: {dc['eval_dataset']}...")
-    eval_ds = _load_eval_dataset(dc)
+    if preloaded_eval_ds is not None:
+        eval_ds = preloaded_eval_ds
+    else:
+        if is_global_rank_zero():
+            print(f"Loading eval dataset: {dc['eval_dataset']}...")
+        eval_ds = _load_eval_dataset(dc)
     if max_samples is None:
         max_samples = dc.get("eval_max_samples")
     if speculative_policy_temperatures is None:
@@ -817,12 +903,20 @@ def main(
     kv_dynamics_records: List[Dict[str, Any]] = []
 
     if mode == "speculative" or cfg["base_model"].get("backend") == "dual":
-        # ====== Speculative Dual-Model Evaluation ======
         from .models.dual_model import DualModelWrapper
 
-        print("Loading dual model (hard auxiliary + soft primary)...")
-        dual_model = DualModelWrapper(cfg)
-        dual_model = dual_model.to(device)
+        if preloaded_dual_model is not None:
+            dual_model = preloaded_dual_model
+            tau_r = cfg["base_model"].get("routing_temperature", 0.01)
+            dual_model.set_tau_r(tau_r)
+            soft_topk = cfg["base_model"].get("soft_topk")
+            if soft_topk is not None:
+                dual_model.set_soft_topk(soft_topk)
+        else:
+            if is_global_rank_zero():
+                print("Loading dual model (hard auxiliary + soft primary)...")
+            dual_model = DualModelWrapper(cfg)
+            dual_model = dual_model.to(device)
         tokenizer = dual_model.tokenizer
         mask_id = cfg["base_model"]["mask_token_id"]
 
@@ -835,32 +929,40 @@ def main(
 
         # Block S-Mode: paper's key TPS technique (block-wise semi-AR decoding)
         if not skip_baselines:
-            print("\n====== Baseline: Block S-Mode (tau=0.7, block=32) ======")
+            if is_global_rank_zero():
+                print("\n====== Baseline: Block S-Mode (tau=0.7, block=32) ======")
             r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
                                   "block_smode", max_samples=max_samples)
             all_results.append(r)
-            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            if is_global_rank_zero():
+                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
             # Block S-Mode + MBE: with Multiple Block Editing
-            print("\n====== Baseline: Block S-Mode + MBE ======")
+            if is_global_rank_zero():
+                print("\n====== Baseline: Block S-Mode + MBE ======")
             r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
                                   "block_smode_mbe", max_samples=max_samples)
             all_results.append(r)
-            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            if is_global_rank_zero():
+                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
             # S-Mode: paper's speed baseline (tau_mask=0.7, aggressive)
-            print("\n====== Baseline: S-Mode (tau=0.7, speed) ======")
+            if is_global_rank_zero():
+                print("\n====== Baseline: S-Mode (tau=0.7, speed) ======")
             r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
                                   "confidence_s_mode", max_samples=max_samples)
             all_results.append(r)
-            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            if is_global_rank_zero():
+                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
             # Q-Mode: paper's quality baseline (tau_mask=0.95, conservative)
-            print("\n====== Baseline: Q-Mode (tau=0.95, quality) ======")
+            if is_global_rank_zero():
+                print("\n====== Baseline: Q-Mode (tau=0.95, quality) ======")
             r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
                                   "confidence_q_mode", max_samples=max_samples)
             all_results.append(r)
-            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            if is_global_rank_zero():
+                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
         # --- AOAE Speculative Evaluation ---
         # Auto-detect policy checkpoint from output_dir if not explicitly provided
@@ -887,7 +989,8 @@ def main(
 
         if has_trained_policy:
             policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
-            print(f"\nLoading trained policy from {checkpoint_path}")
+            if is_global_rank_zero():
+                print(f"\nLoading trained policy from {checkpoint_path}")
             ckpt = torch.load(checkpoint_path, map_location=device)
             _load_state_dict_flexible(policy, ckpt["policy"], "policy")
             if "soft_mask" in ckpt:
@@ -905,12 +1008,15 @@ def main(
                 prism = PRISMAdapter(cfg, embed_dim).to(device)
                 prism.load_state_dict(torch.load(prism_path, map_location=device))
                 prism.eval()
-                print(f"  Loaded PRISM adapter from {prism_path}")
+                if is_global_rank_zero():
+                    print(f"  Loaded PRISM adapter from {prism_path}")
 
             tau_r = cfg["base_model"].get("routing_temperature", 0.01)
-            print(f"\n====== Speculative AOAE — Trained Policy (tau_r={tau_r}) ======")
+            if is_global_rank_zero():
+                print(f"\n====== Speculative AOAE — Trained Policy (tau_r={tau_r}) ======")
             for tau_pi in speculative_policy_temperatures:
-                print(f"\n--- tau_pi = {tau_pi} ---")
+                if is_global_rank_zero():
+                    print(f"\n--- tau_pi = {tau_pi} ---")
                 r = evaluate_speculative(
                     dual_model, policy, soft_mask, prism, eval_ds, tokenizer, cfg,
                     policy_temperature=tau_pi,
@@ -918,13 +1024,17 @@ def main(
                     dynamics_sink=kv_dynamics_records,
                 )
                 all_results.append(r)
-                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+                if is_global_rank_zero():
+                    print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
         else:
             # No trained policy — use DefaultPolicy (hard auxiliary as heuristic)
             tau_r = cfg["base_model"].get("routing_temperature", 0.01)
-            print(f"\n====== Speculative AOAE — Default Policy (tau_r={tau_r}) ======")
-            print("  (No trained checkpoint found; using hard auxiliary as heuristic policy)")
-            policy = DefaultPolicy(tau_mask=0.7).to(device)
+            if is_global_rank_zero():
+                print(f"\n====== Speculative AOAE — Default Policy (tau_r={tau_r}) ======")
+                print("  (No trained checkpoint found; using hard auxiliary as heuristic policy)")
+            policy = DefaultPolicy(
+                tau_mask=0.7, num_steps=cfg["inference"]["steps"],
+            ).to(device)
             policy.eval()
 
             r = evaluate_speculative(
@@ -934,11 +1044,13 @@ def main(
                 dynamics_sink=kv_dynamics_records,
             )
             all_results.append(r)
-            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            if is_global_rank_zero():
+                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
     else:
         # ====== Standard Single-Model Evaluation ======
-        print("Loading base model...")
+        if is_global_rank_zero():
+            print("Loading base model...")
         base_model = LLaDABaseModel(cfg)
         base_model = base_model.to(device)
         tokenizer = base_model.tokenizer
@@ -946,34 +1058,45 @@ def main(
 
         # --- Baselines ---
         if not skip_baselines:
-            print("\n====== Baseline: Block S-Mode (tau=0.7, block=32) ======")
+            if is_global_rank_zero():
+                print("\n====== Baseline: Block S-Mode (tau=0.7, block=32) ======")
             r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "block_smode", max_samples=max_samples)
             all_results.append(r)
-            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            if is_global_rank_zero():
+                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
-            print("\n====== Baseline: Block S-Mode + MBE ======")
+            if is_global_rank_zero():
+                print("\n====== Baseline: Block S-Mode + MBE ======")
             r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "block_smode_mbe", max_samples=max_samples)
             all_results.append(r)
-            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            if is_global_rank_zero():
+                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
-            print("\n====== Baseline: S-Mode (aggressive) ======")
+            if is_global_rank_zero():
+                print("\n====== Baseline: S-Mode (aggressive) ======")
             r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "confidence_s_mode", max_samples=max_samples)
             all_results.append(r)
-            print(f"  Accuracy: {r.accuracy:.4f}")
+            if is_global_rank_zero():
+                print(f"  Accuracy: {r.accuracy:.4f}")
 
-            print("\n====== Baseline: Q-Mode (conservative) ======")
+            if is_global_rank_zero():
+                print("\n====== Baseline: Q-Mode (conservative) ======")
             r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "confidence_q_mode", max_samples=max_samples)
             all_results.append(r)
-            print(f"  Accuracy: {r.accuracy:.4f}")
+            if is_global_rank_zero():
+                print(f"  Accuracy: {r.accuracy:.4f}")
 
-            print("\n====== Baseline: Fast-dLLM (Wu et al. 2025) ======")
+            if is_global_rank_zero():
+                print("\n====== Baseline: Fast-dLLM (Wu et al. 2025) ======")
             r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "fast_dllm", max_samples=max_samples)
             all_results.append(r)
-            print(f"  Accuracy: {r.accuracy:.4f}")
+            if is_global_rank_zero():
+                print(f"  Accuracy: {r.accuracy:.4f}")
 
         # --- AOAE ---
         if checkpoint_path and os.path.exists(checkpoint_path):
-            print(f"\nLoading AOAE policy from {checkpoint_path}")
+            if is_global_rank_zero():
+                print(f"\nLoading AOAE policy from {checkpoint_path}")
             embed_w = base_model.get_embedding_weight()
             embed_dim = embed_w.shape[1]
 
@@ -1000,20 +1123,23 @@ def main(
                 prism.load_state_dict(torch.load(prism_path, map_location=device))
                 prism.eval()
 
-            print("\n====== AOAE Pareto Sweep ======")
+            if is_global_rank_zero():
+                print("\n====== AOAE Pareto Sweep ======")
             aoae_results = run_pareto_sweep(
                 base_model, policy, soft_mask, prism, eval_ds, tokenizer, cfg, max_samples,
             )
             all_results.extend(aoae_results)
         else:
-            print("\nNo AOAE checkpoint provided — skipping AOAE evaluation.")
+            if is_global_rank_zero():
+                print("\nNo AOAE checkpoint provided — skipping AOAE evaluation.")
 
     # --- Save results ---
     os.makedirs(cfg["logging"]["output_dir"], exist_ok=True)
     results_path = os.path.join(cfg["logging"]["output_dir"], "eval_results.json")
-    with open(results_path, "w") as f:
-        json.dump([asdict(r) for r in all_results], f, indent=2)
-    print(f"\nResults saved to {results_path}")
+    if is_global_rank_zero():
+        with open(results_path, "w") as f:
+            json.dump([asdict(r) for r in all_results], f, indent=2)
+        print(f"\nResults saved to {results_path}")
 
     metadata = _build_run_metadata(
         cfg=cfg,
@@ -1025,33 +1151,36 @@ def main(
         num_results=len(all_results),
     )
     metadata_path = os.path.join(cfg["logging"]["output_dir"], "eval_metadata.json")
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
-    print(f"Metadata saved to {metadata_path}")
+    if is_global_rank_zero():
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        print(f"Metadata saved to {metadata_path}")
 
-    manifest_path = _append_manifest(metadata, all_results)
-    print(f"Manifest updated at {manifest_path}")
+    if is_global_rank_zero():
+        manifest_path = _append_manifest(metadata, all_results)
+        print(f"Manifest updated at {manifest_path}")
 
-    _save_kv_dynamics_artifacts(kv_dynamics_records, cfg["logging"]["output_dir"])
-    _save_eval_plots(all_results, cfg["logging"]["output_dir"])
+        _save_kv_dynamics_artifacts(kv_dynamics_records, cfg["logging"]["output_dir"])
+        _save_eval_plots(all_results, cfg["logging"]["output_dir"])
 
     # --- Print summary table ---
-    print("\n" + "=" * 196)
-    print(
-        f"{'Method':<25} {'Accuracy':>10} {'TPS':>10} {'NFE':>8} "
-        f"{'CacheHit':>10} {'Agree':>8} {'DraftAcc':>10} {'Reuse':>8} {'ReuseJS':>9} "
-        f"{'AccF1':>8} {'SpecF1':>8} {'Note':<40}"
-    )
-    print("-" * 196)
-    for r in all_results:
+    if is_global_rank_zero():
+        print("\n" + "=" * 196)
         print(
-            f"{r.method:<25} {r.accuracy:>10.4f} {r.avg_tokens_per_sec:>10.1f} "
-            f"{r.avg_nfe:>8.0f} {r.cache_hit_rate:>10.4f} "
-            f"{r.agreement_rate:>8.4f} {r.draft_accept_rate:>10.4f} "
-            f"{r.reuse_mean_safe:>8.4f} {r.reuse_mean_js:>9.4f} "
-            f"{r.access_next_h_f1:>8.4f} {r.access_next_h_spec_f1:>8.4f} {r.config_note:<40}"
+            f"{'Method':<25} {'Accuracy':>10} {'TPS':>10} {'NFE':>8} "
+            f"{'CacheHit':>10} {'Agree':>8} {'DraftAcc':>10} {'Reuse':>8} {'ReuseJS':>9} "
+            f"{'AccF1':>8} {'SpecF1':>8} {'Note':<40}"
         )
-    print("=" * 196)
+        print("-" * 196)
+        for r in all_results:
+            print(
+                f"{r.method:<25} {r.accuracy:>10.4f} {r.avg_tokens_per_sec:>10.1f} "
+                f"{r.avg_nfe:>8.0f} {r.cache_hit_rate:>10.4f} "
+                f"{r.agreement_rate:>8.4f} {r.draft_accept_rate:>10.4f} "
+                f"{r.reuse_mean_safe:>8.4f} {r.reuse_mean_js:>9.4f} "
+                f"{r.access_next_h_f1:>8.4f} {r.access_next_h_spec_f1:>8.4f} {r.config_note:<40}"
+            )
+        print("=" * 196)
 
     return all_results
 
@@ -1104,6 +1233,17 @@ if __name__ == "__main__":
                         help="Override data.eval_dataset_config (empty string = none).")
     parser.add_argument("--eval_split", type=str, default=None,
                         help="Override data.eval_split.")
+    parser.add_argument("--task_type", type=str, default=None, choices=["math", "code"],
+                        help="Override evaluation.task_type.")
+    parser.add_argument("--code_timeout_sec", type=float, default=None,
+                        help="Override evaluation.code.timeout_sec for task_type=code.")
+    parser.add_argument("--code_cpu_time_limit_sec", type=int, default=None,
+                        help="Override evaluation.code.cpu_time_limit_sec.")
+    parser.add_argument("--code_memory_limit_mb", type=int, default=None,
+                        help="Override evaluation.code.memory_limit_mb.")
+    parser.add_argument("--candidate_policy", type=str, default=None,
+                        choices=["learned_topb", "sliding_window", "confidence_topb"],
+                        help="Override inference.positional_cache.candidate_policy.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -1125,12 +1265,22 @@ if __name__ == "__main__":
         ic.setdefault("positional_cache", {})["horizon"] = int(args.positional_cache_horizon)
     if args.positional_cache_refresh_budget is not None:
         ic.setdefault("positional_cache", {})["refresh_budget"] = int(args.positional_cache_refresh_budget)
+    if args.candidate_policy is not None:
+        ic.setdefault("positional_cache", {})["candidate_policy"] = args.candidate_policy
     if args.eval_dataset is not None:
         dc["eval_dataset"] = args.eval_dataset
     if args.eval_dataset_config is not None:
         dc["eval_dataset_config"] = args.eval_dataset_config or None
     if args.eval_split is not None:
         dc["eval_split"] = args.eval_split
+    if args.task_type is not None:
+        cfg.setdefault("evaluation", {})["task_type"] = args.task_type
+    if args.code_timeout_sec is not None:
+        cfg.setdefault("evaluation", {}).setdefault("code", {})["timeout_sec"] = float(args.code_timeout_sec)
+    if args.code_cpu_time_limit_sec is not None:
+        cfg.setdefault("evaluation", {}).setdefault("code", {})["cpu_time_limit_sec"] = int(args.code_cpu_time_limit_sec)
+    if args.code_memory_limit_mb is not None:
+        cfg.setdefault("evaluation", {}).setdefault("code", {})["memory_limit_mb"] = int(args.code_memory_limit_mb)
 
     policy_temperatures = None
     if args.policy_temperatures is not None:

@@ -42,8 +42,13 @@ class AOAEPolicy(nn.Module):
         d = pc["d_model"]
         self.d_model = d
 
-        self.use_positional_features = pc.get("use_positional_features", False)
-        extra_feats = 4 + (2 if self.use_positional_features else 0)
+        self.use_positional_features = bool(pc.get("use_positional_features", False))
+        self.use_age_feature = bool(pc.get("use_age_feature", self.use_positional_features))
+        self.use_last_action_feature = bool(pc.get("use_last_action_feature", self.use_positional_features))
+        self.boundary_cfg = pc.get("boundary_head", {})
+        self.boundary_enabled = bool(self.boundary_cfg.get("enabled", False))
+        self.boundary_num_bins = max(2, int(self.boundary_cfg.get("num_bins", 8)))
+        extra_feats = 4 + int(self.use_age_feature) + int(self.use_last_action_feature)
         # --- Input projection: base + optional positional features ---
         self.input_proj = nn.Linear(input_dim + extra_feats, d)
 
@@ -66,6 +71,7 @@ class AOAEPolicy(nn.Module):
         self.head_remask = nn.Linear(d, 1)
         self.head_cache = nn.Linear(d, 1)
         self.head_access = nn.Linear(d, 1)  # next-H positional access head
+        self.head_boundary = nn.Linear(d, self.boundary_num_bins) if self.boundary_enabled else None
 
         self._init_weights()
 
@@ -131,16 +137,18 @@ class AOAEPolicy(nn.Module):
             a_feat = torch.zeros(B, L, 1, device=device)          # [B, L, 1]
         t_feat = torch.full((B, L, 1), step_frac, device=device)  # [B, L, 1]
         feats = [H_t, m_feat, q_feat, a_feat, t_feat]
-        if self.use_positional_features:
+        if self.use_age_feature:
             if age_feature is not None:
                 age_feat = age_feature.unsqueeze(-1)
             else:
                 age_feat = torch.zeros(B, L, 1, device=device)
+            feats.append(age_feat)
+        if self.use_last_action_feature:
             if last_action_feature is not None:
                 last_feat = last_action_feature.unsqueeze(-1)
             else:
                 last_feat = torch.zeros(B, L, 1, device=device)
-            feats.extend([age_feat, last_feat])
+            feats.append(last_feat)
         x = torch.cat(feats, dim=-1)
         x = self.input_proj(x)                                     # [B, L, d]
 
@@ -152,6 +160,12 @@ class AOAEPolicy(nn.Module):
         remask_logits = self.head_remask(x).squeeze(-1)  # [B, L]
         cache_logits = self.head_cache(x).squeeze(-1)    # [B, L]
         access_logits = self.head_access(x).squeeze(-1)  # [B, L]
+        boundary_logits = None
+        boundary_probs = None
+        if self.boundary_enabled and self.head_boundary is not None:
+            pooled = x.mean(dim=1)  # [B, d]
+            boundary_logits = self.head_boundary(pooled)  # [B, num_bins]
+            boundary_probs = F.softmax(boundary_logits / max(temperature, 1e-6), dim=-1)
 
         # --- Validity constraints via logit masking ---
         # Unmask only on masked positions
@@ -166,7 +180,7 @@ class AOAEPolicy(nn.Module):
         cache_probs = torch.sigmoid(cache_logits / temperature)
         access_probs = torch.sigmoid(access_logits / temperature)
 
-        return {
+        out = {
             "unmask_logits": unmask_logits,
             "remask_logits": remask_logits,
             "cache_logits": cache_logits,
@@ -176,6 +190,10 @@ class AOAEPolicy(nn.Module):
             "cache_probs": cache_probs,
             "access_probs": access_probs,
         }
+        if boundary_logits is not None and boundary_probs is not None:
+            out["boundary_logits"] = boundary_logits
+            out["boundary_probs"] = boundary_probs
+        return out
 
     # ------------------------------------------------------------------
     def sample_actions(
@@ -195,11 +213,17 @@ class AOAEPolicy(nn.Module):
         r_t = torch.bernoulli(policy_out["remask_probs"])    # [B, L]
         kappa_t = torch.bernoulli(policy_out["cache_probs"])  # [B, L]
         q_t = torch.bernoulli(policy_out["access_probs"])     # [B, L]
+        ell_t = None
+        if "boundary_probs" in policy_out:
+            ell_t = torch.multinomial(policy_out["boundary_probs"], num_samples=1).squeeze(-1)
 
         # Enforce cache-remask exclusion: if remask is 1, cache must be 0
         kappa_t = kappa_t * (1.0 - r_t)
 
-        return {"u_t": u_t, "r_t": r_t, "kappa_t": kappa_t, "q_t": q_t}
+        out = {"u_t": u_t, "r_t": r_t, "kappa_t": kappa_t, "q_t": q_t}
+        if ell_t is not None:
+            out["ell_t"] = ell_t
+        return out
 
     # ------------------------------------------------------------------
     def log_prob(
@@ -238,6 +262,12 @@ class AOAEPolicy(nn.Module):
                 lp = lp * (1.0 - actions["q_t_mandatory"].float())
             total = total + lp.sum(dim=-1)  # [B]
 
+        if "ell_t" in actions and "boundary_probs" in policy_out:
+            probs = policy_out["boundary_probs"].clamp(1e-7, 1.0)
+            idx = actions["ell_t"].long().unsqueeze(-1)
+            lp_b = torch.log(torch.gather(probs, dim=-1, index=idx).squeeze(-1))
+            total = total + lp_b
+
         return total
 
 
@@ -257,9 +287,10 @@ class DefaultPolicy(nn.Module):
         tau_mask: confidence threshold for unmasking (default 0.7 = S-mode).
     """
 
-    def __init__(self, tau_mask: float = 0.7):
+    def __init__(self, tau_mask: float = 0.7, num_steps: int = 8):
         super().__init__()
         self.tau_mask = tau_mask
+        self._num_steps = num_steps
 
     def forward(
         self,
@@ -275,15 +306,13 @@ class DefaultPolicy(nn.Module):
         B, L, D = H_t.shape
         device = H_t.device
 
-        # Use agreement signal directly as cache and access probability
         cache_probs = agreement if agreement is not None else torch.zeros(B, L, device=device)
         access_probs = cache_probs
 
-        # Gradual unmask schedule: at diffusion step t (step_frac = t/T),
-        # unmask ~1/t of the remaining masked positions per step.
-        # This mimics the uniform diffusion schedule without needing T.
-        # step_frac goes from 1.0 (first step) to ~0 (last step).
-        unmask_rate = min(1.0 / max(step_frac * 200.0, 1.0), 1.0)
+        # Uniform unmask schedule: unmask 1/t of remaining at step t.
+        # step_frac = t/T, so t = step_frac * T.
+        t_remaining = max(step_frac * self._num_steps, 1.0)
+        unmask_rate = 1.0 / t_remaining
         unmask_probs = mask_indicator.float() * unmask_rate
 
         # Never remask
@@ -298,6 +327,8 @@ class DefaultPolicy(nn.Module):
             "remask_probs": remask_probs,
             "cache_probs": cache_probs,
             "access_probs": access_probs,
+            "boundary_logits": torch.zeros(B, 2, device=device),
+            "boundary_probs": torch.full((B, 2), 0.5, device=device),
         }
 
     def sample_actions(
@@ -306,11 +337,13 @@ class DefaultPolicy(nn.Module):
         mask_indicator: torch.BoolTensor,
     ) -> Dict[str, torch.Tensor]:
         unmask_probs = policy_out["unmask_probs"]
+        B = unmask_probs.shape[0]
         u_t = (torch.rand_like(unmask_probs) < unmask_probs).float() * mask_indicator.float()
         r_t = torch.zeros_like(u_t)
-        kappa_t = policy_out["cache_probs"]
-        q_t = policy_out["access_probs"]
-        return {"u_t": u_t, "r_t": r_t, "kappa_t": kappa_t, "q_t": q_t}
+        kappa_t = torch.bernoulli(policy_out["cache_probs"].clamp(0.0, 1.0))
+        q_t = torch.bernoulli(policy_out["access_probs"].clamp(0.0, 1.0))
+        ell_t = torch.zeros(B, dtype=torch.long, device=u_t.device)
+        return {"u_t": u_t, "r_t": r_t, "kappa_t": kappa_t, "q_t": q_t, "ell_t": ell_t}
 
     def log_prob(
         self,

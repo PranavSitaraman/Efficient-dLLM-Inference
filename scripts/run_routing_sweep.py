@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from aoae.evaluate import EvalResult, main as eval_main  # noqa: E402
+from aoae.runtime_checks import is_global_rank_zero  # noqa: E402
 
 
 def _parse_tau_values(raw: str) -> List[float]:
@@ -73,6 +74,7 @@ def _select_summary_row(
     note_contains: Optional[str],
 ) -> EvalResult:
     rows = [r for r in results if r.method == method]
+    available_methods = sorted({r.method for r in results})
     if note_contains:
         filtered = [r for r in rows if note_contains in r.config_note]
         if filtered:
@@ -81,7 +83,8 @@ def _select_summary_row(
         notes = [r.config_note for r in rows]
         raise RuntimeError(
             f"Expected exactly one result row for method={method!r}, "
-            f"note_contains={note_contains!r}; got {len(rows)} rows: {notes}"
+            f"note_contains={note_contains!r}; got {len(rows)} rows: {notes}. "
+            f"Available methods in this run: {available_methods}"
         )
     return rows[0]
 
@@ -106,6 +109,9 @@ def _result_to_row(
     eval_dataset: str,
     eval_dataset_config: Any,
     eval_split: str,
+    remask_enabled: bool,
+    reuse_signal_method: str,
+    reuse_signal_threshold: float,
     output_dir: str,
     checkpoint_path: Optional[str],
 ) -> Dict[str, Any]:
@@ -118,6 +124,9 @@ def _result_to_row(
         "eval_dataset": eval_dataset,
         "eval_dataset_config": "" if eval_dataset_config in (None, "") else str(eval_dataset_config),
         "eval_split": eval_split,
+        "remask_enabled": int(bool(remask_enabled)),
+        "reuse_signal_method": reuse_signal_method,
+        "reuse_signal_threshold": f"{float(reuse_signal_threshold):.6f}",
         "method": result.method,
         "accuracy": f"{result.accuracy:.6f}",
         "tps": f"{result.avg_tokens_per_sec:.3f}",
@@ -125,6 +134,9 @@ def _result_to_row(
         "cache_hit_rate": f"{result.cache_hit_rate:.6f}",
         "agreement_rate": f"{result.agreement_rate:.6f}",
         "draft_accept_rate": f"{result.draft_accept_rate:.6f}",
+        "access_effective_budget": f"{result.access_effective_budget:.6f}",
+        "mean_boundary_depth": f"{result.mean_boundary_depth:.6f}",
+        "boundary_distribution": result.boundary_distribution,
         "total_samples": result.total_samples,
         "config_note": result.config_note,
         "output_dir": output_dir,
@@ -198,6 +210,37 @@ def _plot_summary(rows: List[Dict[str, Any]], output_root: Path, summary_method:
     print(f"Pareto plot saved to {path}")
 
 
+def _annotate_tradeoff(summary_rows: List[Dict[str, Any]]) -> None:
+    if not summary_rows:
+        return
+    hard_rows = [r for r in summary_rows if str(r["routing_mode"]) == "hard"]
+    if len(hard_rows) != 1:
+        raise RuntimeError(
+            f"Expected exactly one hard reference row, found {len(hard_rows)}."
+        )
+    hard = hard_rows[0]
+    hard_acc = float(hard["accuracy"])
+    hard_tps = float(hard["tps"])
+
+    # Non-dominated frontier over (TPS, Accuracy), maximizing both.
+    vals = [(float(r["tps"]), float(r["accuracy"])) for r in summary_rows]
+    frontier = []
+    for i, (t_i, a_i) in enumerate(vals):
+        dominated = False
+        for j, (t_j, a_j) in enumerate(vals):
+            if i == j:
+                continue
+            if (t_j >= t_i and a_j >= a_i) and (t_j > t_i or a_j > a_i):
+                dominated = True
+                break
+        frontier.append(0 if dominated else 1)
+
+    for row, is_frontier in zip(summary_rows, frontier):
+        row["delta_accuracy_vs_hard"] = f"{float(row['accuracy']) - hard_acc:+.6f}"
+        row["delta_tps_vs_hard"] = f"{float(row['tps']) - hard_tps:+.3f}"
+        row["frontier_index"] = int(is_frontier)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the routing-only tau_r sweep (PoC0 / PoC1A).")
     parser.add_argument("--hard_config", default="configs/llada21_mini_hard.yaml", help="Hard-routing config.")
@@ -239,10 +282,12 @@ def main() -> None:
     # Hard-routing baseline: treated as tau_r = 0.
     hard_cfg = copy.deepcopy(hard_cfg_template)
     _override_eval_data(hard_cfg, args)
+    hard_cfg.setdefault("inference", {})["disable_remask"] = True
     hard_dir = output_root / "hard"
     hard_cfg.setdefault("logging", {})["run_name"] = f"{sweep_name}_hard"
     hard_cfg["logging"]["output_dir"] = str(hard_dir)
-    print("\n=== hard routing (tau_r = 0 / dinfer) ===")
+    if is_global_rank_zero():
+        print("\n=== hard routing (tau_r = 0 / dinfer) ===")
     hard_results = eval_main(
         hard_cfg,
         checkpoint_path=args.checkpoint,
@@ -262,6 +307,9 @@ def main() -> None:
                 eval_dataset=hard_cfg["data"]["eval_dataset"],
                 eval_dataset_config=hard_cfg["data"].get("eval_dataset_config"),
                 eval_split=hard_cfg["data"]["eval_split"],
+                remask_enabled=not bool(hard_cfg.get("inference", {}).get("disable_remask", False)),
+                reuse_signal_method=str(hard_cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")),
+                reuse_signal_threshold=float(hard_cfg.get("inference", {}).get("reuse_signal", {}).get("threshold", 0.0)),
                 output_dir=hard_cfg["logging"]["output_dir"],
                 checkpoint_path=args.checkpoint,
             )
@@ -278,28 +326,65 @@ def main() -> None:
             eval_dataset=hard_cfg["data"]["eval_dataset"],
             eval_dataset_config=hard_cfg["data"].get("eval_dataset_config"),
             eval_split=hard_cfg["data"]["eval_split"],
+            remask_enabled=not bool(hard_cfg.get("inference", {}).get("disable_remask", False)),
+            reuse_signal_method=str(hard_cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")),
+            reuse_signal_threshold=float(hard_cfg.get("inference", {}).get("reuse_signal", {}).get("threshold", 0.0)),
             output_dir=hard_cfg["logging"]["output_dir"],
             checkpoint_path=args.checkpoint,
         )
     )
 
+    # Pre-load soft model ONCE for the sweep
+    import torch
+    shared_soft_model = None
+    shared_eval_ds = None
+    if soft_cfg_template.get("base_model", {}).get("backend") == "dual" or tau_values:
+        from aoae.models.dual_model import DualModelWrapper
+        if is_global_rank_zero():
+            print("Loading soft-routing model ONCE for sweep reuse...")
+        init_soft = copy.deepcopy(soft_cfg_template)
+        _override_eval_data(init_soft, args)
+        init_soft.setdefault("base_model", {})["routing_temperature"] = tau_values[0]
+        shared_soft_model = DualModelWrapper(init_soft)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        shared_soft_model = shared_soft_model.to(device)
+
+    from aoae.evaluate import _load_eval_dataset
+    dc = soft_cfg_template.get("data", {})
+    if args.eval_dataset is not None:
+        dc = dict(dc)
+        dc["eval_dataset"] = args.eval_dataset
+    if args.eval_dataset_config is not None:
+        dc = dict(dc)
+        dc["eval_dataset_config"] = args.eval_dataset_config or None
+    if args.eval_split is not None:
+        dc = dict(dc)
+        dc["eval_split"] = args.eval_split
+    if is_global_rank_zero():
+        print(f"Loading eval dataset ONCE: {dc.get('eval_dataset', '')}...")
+    shared_eval_ds = _load_eval_dataset(dc)
+
     # Soft-routing sweep.
     for tau_r in tau_values:
         soft_cfg = copy.deepcopy(soft_cfg_template)
         _override_eval_data(soft_cfg, args)
+        soft_cfg.setdefault("inference", {})["disable_remask"] = True
         soft_cfg.setdefault("base_model", {})["routing_temperature"] = tau_r
         tau_slug = _tau_slug(tau_r)
         soft_dir = output_root / tau_slug
         soft_cfg.setdefault("logging", {})["run_name"] = f"{sweep_name}_{tau_slug}"
         soft_cfg["logging"]["output_dir"] = str(soft_dir)
 
-        print(f"\n=== soft routing (tau_r = {tau_r}) ===")
+        if is_global_rank_zero():
+            print(f"\n=== soft routing (tau_r = {tau_r}) ===")
         soft_results = eval_main(
             soft_cfg,
             checkpoint_path=args.checkpoint,
             max_samples=args.max_samples,
             mode="standard",
             config_path=args.soft_config,
+            preloaded_dual_model=shared_soft_model,
+            preloaded_eval_ds=shared_eval_ds,
         )
         label = f"{tau_r:.4g}"
         for result in soft_results:
@@ -314,6 +399,9 @@ def main() -> None:
                     eval_dataset=soft_cfg["data"]["eval_dataset"],
                     eval_dataset_config=soft_cfg["data"].get("eval_dataset_config"),
                     eval_split=soft_cfg["data"]["eval_split"],
+                    remask_enabled=not bool(soft_cfg.get("inference", {}).get("disable_remask", False)),
+                    reuse_signal_method=str(soft_cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")),
+                    reuse_signal_threshold=float(soft_cfg.get("inference", {}).get("reuse_signal", {}).get("threshold", 0.0)),
                     output_dir=soft_cfg["logging"]["output_dir"],
                     checkpoint_path=args.checkpoint,
                 )
@@ -330,35 +418,41 @@ def main() -> None:
                 eval_dataset=soft_cfg["data"]["eval_dataset"],
                 eval_dataset_config=soft_cfg["data"].get("eval_dataset_config"),
                 eval_split=soft_cfg["data"]["eval_split"],
+                remask_enabled=not bool(soft_cfg.get("inference", {}).get("disable_remask", False)),
+                reuse_signal_method=str(soft_cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")),
+                reuse_signal_threshold=float(soft_cfg.get("inference", {}).get("reuse_signal", {}).get("threshold", 0.0)),
                 output_dir=soft_cfg["logging"]["output_dir"],
                 checkpoint_path=args.checkpoint,
             )
         )
 
+    _annotate_tradeoff(summary_rows)
+
     full_json = output_root / "routing_sweep_full.json"
     full_csv = output_root / "routing_sweep_full.csv"
     full_md = output_root / "routing_sweep_full.md"
-    with full_json.open("w") as f:
-        json.dump(full_rows, f, indent=2)
-    _write_csv(full_rows, full_csv)
-    _write_markdown(full_rows, full_md)
+    if is_global_rank_zero():
+        with full_json.open("w") as f:
+            json.dump(full_rows, f, indent=2)
+        _write_csv(full_rows, full_csv)
+        _write_markdown(full_rows, full_md)
 
-    summary_json = output_root / "routing_sweep_summary.json"
-    summary_csv = output_root / "routing_sweep_summary.csv"
-    summary_md = output_root / "routing_sweep_summary.md"
-    with summary_json.open("w") as f:
-        json.dump(summary_rows, f, indent=2)
-    _write_csv(summary_rows, summary_csv)
-    _write_markdown(summary_rows, summary_md)
+        summary_json = output_root / "routing_sweep_summary.json"
+        summary_csv = output_root / "routing_sweep_summary.csv"
+        summary_md = output_root / "routing_sweep_summary.md"
+        with summary_json.open("w") as f:
+            json.dump(summary_rows, f, indent=2)
+        _write_csv(summary_rows, summary_csv)
+        _write_markdown(summary_rows, summary_md)
 
-    print(f"\nRouting sweep full table written to {full_json}")
-    print(f"Routing sweep full table written to {full_csv}")
-    print(f"Routing sweep full table written to {full_md}")
-    print(f"Routing sweep summary written to {summary_json}")
-    print(f"Routing sweep summary written to {summary_csv}")
-    print(f"Routing sweep summary written to {summary_md}")
+        print(f"\nRouting sweep full table written to {full_json}")
+        print(f"Routing sweep full table written to {full_csv}")
+        print(f"Routing sweep full table written to {full_md}")
+        print(f"Routing sweep summary written to {summary_json}")
+        print(f"Routing sweep summary written to {summary_csv}")
+        print(f"Routing sweep summary written to {summary_md}")
 
-    _plot_summary(summary_rows, output_root, args.summary_method)
+        _plot_summary(summary_rows, output_root, args.summary_method)
 
 
 if __name__ == "__main__":

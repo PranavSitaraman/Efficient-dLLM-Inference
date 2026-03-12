@@ -28,6 +28,7 @@ from .positional_cache import (
     update_positional_state,
     compute_next_h_access_metrics,
 )
+import json
 
 
 @dataclass
@@ -46,6 +47,7 @@ class SpeculativeTrajectory:
     access_exec_list: List[torch.Tensor] = field(default_factory=list)
     access_mandatory_list: List[torch.Tensor] = field(default_factory=list)
     changed_list: List[torch.Tensor] = field(default_factory=list)
+    boundary_actions: List[torch.Tensor] = field(default_factory=list)
     step_fracs: List[float] = field(default_factory=list)
     final_tokens: Optional[torch.Tensor] = None
     completion_step: Optional[torch.Tensor] = None
@@ -54,6 +56,8 @@ class SpeculativeTrajectory:
     total_cache_hits: int = 0
     total_cache_misses: int = 0
     access_metrics: Dict[str, float] = field(default_factory=dict)
+    mean_boundary_depth: float = 0.0
+    boundary_distribution: str = "{}"
 
 
 def speculative_inference(
@@ -174,7 +178,18 @@ def speculative_inference(
         if disable_remask:
             r_t = torch.zeros_like(r_t)
             actions = {**actions, "r_t": r_t}
-        q_exec, q_mandatory, _access_diag = build_access_set(actions, policy_out, cfg)
+        q_exec, q_mandatory, _access_diag = build_access_set(
+            actions,
+            policy_out,
+            cfg,
+            confidence=confidence,
+            boundary_action=actions.get("ell_t"),
+            boundary_num_bins=(
+                int(policy_out["boundary_probs"].shape[-1])
+                if "boundary_probs" in policy_out
+                else None
+            ),
+        )
         actions = {**actions, "q_t_mandatory": q_mandatory}
 
         # --- Record trajectory ---
@@ -197,6 +212,8 @@ def speculative_inference(
             )
             trajectory.access_exec_list.append(q_exec.detach())
             trajectory.access_mandatory_list.append(q_mandatory.detach())
+            if "ell_t" in actions:
+                trajectory.boundary_actions.append(actions["ell_t"].detach())
             trajectory.step_fracs.append(step_frac)
 
         # --- Count cache thrashing ---
@@ -261,7 +278,8 @@ def speculative_inference(
         if use_positional_cache:
             update_positional_state(pos_state, q_exec=q_exec, changed=changed, cfg=cfg)
 
-        y = y.clone()
+        if trajectory is not None:
+            y = y.clone()
         y[:, resp_slice] = resp_tokens
 
     # --- Record final state ---
@@ -282,5 +300,15 @@ def speculative_inference(
             )
         else:
             trajectory.access_metrics = compute_next_h_access_metrics([], [], None, 1)
+        if trajectory.boundary_actions:
+            all_boundary = torch.cat([x.reshape(-1) for x in trajectory.boundary_actions], dim=0)
+            max_bin = int(all_boundary.max().item()) if all_boundary.numel() > 0 else 0
+            denom = max(max_bin, 1)
+            trajectory.mean_boundary_depth = float((all_boundary.float() / denom).mean().item())
+            counts = torch.bincount(all_boundary, minlength=max_bin + 1).tolist()
+            trajectory.boundary_distribution = json.dumps({str(i): int(v) for i, v in enumerate(counts)})
+        else:
+            trajectory.mean_boundary_depth = 0.0
+            trajectory.boundary_distribution = "{}"
 
     return y, trajectory

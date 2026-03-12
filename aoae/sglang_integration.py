@@ -299,7 +299,9 @@ def run_tau_r_sweep(
             policy.eval()
             print(f"  Loaded policy from {policy_path}")
         else:
-            policy = DefaultPolicy(tau_mask=0.7).to(device)
+            policy = DefaultPolicy(
+                tau_mask=0.7, num_steps=cfg["inference"]["steps"],
+            ).to(device)
             policy.eval()
             print("  No trained policy found; using DefaultPolicy (heuristic).")
 

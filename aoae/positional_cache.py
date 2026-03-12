@@ -10,7 +10,7 @@ This module provides:
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 
@@ -25,6 +25,8 @@ def _pcfg(cfg: dict) -> Dict[str, object]:
         "use_topb_from_probs": bool(pc.get("use_topb_from_probs", True)),
         "force_mandatory": bool(pc.get("force_mandatory", True)),
         "age_cap": max(1, int(pc.get("age_cap", 64))),
+        "candidate_policy": str(pc.get("candidate_policy", "learned_topb")),
+        "window_radius": max(1, int(pc.get("window_radius", 8))),
     }
 
 
@@ -46,25 +48,36 @@ def get_policy_positional_features(state: Dict[str, torch.Tensor], cfg: dict) ->
 def _topb_non_mandatory(
     scores: torch.Tensor,
     mandatory: torch.BoolTensor,
-    budget: int,
+    budget: Union[int, torch.Tensor],
     candidate: Optional[torch.BoolTensor] = None,
 ) -> torch.BoolTensor:
     """
     Select up to B non-mandatory positions per sample from highest scores.
     """
     B, L = scores.shape
+    if isinstance(budget, torch.Tensor):
+        per_sample_budget = budget.to(device=scores.device).long().view(-1)
+        if per_sample_budget.numel() != B:
+            raise ValueError(
+                f"Per-sample budget must have shape [B], got {tuple(per_sample_budget.shape)} for B={B}."
+            )
+    else:
+        per_sample_budget = torch.full((B,), int(budget), dtype=torch.long, device=scores.device)
     selected = torch.zeros_like(mandatory)
-    if budget <= 0:
+    if int(per_sample_budget.max().item()) <= 0:
         return selected
 
     for b in range(B):
+        budget_b = int(per_sample_budget[b].item())
+        if budget_b <= 0:
+            continue
         eligible_mask = ~mandatory[b]
         if candidate is not None:
             eligible_mask = eligible_mask & candidate[b]
         eligible = eligible_mask.nonzero(as_tuple=True)[0]
         if eligible.numel() == 0:
             continue
-        k = min(budget, int(eligible.numel()))
+        k = min(budget_b, int(eligible.numel()))
         vals = scores[b, eligible]
         topk_idx = vals.topk(k=k).indices
         chosen = eligible[topk_idx]
@@ -76,6 +89,9 @@ def build_access_set(
     actions: Dict[str, torch.Tensor],
     policy_out: Dict[str, torch.Tensor],
     cfg: dict,
+    confidence: Optional[torch.Tensor] = None,
+    boundary_action: Optional[torch.Tensor] = None,
+    boundary_num_bins: Optional[int] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, float]]:
     """
     Build executed access set Q_t from sampled actions and policy access scores.
@@ -109,27 +125,73 @@ def build_access_set(
             "access_mandatory_rate": 0.0,
             "access_optional_rate": 0.0,
             "access_budget_utilization": 0.0,
+            "access_effective_budget": 0.0,
         }
     else:
         budget = int(pc["refresh_budget"])
+        per_sample_budget = torch.full((q_raw.shape[0],), budget, dtype=torch.long, device=q_raw.device)
+        if budget > 0 and boundary_action is not None:
+            bsz = q_raw.shape[0]
+            ell = boundary_action.long().view(-1)
+            if ell.numel() != bsz:
+                raise ValueError(
+                    f"boundary_action must have shape [B], got {tuple(boundary_action.shape)} for B={bsz}."
+                )
+            bins = int(boundary_num_bins) if boundary_num_bins is not None else int(torch.max(ell).item() + 1)
+            bins = max(2, bins)
+            # Higher boundary depth allows larger optional refresh budget.
+            frac = (ell.float() + 1.0) / float(bins)
+            per_sample_budget = torch.round(frac * float(budget)).long().clamp(min=0, max=budget)
         scores = policy_out.get("access_probs", q_t.float())
-        if pc["use_topb_from_probs"] and budget > 0:
-            speculative = _topb_non_mandatory(scores, mandatory, budget, candidate=q_raw)
-            q_exec = mandatory | speculative
-        else:
-            q_exec = q_raw | mandatory
+        candidate_policy = str(pc["candidate_policy"]).lower()
+
+        if candidate_policy == "learned_topb":
+            if pc["use_topb_from_probs"] and budget > 0:
+                speculative = _topb_non_mandatory(scores, mandatory, per_sample_budget, candidate=q_raw)
+                q_exec = mandatory | speculative
+            else:
+                q_exec = q_raw | mandatory
+                if budget > 0:
+                    keep = _topb_non_mandatory(scores, mandatory, per_sample_budget, candidate=q_exec)
+                    q_exec = mandatory | keep
+        elif candidate_policy == "confidence_topb":
+            conf = confidence if confidence is not None else scores
             if budget > 0:
-                keep = _topb_non_mandatory(scores, mandatory, budget, candidate=q_exec)
-                q_exec = mandatory | keep
+                speculative = _topb_non_mandatory(conf, mandatory, per_sample_budget, candidate=None)
+                q_exec = mandatory | speculative
+            else:
+                q_exec = mandatory
+        elif candidate_policy == "sliding_window":
+            B, L = q_raw.shape
+            radius = int(pc["window_radius"])
+            candidate = torch.zeros_like(q_raw)
+            mandatory_idx = mandatory.nonzero(as_tuple=False)
+            if mandatory_idx.numel() > 0:
+                for b, pos in mandatory_idx:
+                    lo = max(0, int(pos.item()) - radius)
+                    hi = min(L, int(pos.item()) + radius + 1)
+                    candidate[int(b.item()), lo:hi] = True
+            else:
+                candidate[:] = True
+            if budget > 0:
+                speculative = _topb_non_mandatory(scores, mandatory, per_sample_budget, candidate=candidate)
+                q_exec = mandatory | speculative
+            else:
+                q_exec = mandatory
+        else:
+            raise ValueError(
+                f"Unknown positional_cache.candidate_policy={candidate_policy!r}. "
+                "Choose from: learned_topb, sliding_window, confidence_topb."
+            )
 
     optional = q_exec & ~mandatory
-    budget = int(pc["refresh_budget"])
-    total_budget = float(max(budget * q_exec.shape[0], 1))
+    total_budget = float(max(int(per_sample_budget.sum().item()), 1))
     diagnostics = {
         "access_rate": float(q_exec.float().mean().item()),
         "access_mandatory_rate": float(mandatory.float().mean().item()),
         "access_optional_rate": float(optional.float().mean().item()),
-        "access_budget_utilization": float(optional.sum().item()) / total_budget if budget > 0 else 0.0,
+        "access_budget_utilization": float(optional.sum().item()) / total_budget if int(per_sample_budget.max().item()) > 0 else 0.0,
+        "access_effective_budget": float(per_sample_budget.float().mean().item()),
     }
     return q_exec.float(), mandatory.float(), diagnostics
 

@@ -24,7 +24,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from aoae.evaluate import EvalResult, main as eval_main  # noqa: E402
+from aoae.evaluate import EvalResult, main as eval_main, _load_eval_dataset  # noqa: E402
+from aoae.runtime_checks import is_global_rank_zero, ensure_vllm_moe_runtime  # noqa: E402
 
 
 def _parse_tau_values(raw: str) -> List[float]:
@@ -177,8 +178,18 @@ def main() -> None:
     parser.add_argument("--summary_note_contains", default=None, help="Optional config_note substring for selecting a result row.")
     parser.add_argument("--output_root", default=None, help="Sweep output root. Defaults under outputs/sweeps/.")
     parser.add_argument("--sweep_name", default=None, help="Short name for this sweep.")
+    parser.add_argument("--run_baselines", action="store_true",
+                        help="Run baseline methods during the sweep. Disabled by default for speed.")
     parser.add_argument("--keep_baselines_every_run", action="store_true",
                         help="Run baselines for every tau_r instead of only on the first point.")
+    parser.add_argument("--steps", type=int, default=None,
+                        help="Override inference.steps for the sweep.")
+    parser.add_argument("--gen_length", type=int, default=None,
+                        help="Override inference.gen_length for the sweep.")
+    parser.add_argument("--enable_remask", action="store_true",
+                        help="Enable remasking during the sweep (disabled by default to isolate routing effect).")
+    parser.add_argument("--require_compiled_moe_ops", action="store_true",
+                        help="Fail fast if compiled vLLM MoE custom ops are unavailable.")
     parser.add_argument("--eval_dataset", default=None, help="Override data.eval_dataset.")
     parser.add_argument("--eval_dataset_config", default=None, help="Override data.eval_dataset_config.")
     parser.add_argument("--eval_split", default=None, help="Override data.eval_split.")
@@ -197,16 +208,53 @@ def main() -> None:
         args.checkpoint,
         base_cfg.get("logging", {}).get("output_dir", ""),
     )
-    if checkpoint_path:
-        print(f"Using checkpoint: {checkpoint_path}")
-    else:
-        print("No checkpoint found; sweep will use the default heuristic policy.")
+    if args.require_compiled_moe_ops:
+        ensure_vllm_moe_runtime(strict=True, verbose=is_global_rank_zero(), allow_python_fallback=False)
+
+    if is_global_rank_zero():
+        if checkpoint_path:
+            print(f"Using checkpoint: {checkpoint_path}")
+        else:
+            print("No checkpoint found; sweep will use the default heuristic policy.")
+
+    # Load model ONCE and reuse across all tau_r values.
+    import torch
+    shared_dual_model = None
+    shared_eval_ds = None
+    if args.mode == "speculative" or base_cfg.get("base_model", {}).get("backend") == "dual":
+        from aoae.models.dual_model import DualModelWrapper
+        if is_global_rank_zero():
+            print("Loading dual model ONCE for sweep reuse...")
+        init_cfg = copy.deepcopy(base_cfg)
+        init_cfg.setdefault("base_model", {})["routing_temperature"] = tau_values[0]
+        shared_dual_model = DualModelWrapper(init_cfg)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        shared_dual_model = shared_dual_model.to(device)
+
+    dc = base_cfg.get("data", {})
+    if args.eval_dataset is not None:
+        dc = dict(dc)
+        dc["eval_dataset"] = args.eval_dataset
+    if args.eval_dataset_config is not None:
+        dc = dict(dc) if not isinstance(dc, dict) else dc
+        dc["eval_dataset_config"] = args.eval_dataset_config or None
+    if args.eval_split is not None:
+        dc = dict(dc) if not isinstance(dc, dict) else dc
+        dc["eval_split"] = args.eval_split
+    if is_global_rank_zero():
+        print(f"Loading eval dataset: {dc.get('eval_dataset', '')}...")
+    shared_eval_ds = _load_eval_dataset(dc)
 
     summary_rows: List[Dict[str, Any]] = []
 
     for idx, tau_r in enumerate(tau_values):
         cfg = copy.deepcopy(base_cfg)
         cfg.setdefault("base_model", {})["routing_temperature"] = tau_r
+        if args.steps is not None:
+            cfg.setdefault("inference", {})["steps"] = int(args.steps)
+        if args.gen_length is not None:
+            cfg.setdefault("inference", {})["gen_length"] = int(args.gen_length)
+        cfg.setdefault("inference", {})["disable_remask"] = not args.enable_remask
         if args.eval_dataset is not None:
             cfg.setdefault("data", {})["eval_dataset"] = args.eval_dataset
         if args.eval_dataset_config is not None:
@@ -219,15 +267,21 @@ def main() -> None:
         cfg.setdefault("logging", {})["run_name"] = f"{sweep_name}_{tau_slug}"
         cfg["logging"]["output_dir"] = str(run_dir)
 
-        print(f"\n=== tau_r = {tau_r} ===")
+        if is_global_rank_zero():
+            print(f"\n=== tau_r = {tau_r} ===")
+        run_baselines = False
+        if args.run_baselines:
+            run_baselines = args.keep_baselines_every_run or idx == 0
         results = eval_main(
             cfg,
             checkpoint_path=checkpoint_path,
             max_samples=args.max_samples,
             mode=args.mode,
             config_path=args.config,
-            skip_baselines=(idx > 0 and not args.keep_baselines_every_run),
+            skip_baselines=(not run_baselines),
             speculative_policy_temperatures=[args.policy_temperature],
+            preloaded_dual_model=shared_dual_model,
+            preloaded_eval_ds=shared_eval_ds,
         )
 
         note_contains = args.summary_note_contains
@@ -239,6 +293,9 @@ def main() -> None:
                 "tau_r": f"{tau_r:.6f}",
                 "method": row.method,
                 "policy_temperature": f"{args.policy_temperature:.4f}",
+                "remask_enabled": int(not bool(cfg.get("inference", {}).get("disable_remask", False))),
+                "reuse_signal_method": str(cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")),
+                "reuse_signal_threshold": f"{float(cfg.get('inference', {}).get('reuse_signal', {}).get('threshold', 0.0)):.6f}",
                 "eval_dataset": cfg.get("data", {}).get("eval_dataset", ""),
                 "eval_dataset_config": cfg.get("data", {}).get("eval_dataset_config", ""),
                 "eval_split": cfg.get("data", {}).get("eval_split", ""),
@@ -250,8 +307,13 @@ def main() -> None:
                 "draft_accept_rate": f"{row.draft_accept_rate:.6f}",
                 "reuse_mean_safe": f"{row.reuse_mean_safe:.6f}",
                 "reuse_mean_js": f"{row.reuse_mean_js:.6f}",
+                "access_effective_budget": f"{row.access_effective_budget:.6f}",
                 "access_next_h_f1": f"{row.access_next_h_f1:.6f}",
                 "access_next_h_spec_f1": f"{row.access_next_h_spec_f1:.6f}",
+                "routing_entropy": f"{row.routing_entropy:.6f}",
+                "max_routing_entropy": f"{row.max_routing_entropy:.6f}",
+                "mean_boundary_depth": f"{row.mean_boundary_depth:.6f}",
+                "boundary_distribution": row.boundary_distribution,
                 "total_samples": row.total_samples,
                 "config_note": row.config_note,
                 "output_dir": cfg.get("logging", {}).get("output_dir", ""),
@@ -262,15 +324,16 @@ def main() -> None:
     json_path = output_root / "tau_sweep_summary.json"
     csv_path = output_root / "tau_sweep_summary.csv"
     md_path = output_root / "tau_sweep_summary.md"
-    with json_path.open("w") as f:
-        json.dump(summary_rows, f, indent=2)
-    _write_csv(summary_rows, csv_path)
-    _write_markdown(summary_rows, md_path)
-    print(f"\nSweep summary written to {json_path}")
-    print(f"Sweep summary written to {csv_path}")
-    print(f"Sweep summary written to {md_path}")
+    if is_global_rank_zero():
+        with json_path.open("w") as f:
+            json.dump(summary_rows, f, indent=2)
+        _write_csv(summary_rows, csv_path)
+        _write_markdown(summary_rows, md_path)
+        print(f"\nSweep summary written to {json_path}")
+        print(f"Sweep summary written to {csv_path}")
+        print(f"Sweep summary written to {md_path}")
 
-    _plot_sweep(summary_rows, output_root)
+        _plot_sweep(summary_rows, output_root)
 
 
 if __name__ == "__main__":
