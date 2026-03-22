@@ -17,6 +17,17 @@ module load python/3.12.5-fasrc01 cuda/11.8.0-fasrc01 cudnn/8.9.2.26_cuda11-fasr
 eval "$(conda shell.bash hook)"
 conda activate rtx
 
+# Keep SGLang/sgl-kernel pointed at the cluster CUDA toolkit after conda activation.
+if command -v nvcc >/dev/null 2>&1; then
+    CUDA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v nvcc)")")")"
+else
+    CUDA_HOME="/n/sw/helmod-rocky8/apps/Core/cuda/11.8.0-fasrc01/cuda"
+fi
+export CUDA_HOME
+export CUDA_PATH="$CUDA_HOME"
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 export HF_HUB_DISABLE_XET=1
 export CUDA_LAUNCH_BLOCKING=0
 export TORCH_CUDA_ARCH_LIST="8.0"

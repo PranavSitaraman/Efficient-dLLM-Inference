@@ -9,6 +9,7 @@ import torch.nn as nn
 import pytest
 import sys
 import os
+import types
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -771,6 +772,46 @@ class TestSoftMoERouter:
 
         return MockModel()
 
+    def _make_mock_hidden_sglang_moe_model(self):
+        """Helper: create a model where MoE blocks are only reachable via model.layers."""
+        class MockGateModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = 4
+                self.weight = torch.nn.Parameter(torch.randn(4, 16))
+
+            def forward(self, hidden_states):
+                hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+                return torch.nn.functional.linear(hidden_states, self.weight)
+
+        class MockTopK(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.top_k = 2
+
+            def forward(self, hidden_states, router_logits, *args, **kwargs):
+                del hidden_states, args, kwargs
+                return router_logits.topk(self.top_k, dim=-1)
+
+        class MockMoeBlock(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.gate = MockGateModule()
+                self.topk = MockTopK()
+                self.num_experts = 4
+                self.score_function = "softmax"
+
+        class MockLayer:
+            def __init__(self):
+                self.mlp = MockMoeBlock()
+
+        class MockModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = types.SimpleNamespace(layers=[MockLayer(), MockLayer()])
+
+        return MockModel()
+
     def test_patch_model_finds_gates(self):
         from aoae.models.soft_moe import patch_model_with_soft_routing, SoftMoERouter
 
@@ -845,6 +886,23 @@ class TestSoftMoERouter:
 
         set_soft_routing(model)
         assert isinstance(model.layer1.topk, SGLangSoftTopKRouter)
+
+    def test_patch_model_supports_explicit_model_layers_fallback(self):
+        from aoae.models.soft_moe import (
+            patch_model_with_soft_routing,
+            set_hard_routing,
+            SGLangSoftTopKRouter,
+        )
+
+        model = self._make_mock_hidden_sglang_moe_model()
+        first_block = model.model.layers[0].mlp
+        orig_topk = first_block.topk
+
+        patch_model_with_soft_routing(model, tau_r=0.5)
+        assert isinstance(first_block.topk, SGLangSoftTopKRouter)
+
+        set_hard_routing(model)
+        assert first_block.topk is orig_topk
 
 
 # ======================================================================

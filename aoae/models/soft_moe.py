@@ -10,6 +10,7 @@ K_soft=top_k this is equivalent to hard routing with soft weights.
 """
 
 import math
+import types
 import weakref
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
@@ -199,6 +200,78 @@ def _cleanup_stale(model_id: int) -> None:
         _ROUTING_STATE.pop(model_id, None)
 
 
+def _iter_known_moe_blocks(model: nn.Module):
+    """Yield MoE blocks from explicit model layouts not always visible to named_modules()."""
+    candidates = []
+
+    for root in (model, getattr(model, "model", None)):
+        if root is None:
+            continue
+        layers = getattr(root, "layers", None)
+        if layers is None:
+            continue
+        try:
+            layer_iter = list(layers)
+        except TypeError:
+            continue
+        for idx, layer in enumerate(layer_iter):
+            mlp = getattr(layer, "mlp", None)
+            if mlp is not None:
+                candidates.append((f"{type(root).__name__}.layers[{idx}].mlp", mlp))
+
+    seen = set()
+    for name, block in candidates:
+        block_id = id(block)
+        if block_id in seen:
+            continue
+        seen.add(block_id)
+        yield name, block
+
+
+def _maybe_build_patch_entry(
+    module: nn.Module,
+    tau_r: float,
+    soft_topk: Optional[int],
+) -> Optional[Dict[str, Any]]:
+    gate = getattr(module, "gate", None)
+    if gate is not None and hasattr(gate, "group_limited_topk"):
+        effective_topk = soft_topk
+        if effective_topk is None:
+            effective_topk = min(gate.top_k * 2, gate.num_experts)
+        soft_router = SoftMoERouter(
+            gate, tau_r=tau_r, soft_topk=effective_topk,
+        )
+        return {
+            "kind": "gate",
+            "block": module,
+            "original_gate": gate,
+            "soft_router": soft_router,
+        }
+
+    topk = getattr(module, "topk", None)
+    if gate is not None and topk is not None and hasattr(topk, "top_k"):
+        effective_topk = soft_topk
+        num_experts = int(getattr(module, "num_experts", getattr(gate, "num_experts", 0)))
+        hard_topk = int(getattr(topk, "top_k"))
+        if effective_topk is None:
+            effective_topk = min(hard_topk * 2, num_experts)
+        soft_router = SGLangSoftTopKRouter(
+            topk,
+            num_experts=num_experts,
+            tau_r=tau_r,
+            soft_topk=effective_topk,
+            score_function=getattr(module, "score_function", None),
+        )
+        return {
+            "kind": "topk",
+            "block": module,
+            "original_topk": module.topk,
+            "soft_router": soft_router,
+        }
+
+    return None
+
+
 def patch_model_with_soft_routing(
     model: nn.Module,
     tau_r: float = 0.01,
@@ -222,53 +295,37 @@ def patch_model_with_soft_routing(
         The modified model (same object, modified in-place).
     """
     entries: List[Dict[str, Any]] = []
+    patched_block_ids = set()
 
-    for name, module in model.named_modules():
-        if hasattr(module, 'gate') and hasattr(module, 'experts'):
-            gate = module.gate
-            if hasattr(gate, 'group_limited_topk'):
-                effective_topk = soft_topk
-                if effective_topk is None:
-                    effective_topk = min(gate.top_k * 2, gate.num_experts)
-                soft_router = SoftMoERouter(
-                    gate, tau_r=tau_r, soft_topk=effective_topk,
-                )
-                entries.append(
-                    {
-                        "kind": "gate",
-                        "block": module,
-                        "original_gate": gate,
-                        "soft_router": soft_router,
-                    }
-                )
-                module.gate = soft_router
-            elif hasattr(module, "topk") and hasattr(module.topk, "top_k"):
-                effective_topk = soft_topk
-                num_experts = int(getattr(module, "num_experts", getattr(gate, "num_experts", 0)))
-                hard_topk = int(getattr(module.topk, "top_k"))
-                if effective_topk is None:
-                    effective_topk = min(hard_topk * 2, num_experts)
-                soft_router = SGLangSoftTopKRouter(
-                    module.topk,
-                    num_experts=num_experts,
-                    tau_r=tau_r,
-                    soft_topk=effective_topk,
-                    score_function=getattr(module, "score_function", None),
-                )
-                entries.append(
-                    {
-                        "kind": "topk",
-                        "block": module,
-                        "original_topk": module.topk,
-                        "soft_router": soft_router,
-                    }
-                )
-                module.topk = soft_router
+    def _append_entry(entry: Dict[str, Any]) -> None:
+        block_id = id(entry["block"])
+        if block_id in patched_block_ids:
+            return
+        patched_block_ids.add(block_id)
+        entries.append(entry)
+        if entry["kind"] == "gate":
+            entry["block"].gate = entry["soft_router"]
+        elif entry["kind"] == "topk":
+            entry["block"].topk = entry["soft_router"]
+
+    for _, module in model.named_modules():
+        entry = _maybe_build_patch_entry(module, tau_r=tau_r, soft_topk=soft_topk)
+        if entry is not None:
+            _append_entry(entry)
+
+    for _, module in _iter_known_moe_blocks(model):
+        entry = _maybe_build_patch_entry(module, tau_r=tau_r, soft_topk=soft_topk)
+        if entry is not None:
+            _append_entry(entry)
 
     if not entries:
+        known_block_types = []
+        for _, module in _iter_known_moe_blocks(model):
+            known_block_types.append(type(module).__name__)
         raise RuntimeError(
             "No MoE gates found to patch. Ensure the model has "
-            "LLaDA2MoeSparseMoeBlock layers with LLaDA2MoeGate."
+            "LLaDA2/LLaDA-MoE sparse blocks with gate/topk modules. "
+            f"Known explicit blocks seen: {known_block_types[:8]}"
         )
 
     mid = id(model)
