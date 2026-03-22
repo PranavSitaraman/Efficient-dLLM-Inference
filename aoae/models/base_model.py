@@ -151,6 +151,16 @@ def _init_vllm_distributed(tp_size: int = 1):
       2. initialize_model_parallel(tp_size)
     """
     from vllm import distributed as vllm_dist
+    local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
+
+    if torch.cuda.is_available():
+        device_count = torch.cuda.device_count()
+        if local_rank >= device_count:
+            raise RuntimeError(
+                f"LOCAL_RANK={local_rank} but only {device_count} CUDA device(s) are visible. "
+                "Check torchrun / Slurm GPU binding and CUDA_VISIBLE_DEVICES."
+            )
+        torch.cuda.set_device(local_rank)
 
     if not torch.distributed.is_initialized():
         if tp_size > 1 and "RANK" not in os.environ:
