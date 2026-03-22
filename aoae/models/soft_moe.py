@@ -12,7 +12,7 @@ K_soft=top_k this is equivalent to hard routing with soft weights.
 import math
 import weakref
 from contextlib import contextmanager
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -116,7 +116,77 @@ class SoftMoERouter(nn.Module):
         return weights, indices
 
 
-_PATCHED_BLOCKS: Dict[int, List[Tuple[nn.Module, nn.Module, SoftMoERouter]]] = {}
+class SGLangSoftTopKRouter(nn.Module):
+    """Wrapper around SGLang's TopK selector that applies temperature scaling."""
+
+    def __init__(
+        self,
+        original_topk: nn.Module,
+        *,
+        num_experts: int,
+        tau_r: float = 0.01,
+        soft_topk: Optional[int] = None,
+        score_function: Optional[str] = None,
+    ):
+        super().__init__()
+        self.original_topk = original_topk
+        self.num_experts = int(num_experts)
+        self.top_k = int(getattr(original_topk, "top_k"))
+        self.routed_scaling_factor = float(
+            getattr(original_topk, "routed_scaling_factor", 1.0)
+        )
+        self.score_function = score_function
+        self._tau_r = tau_r
+        self._soft_topk = soft_topk if soft_topk is not None else self.num_experts
+        self._last_weights: Optional[torch.Tensor] = None
+
+    @property
+    def tau_r(self) -> float:
+        return self._tau_r
+
+    @tau_r.setter
+    def tau_r(self, value: float):
+        if value <= 0:
+            raise ValueError(f"tau_r must be positive, got {value}")
+        self._tau_r = value
+
+    @property
+    def soft_topk(self) -> int:
+        return self._soft_topk
+
+    @soft_topk.setter
+    def soft_topk(self, value: int):
+        if value < 1 or value > self.num_experts:
+            raise ValueError(
+                f"soft_topk must be in [1, {self.num_experts}], got {value}"
+            )
+        self._soft_topk = value
+
+    def _record_weights(self, scaled_logits: torch.Tensor) -> None:
+        logits = scaled_logits.float()
+        if self.score_function == "sigmoid":
+            weights = torch.sigmoid(logits)
+            weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+        else:
+            weights = F.softmax(logits, dim=-1)
+        self._last_weights = weights.detach()
+
+    def forward(self, hidden_states: torch.Tensor, router_logits: torch.Tensor, *args, **kwargs):
+        scaled_logits = router_logits / self._tau_r
+        self._record_weights(scaled_logits)
+
+        original_top_k = getattr(self.original_topk, "top_k", None)
+        if original_top_k is None:
+            raise RuntimeError("SGLang TopK module does not expose a top_k attribute.")
+
+        self.original_topk.top_k = min(self._soft_topk, self.num_experts)
+        try:
+            return self.original_topk(hidden_states, scaled_logits, *args, **kwargs)
+        finally:
+            self.original_topk.top_k = original_top_k
+
+
+_PATCHED_BLOCKS: Dict[int, List[Dict[str, Any]]] = {}
 _PATCHED_REFS: Dict[int, weakref.ref] = {}
 _ROUTING_STATE: Dict[int, str] = {}  # "hard" or "soft"
 
@@ -151,7 +221,7 @@ def patch_model_with_soft_routing(
     Returns:
         The modified model (same object, modified in-place).
     """
-    entries: List[Tuple[nn.Module, nn.Module, SoftMoERouter]] = []
+    entries: List[Dict[str, Any]] = []
 
     for name, module in model.named_modules():
         if hasattr(module, 'gate') and hasattr(module, 'experts'):
@@ -163,8 +233,37 @@ def patch_model_with_soft_routing(
                 soft_router = SoftMoERouter(
                     gate, tau_r=tau_r, soft_topk=effective_topk,
                 )
-                entries.append((module, gate, soft_router))
+                entries.append(
+                    {
+                        "kind": "gate",
+                        "block": module,
+                        "original_gate": gate,
+                        "soft_router": soft_router,
+                    }
+                )
                 module.gate = soft_router
+            elif hasattr(module, "topk") and hasattr(module.topk, "top_k"):
+                effective_topk = soft_topk
+                num_experts = int(getattr(module, "num_experts", getattr(gate, "num_experts", 0)))
+                hard_topk = int(getattr(module.topk, "top_k"))
+                if effective_topk is None:
+                    effective_topk = min(hard_topk * 2, num_experts)
+                soft_router = SGLangSoftTopKRouter(
+                    module.topk,
+                    num_experts=num_experts,
+                    tau_r=tau_r,
+                    soft_topk=effective_topk,
+                    score_function=getattr(module, "score_function", None),
+                )
+                entries.append(
+                    {
+                        "kind": "topk",
+                        "block": module,
+                        "original_topk": module.topk,
+                        "soft_router": soft_router,
+                    }
+                )
+                module.topk = soft_router
 
     if not entries:
         raise RuntimeError(
@@ -177,7 +276,7 @@ def patch_model_with_soft_routing(
     _PATCHED_REFS[mid] = weakref.ref(model)
     _ROUTING_STATE[mid] = "soft"
     print(f"[SoftMoE] Patched {len(entries)} MoE gates with "
-          f"tau_r={tau_r}, soft_topk={entries[0][2].soft_topk}")
+          f"tau_r={tau_r}, soft_topk={entries[0]['soft_router'].soft_topk}")
     return model
 
 
@@ -190,8 +289,11 @@ def set_hard_routing(model: nn.Module) -> None:
     entries = _PATCHED_BLOCKS.get(mid)
     if entries is None:
         return
-    for block, original_gate, _ in entries:
-        block.gate = original_gate
+    for entry in entries:
+        if entry["kind"] == "gate":
+            entry["block"].gate = entry["original_gate"]
+        elif entry["kind"] == "topk":
+            entry["block"].topk = entry["original_topk"]
     _ROUTING_STATE[mid] = "hard"
 
 
@@ -207,8 +309,11 @@ def set_soft_routing(model: nn.Module) -> None:
             "Model was never patched with soft routing. "
             "Call patch_model_with_soft_routing first."
         )
-    for block, _, soft_router in entries:
-        block.gate = soft_router
+    for entry in entries:
+        if entry["kind"] == "gate":
+            entry["block"].gate = entry["soft_router"]
+        elif entry["kind"] == "topk":
+            entry["block"].topk = entry["soft_router"]
     _ROUTING_STATE[mid] = "soft"
 
 
@@ -221,8 +326,8 @@ def set_routing_temperature(model: nn.Module, tau_r: float) -> None:
             "Model was never patched with soft routing. "
             "Call patch_model_with_soft_routing first."
         )
-    for _, _, soft_router in entries:
-        soft_router.tau_r = tau_r
+    for entry in entries:
+        entry["soft_router"].tau_r = tau_r
 
 
 def set_soft_topk(model: nn.Module, soft_topk: int) -> None:
@@ -234,8 +339,8 @@ def set_soft_topk(model: nn.Module, soft_topk: int) -> None:
             "Model was never patched with soft routing. "
             "Call patch_model_with_soft_routing first."
         )
-    for _, _, soft_router in entries:
-        soft_router.soft_topk = soft_topk
+    for entry in entries:
+        entry["soft_router"].soft_topk = soft_topk
 
 
 @contextmanager
@@ -260,18 +365,20 @@ def compute_routing_entropy(model: nn.Module) -> dict:
         'tau_r', and per-layer 'layer_entropies'.
     """
     layer_entropies: List[float] = []
-    last_router: Optional[SoftMoERouter] = None
-    for _name, module in model.named_modules():
-        if isinstance(module, SoftMoERouter):
-            last_router = module
-            w = module._last_weights  # [num_tokens, num_experts] from last fwd
-            if w is None:
-                layer_entropies.append(float("nan"))
-                continue
-            # Renormalize in case routed_scaling_factor was applied before storage
-            p = w / w.sum(dim=-1, keepdim=True).clamp(min=1e-12)
-            ent = -(p * (p + 1e-12).log()).sum(dim=-1)  # [num_tokens]
-            layer_entropies.append(ent.mean().item())
+    last_router: Optional[nn.Module] = None
+    _cleanup_stale(id(model))
+    entries = _PATCHED_BLOCKS.get(id(model), [])
+    for entry in entries:
+        module = entry["soft_router"]
+        last_router = module
+        w = module._last_weights  # [num_tokens, num_experts] from last fwd
+        if w is None:
+            layer_entropies.append(float("nan"))
+            continue
+        # Renormalize in case routed_scaling_factor was applied before storage
+        p = w / w.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+        ent = -(p * (p + 1e-12).log()).sum(dim=-1)  # [num_tokens]
+        layer_entropies.append(ent.mean().item())
 
     if not layer_entropies:
         return {"mean_entropy": 0.0, "num_layers": 0}

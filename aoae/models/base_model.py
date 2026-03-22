@@ -35,6 +35,16 @@ if os.path.isdir(_DINFER_DIR) and _DINFER_DIR not in sys.path:
     sys.path.insert(0, _DINFER_DIR)
 
 
+def _get_dinfer_runtime(cfg: dict) -> str:
+    runtime = str(cfg.get("base_model", {}).get("dinfer_runtime", "vllm")).strip().lower()
+    if runtime not in {"vllm", "sglang"}:
+        raise ValueError(
+            f"Unsupported base_model.dinfer_runtime={runtime!r}. "
+            "Choose 'vllm' or 'sglang'."
+        )
+    return runtime
+
+
 def _detect_backend(name_or_path: str, cfg: dict) -> str:
     """Choose backend based on model name and config."""
     backend = cfg["base_model"].get("backend", "auto")
@@ -128,6 +138,29 @@ def _init_vllm_distributed(tp_size: int = 1):
     vllm_dist.initialize_model_parallel(tp_size, backend="nccl")
 
 
+def _init_sglang_distributed(tp_size: int = 1, ep_size: int = 1):
+    """Initialize SGLang distributed/model-parallel state for dInfer MoE models."""
+    from sglang.srt import distributed as sglang_dist
+
+    if not torch.distributed.is_initialized():
+        if tp_size > 1 and "RANK" not in os.environ:
+            raise RuntimeError(
+                f"tp_size={tp_size} requires multi-process launch (e.g., torchrun). "
+                "Run with torchrun or use a single-GPU config."
+            )
+
+        os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+        os.environ.setdefault("MASTER_PORT", "29500")
+        if os.environ.get("MASTER_ADDR") == "localhost":
+            os.environ["MASTER_ADDR"] = "127.0.0.1"
+        os.environ.setdefault("NCCL_SOCKET_FAMILY", "AF_INET")
+
+        rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+        sglang_dist.init_distributed_environment(tp_size, rank, "env://", rank, "nccl")
+
+    sglang_dist.initialize_model_parallel(tp_size, ep_size, 1, backend="nccl")
+
+
 def _patch_missing_moe_align_block_size(cfg: Optional[dict] = None) -> None:
     """Back-compat wrapper: ensure required vLLM MoE runtime capability."""
     cfg = cfg or {}
@@ -183,6 +216,7 @@ class LLaDABaseModel(nn.Module):
             )
         # Sync back to cfg so downstream code sees the correct value
         cfg["base_model"]["mask_token_id"] = self.mask_id
+        self._dinfer_runtime = _get_dinfer_runtime(cfg)
 
         # vLLM config context manager (kept alive for dInfer forward passes)
         self._vllm_config_ctx = None
@@ -279,13 +313,17 @@ class LLaDABaseModel(nn.Module):
         self._freeze()
 
     def _init_dinfer(self, name_or_path: str):
-        """Initialize dInfer MoE model with vLLM tensor parallelism.
+        runtime = self._dinfer_runtime
+        if runtime == "vllm":
+            self._init_dinfer_vllm(name_or_path)
+            return
+        if runtime == "sglang":
+            self._init_dinfer_sglang(name_or_path)
+            return
+        raise RuntimeError(f"Unhandled dInfer runtime: {runtime!r}")
 
-        Follows the exact pattern from dInfer/tests/test_llada_moe.py:
-        1. Initialize vLLM distributed environment
-        2. Set vLLM config with parallel settings
-        3. Load model config + instantiate + load weights inside config context
-        """
+    def _init_dinfer_vllm(self, name_or_path: str):
+        """Initialize dInfer MoE model with vLLM tensor parallelism."""
         try:
             from vllm.config import VllmConfig, ParallelConfig, set_current_vllm_config
             from transformers import AutoConfig
@@ -299,7 +337,6 @@ class LLaDABaseModel(nn.Module):
 
         tp_size = self.cfg.get("hardware", {}).get("tp_size", 1)
 
-        # Step 1: Initialize vLLM distributed state
         _init_vllm_distributed(tp_size)
         _patch_missing_moe_align_block_size(self.cfg)
 
@@ -325,6 +362,77 @@ class LLaDABaseModel(nn.Module):
             self._vllm_config_ctx.__exit__(None, None, None)
             self._vllm_config_ctx = None
             raise
+
+    def _init_dinfer_sglang(self, name_or_path: str):
+        """Initialize dInfer MoE model with the SGLang runtime."""
+        try:
+            from transformers import AutoConfig
+            from huggingface_hub import snapshot_download
+            from dinfer.model.modeling_llada2_moe_sglang import LLaDA2SGLangLM
+            from sglang.srt.layers.dp_attention import initialize_dp_attention
+            from sglang.srt.layers.moe import initialize_moe_config
+            from sglang.srt.server_args import ServerArgs
+        except ImportError as e:
+            raise ImportError(
+                f"dInfer SGLang runtime requires sglang and dinfer packages: {e}. "
+                "Install sglang and pip install -e external/dInfer."
+            )
+
+        tp_size = int(self.cfg.get("hardware", {}).get("tp_size", 1))
+        ep_size = int(self.cfg.get("base_model", {}).get("dinfer_ep_size", 1))
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+            device = torch.device("cuda", local_rank)
+        else:
+            device = torch.device("cpu")
+
+        _init_sglang_distributed(tp_size, ep_size=ep_size)
+
+        model_config = AutoConfig.from_pretrained(
+            name_or_path, trust_remote_code=True,
+        )
+        server_args = ServerArgs(
+            model_path=name_or_path,
+            enable_dp_attention=True,
+            trust_remote_code=True,
+            tp_size=tp_size,
+            dp_size=1,
+            pp_size=1,
+        )
+        try:
+            from sglang.srt.server_args import set_global_server_args_for_scheduler
+        except ImportError:
+            pass
+        else:
+            set_global_server_args_for_scheduler(server_args)
+        initialize_dp_attention(
+            server_args=server_args,
+            model_config=model_config,
+        )
+        initialize_moe_config(server_args)
+
+        old_default_dtype = torch.get_default_dtype()
+        try:
+            torch.set_default_dtype(self.dtype)
+            self.model = LLaDA2SGLangLM(
+                config=model_config,
+                quant_config=getattr(model_config, "quant_config", None),
+                expert_map_path=self.cfg.get("base_model", {}).get("dinfer_expert_map_path", "."),
+            ).eval()
+        finally:
+            torch.set_default_dtype(old_default_dtype)
+
+        local_model_path = snapshot_download(
+            name_or_path,
+            allow_patterns=["*.json", "*.safetensors", "*.model"],
+            ignore_patterns=["*.msgpack", "*.h5", "*.ot"],
+        )
+        self.model.load_weights(local_model_path, torch_dtype=self.dtype, device=device)
+        self.model = self.model.to(device)
+        if hasattr(self.model, "after_processing"):
+            self.model.after_processing()
+        self._freeze()
 
     def _init_soft_moe(self, name_or_path: str):
         """Initialize dInfer MoE model with soft routing (paper §3.7).
@@ -357,6 +465,11 @@ class LLaDABaseModel(nn.Module):
             emb_module = self.model.get_input_embeddings()
             if emb_module is not None and hasattr(emb_module, "weight") and emb_module.weight is not None:
                 return emb_module.weight
+
+        if hasattr(self.model, "get_embed_and_head"):
+            embed_w, _ = self.model.get_embed_and_head()
+            if embed_w is not None:
+                return embed_w
 
         for name, module in self.model.named_modules():
             if isinstance(module, nn.Embedding) and module.weight is not None:
@@ -467,7 +580,7 @@ class LLaDABaseModel(nn.Module):
         input_ids: torch.LongTensor,
         attention_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Forward pass through dInfer MoE model with vLLM context.
+        """Forward pass through dInfer MoE model with the configured runtime.
 
         Args:
             input_ids: [B, L] token ids.
@@ -475,14 +588,17 @@ class LLaDABaseModel(nn.Module):
                 For dInfer SDPA, this should be a boolean tensor where
                 True = attend, False = block.
         """
-        if self._vllm_config is None:
-            from vllm.config import get_current_vllm_config
-            self._vllm_config = get_current_vllm_config()
-        if not hasattr(self, '_set_forward_context'):
-            from vllm.forward_context import set_forward_context
-            self._set_forward_context = set_forward_context
-        with self._set_forward_context(None, self._vllm_config):
-            outputs = self.model(input_ids, attention_mask=attention_mask)
+        if self._dinfer_runtime == "vllm":
+            if self._vllm_config is None:
+                from vllm.config import get_current_vllm_config
+                self._vllm_config = get_current_vllm_config()
+            if not hasattr(self, '_set_forward_context'):
+                from vllm.forward_context import set_forward_context
+                self._set_forward_context = set_forward_context
+            with self._set_forward_context(None, self._vllm_config):
+                outputs = self.model(input_ids, attention_mask=attention_mask)
+        else:
+            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
         if hasattr(outputs, "logits"):
             return outputs.logits
         if isinstance(outputs, (tuple, list)):
@@ -557,10 +673,13 @@ class LLaDABaseModel(nn.Module):
 
         hidden_states = None
         if hasattr(outputs, "hidden_states") and outputs.hidden_states is not None:
-            hidden_states = list(outputs.hidden_states)
-            # HF convention usually includes embedding output at index 0.
-            if len(hidden_states) > 1:
-                hidden_states = hidden_states[1:]
+            if isinstance(outputs.hidden_states, torch.Tensor):
+                hidden_states = [outputs.hidden_states]
+            else:
+                hidden_states = list(outputs.hidden_states)
+                # HF convention usually includes embedding output at index 0.
+                if len(hidden_states) > 1:
+                    hidden_states = hidden_states[1:]
         elif hasattr(outputs, "last_hidden_state"):
             hidden_states = [outputs.last_hidden_state]
 
@@ -574,15 +693,21 @@ class LLaDABaseModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, list]:
         """Forward with hidden states through dInfer MoE model."""
-        if self._vllm_config is None:
-            from vllm.config import get_current_vllm_config
-            self._vllm_config = get_current_vllm_config()
-        if not hasattr(self, '_set_forward_context'):
-            from vllm.forward_context import set_forward_context
-            self._set_forward_context = set_forward_context
-        with self._set_forward_context(None, self._vllm_config):
+        if self._dinfer_runtime == "vllm":
+            if self._vllm_config is None:
+                from vllm.config import get_current_vllm_config
+                self._vllm_config = get_current_vllm_config()
+            if not hasattr(self, '_set_forward_context'):
+                from vllm.forward_context import set_forward_context
+                self._set_forward_context = set_forward_context
+            with self._set_forward_context(None, self._vllm_config):
+                outputs = self.model(
+                    input_ids, attention_mask=attention_mask, output_hidden_states=True,
+                )
+        else:
             outputs = self.model(
-                input_ids, attention_mask=attention_mask, output_hidden_states=True,
+                input_ids=input_ids,
+                attention_mask=attention_mask,
             )
         return self._extract_logits_and_hidden_states(outputs, source="dinfer")
 

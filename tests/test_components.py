@@ -729,6 +729,48 @@ class TestSoftMoERouter:
 
         return MockModel()
 
+    def _make_mock_sglang_moe_model(self):
+        """Helper: create a mock SGLang-shaped MoE model for patching tests."""
+        class MockGateModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = 4
+                self.weight = torch.nn.Parameter(torch.randn(4, 16))
+
+            def forward(self, hidden_states):
+                hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
+                return torch.nn.functional.linear(hidden_states, self.weight)
+
+        class MockTopK(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.top_k = 2
+                self.last_top_k = None
+                self.last_logits = None
+
+            def forward(self, hidden_states, router_logits, *args, **kwargs):
+                del hidden_states, args, kwargs
+                self.last_top_k = self.top_k
+                self.last_logits = router_logits.detach().clone()
+                return router_logits.topk(self.top_k, dim=-1)
+
+        class MockMoeBlock(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.gate = MockGateModule()
+                self.topk = MockTopK()
+                self.experts = torch.nn.Linear(16, 16)
+                self.num_experts = 4
+                self.score_function = "softmax"
+
+        class MockModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layer1 = MockMoeBlock()
+                self.layer2 = MockMoeBlock()
+
+        return MockModel()
+
     def test_patch_model_finds_gates(self):
         from aoae.models.soft_moe import patch_model_with_soft_routing, SoftMoERouter
 
@@ -777,6 +819,32 @@ class TestSoftMoERouter:
             assert isinstance(model.layer1.gate, SoftMoERouter)
         # After context: restored to hard
         assert not isinstance(model.layer1.gate, SoftMoERouter)
+
+    def test_patch_model_supports_sglang_topk_blocks(self):
+        from aoae.models.soft_moe import (
+            patch_model_with_soft_routing,
+            set_hard_routing,
+            set_soft_routing,
+            SGLangSoftTopKRouter,
+        )
+
+        model = self._make_mock_sglang_moe_model()
+        orig_topk = model.layer1.topk
+        patched = patch_model_with_soft_routing(model, tau_r=0.5)
+
+        assert isinstance(patched.layer1.topk, SGLangSoftTopKRouter)
+        assert isinstance(patched.layer2.topk, SGLangSoftTopKRouter)
+
+        hidden = torch.randn(3, 16)
+        logits = patched.layer1.gate(hidden)
+        patched.layer1.topk(hidden, logits)
+        assert orig_topk.last_top_k == 4
+
+        set_hard_routing(model)
+        assert model.layer1.topk is orig_topk
+
+        set_soft_routing(model)
+        assert isinstance(model.layer1.topk, SGLangSoftTopKRouter)
 
 
 # ======================================================================
