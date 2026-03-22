@@ -58,6 +58,45 @@ def _detect_backend(name_or_path: str, cfg: dict) -> str:
     return "hf"
 
 
+def _patch_vllm_uuid_device_ids() -> None:
+    """Allow vLLM helpers to tolerate UUID-style CUDA_VISIBLE_DEVICES entries.
+
+    On MIG-enabled clusters, Slurm often exposes devices as UUIDs like
+    ``MIG-...`` instead of integer ordinals. Some vLLM utility code assumes the
+    env var contains integers and crashes during import-time capability checks.
+    For those UUID tokens, fall back to the local visible-device ordinal.
+    """
+    try:
+        from vllm.platforms import current_platform
+        from vllm.platforms.interface import Platform
+    except ImportError:
+        return
+
+    patched = getattr(Platform.device_id_to_physical_device_id, "__func__", None)
+    if getattr(patched, "_aoae_uuid_patch", False):
+        return
+
+    def _device_id_to_physical_device_id(cls, device_id: int):
+        env_var = getattr(cls, "device_control_env_var", None)
+        raw = os.environ.get(env_var, "") if env_var else ""
+        if raw:
+            device_ids = raw.split(",")
+            physical_device_id = device_ids[device_id]
+            try:
+                return int(physical_device_id)
+            except (TypeError, ValueError):
+                # UUID tokens such as GPU-... or MIG-... are valid CUDA device
+                # selectors but not valid integers. Use the local ordinal that
+                # CUDA exposes inside the restricted visible-device set.
+                return device_id
+        return device_id
+
+    _device_id_to_physical_device_id._aoae_uuid_patch = True
+    class_method = classmethod(_device_id_to_physical_device_id)
+    Platform.device_id_to_physical_device_id = class_method
+    current_platform.__class__.device_id_to_physical_device_id = class_method
+
+
 def _ensure_hf_rope_compatibility() -> None:
     """Add the legacy ``rope_type='default'`` handler if transformers dropped it.
 
@@ -365,9 +404,12 @@ class LLaDABaseModel(nn.Module):
 
     def _init_dinfer_sglang(self, name_or_path: str):
         """Initialize dInfer MoE model with the SGLang runtime."""
+        _patch_vllm_uuid_device_ids()
         try:
             from transformers import AutoConfig
             from huggingface_hub import snapshot_download
+            # Import the SGLang model module directly so we do not depend on
+            # ``dinfer.model`` re-exporting LLaDA2SGLangLM in every env.
             from dinfer.model.modeling_llada2_moe_sglang import LLaDA2SGLangLM
             from sglang.srt.layers.dp_attention import initialize_dp_attention
             from sglang.srt.layers.moe import initialize_moe_config
