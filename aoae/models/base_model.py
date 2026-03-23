@@ -725,6 +725,8 @@ class LLaDABaseModel(nn.Module):
         past_key_values = getattr(outputs, "past_key_values", None)
         if past_key_values is None:
             raise RuntimeError("dInfer cached forward did not return past_key_values.")
+        if hasattr(past_key_values, "consolidate"):
+            past_key_values.consolidate()
         return logits, past_key_values
 
     @torch.no_grad()
@@ -739,6 +741,8 @@ class LLaDABaseModel(nn.Module):
             raise NotImplementedError("forward_replace_with_cache is only supported for dInfer-backed models.")
         if past_key_values is None:
             raise ValueError("past_key_values must be provided for replace-position forward.")
+        if hasattr(past_key_values, "consolidate"):
+            past_key_values.consolidate()
 
         start = int(replace_slice.start)
         end = int(replace_slice.stop)
@@ -763,6 +767,8 @@ class LLaDABaseModel(nn.Module):
         next_cache = getattr(outputs, "past_key_values", None)
         if next_cache is None:
             raise RuntimeError("dInfer replace-position forward did not return updated past_key_values.")
+        if hasattr(next_cache, "consolidate"):
+            next_cache.consolidate()
         return logits, next_cache
 
     # ------------------------------------------------------------------
