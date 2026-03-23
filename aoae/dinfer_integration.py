@@ -192,6 +192,177 @@ class SpeculativeCacheManager:
         return self.cache_mgr.count_thrash(r_t)
 
 
+def run_blockwise_speculative_inference(
+    dual_model,
+    policy,
+    soft_mask_module,
+    prism_adapter,
+    prompt_ids: torch.LongTensor,
+    cfg: dict,
+    policy_temperature: float = 1.0,
+) -> Tuple[torch.Tensor, dict]:
+    """Run speculative decoding inside the official LLaDA2.1 block schedule.
+
+    This path preserves the paper/model-card decode order:
+      - generate one block at a time, left-to-right
+      - apply threshold-based M2T unmasking within the active block
+      - allow T2T editing within that same block
+
+    The hard-routed auxiliary stays in the loop for agreement/reuse tracking,
+    but the actual token updates follow the primary soft-routed logits so that
+    fidelity stays close to the official LLaDA2.1 decode semantics.
+    """
+    del policy, soft_mask_module, prism_adapter, policy_temperature  # Unused in this scheduler.
+
+    ic = cfg["inference"]
+    off_cfg = ic.get("llada21_official", {})
+    if not bool(off_cfg.get("use_block_diffusion", True)):
+        raise ValueError(
+            "run_blockwise_speculative_inference requires "
+            "inference.llada21_official.use_block_diffusion=true."
+        )
+    if bool(off_cfg.get("enable_mbe", False)):
+        raise NotImplementedError(
+            "Speculative blockwise PoC1 does not yet support enable_mbe=true."
+        )
+
+    block_len = int(ic.get("block_length", 32))
+    max_post_steps = int(off_cfg.get("max_post_steps", 16))
+    threshold = float(off_cfg.get("threshold", 0.7))
+    editing_threshold = float(off_cfg.get("editing_threshold", 0.5))
+    L_gen = int(ic["gen_length"])
+    mask_id = int(cfg["base_model"]["mask_token_id"])
+    use_fallback = bool(ic.get("fallback_unmask", True))
+    disable_remask = bool(ic.get("disable_remask", False))
+
+    B, P = prompt_ids.shape
+    device = prompt_ids.device
+    n_blocks = (L_gen + block_len - 1) // block_len
+
+    y = torch.cat(
+        [
+            prompt_ids,
+            torch.full((B, L_gen), mask_id, dtype=torch.long, device=device),
+        ],
+        dim=1,
+    )
+
+    cache_mgr = SpeculativeCacheManager(B, L_gen, device)
+    reuse_state = None
+    reuse_diag_sum: Dict[str, float] = {}
+    reuse_diag_steps = 0
+    _primary_steps = 0
+    _raw_agreement_sum = 0.0
+    _raw_agreement_count = 0
+    _safe_reuse_sum = 0.0
+    _safe_reuse_count = 0
+    _draft_accepts = 0
+    _draft_rejects = 0
+
+    for blk_idx in range(n_blocks):
+        blk_start = P + blk_idx * block_len
+        blk_end = min(P + (blk_idx + 1) * block_len, P + L_gen)
+        blk_slice = slice(blk_start, blk_end)
+        rel_slice = slice(blk_start - P, blk_end - P)
+
+        for _ in range(max_post_steps):
+            blk_tokens = y[:, blk_slice]
+            mask_ind = blk_tokens == mask_id
+            if not mask_ind.any():
+                break
+
+            dual_out = dual_model.dual_forward_resp(y, blk_slice)
+            pri_logits = dual_out.primary_logits
+            aux_logits = dual_out.auxiliary_logits
+            raw_agreement = dual_out.agreement.bool()
+            safe_reuse, reuse_state, reuse_diag = compute_reuse_signal(
+                pri_logits, aux_logits, cfg, state=reuse_state,
+            )
+            safe_reuse = safe_reuse.bool()
+
+            active_mask = mask_ind.bool()
+            if active_mask.any():
+                _raw_agreement_sum += float(raw_agreement[active_mask].float().sum().item())
+                _raw_agreement_count += int(active_mask.sum().item())
+                _safe_reuse_sum += float(safe_reuse[active_mask].float().sum().item())
+                _safe_reuse_count += int(active_mask.sum().item())
+            for key, value in reuse_diag.items():
+                reuse_diag_sum[key] = reuse_diag_sum.get(key, 0.0) + float(value)
+            reuse_diag_steps += 1
+            _primary_steps += 1
+
+            pri_probs = F.softmax(pri_logits, dim=-1)
+            pri_max_prob, pri_max_tok = pri_probs.max(dim=-1)
+
+            prev_tokens = blk_tokens.clone()
+            next_tokens = prev_tokens.clone()
+
+            unmask_positions = mask_ind & (pri_max_prob > threshold)
+            drafted_positions = unmask_positions.clone()
+            if unmask_positions.any():
+                next_tokens[unmask_positions] = pri_max_tok[unmask_positions]
+
+            if use_fallback:
+                still_masked = next_tokens == mask_id
+                no_unmasks = mask_ind.any(dim=-1) & ~unmask_positions.any(dim=-1)
+                if no_unmasks.any():
+                    fallback_conf = pri_max_prob.clone()
+                    fallback_conf[~still_masked] = -1.0
+                    best_pos = fallback_conf.argmax(dim=-1)
+                    best_tok = pri_max_tok
+                    for b_idx in no_unmasks.nonzero(as_tuple=True)[0]:
+                        next_tokens[b_idx, best_pos[b_idx]] = best_tok[b_idx, best_pos[b_idx]]
+                        drafted_positions[b_idx, best_pos[b_idx]] = True
+
+            if disable_remask:
+                edit_positions = torch.zeros_like(mask_ind)
+            else:
+                previously_unmasked = ~mask_ind
+                disagree = (pri_max_tok != prev_tokens) & previously_unmasked
+                confident = pri_max_prob > editing_threshold
+                edit_positions = disagree & confident
+                if edit_positions.any():
+                    next_tokens[edit_positions] = pri_max_tok[edit_positions]
+
+            if drafted_positions.any():
+                drafted_agreement = raw_agreement[drafted_positions]
+                _draft_accepts += int(drafted_agreement.sum().item())
+                _draft_rejects += int(drafted_positions.sum().item() - drafted_agreement.sum().item())
+
+            u_full = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
+            r_full = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
+            kappa_full = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
+            safe_reuse_full = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
+
+            cache_commit_positions = drafted_positions & safe_reuse
+            u_full[:, rel_slice] = drafted_positions.float()
+            r_full[:, rel_slice] = edit_positions.float()
+            kappa_full[:, rel_slice] = cache_commit_positions.float()
+            safe_reuse_full[:, rel_slice] = safe_reuse.float()
+            cache_mgr.step(r_full, kappa_full, u_full, safe_reuse_full)
+
+            y[:, blk_slice] = next_tokens
+
+    stats = cache_mgr.get_stats()
+    stats["mean_agreement"] = _raw_agreement_sum / max(_raw_agreement_count, 1)
+    stats["agreement_observations"] = _raw_agreement_count
+    stats["draft_accepts"] = _draft_accepts
+    stats["draft_rejects"] = _draft_rejects
+    stats["draft_accept_rate"] = _draft_accepts / max(_draft_accepts + _draft_rejects, 1)
+    stats["reuse_mean_safe_reuse"] = _safe_reuse_sum / max(_safe_reuse_count, 1)
+    stats["safe_reuse_observations"] = _safe_reuse_count
+    stats["primary_steps"] = _primary_steps
+    stats["aux_only_steps"] = 0
+    stats["primary_skip_ratio"] = 0.0
+    stats["reuse_signal_method"] = cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")
+    for key, value in reuse_diag_sum.items():
+        stats[f"reuse_{key}"] = value / max(reuse_diag_steps, 1)
+    stats.update(compute_next_h_access_metrics([], [], None, 1))
+    stats["mean_boundary_depth"] = 0.0
+    stats["boundary_distribution"] = "{}"
+    return y, stats
+
+
 def run_speculative_inference(
     dual_model,
     policy,

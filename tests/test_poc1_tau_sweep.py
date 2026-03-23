@@ -178,6 +178,32 @@ class TestTauSweep:
         mod.main()
         assert captured_cfgs[0]["inference"]["disable_remask"] is False
 
+    def test_blockwise_schedule_respects_config_remask_default(self, monkeypatch, tmp_path):
+        """The blockwise fidelity schedule should keep its config remask setting by default."""
+        import scripts.run_tau_sweep as mod
+
+        captured_cfgs = []
+
+        def mock_eval(cfg, **kw):
+            captured_cfgs.append(cfg)
+            return [_fake_speculative_result(cfg["base_model"]["routing_temperature"])]
+
+        monkeypatch.setattr(mod, "eval_main", mock_eval)
+        cfg_path = _make_base_cfg(tmp_path)
+        cfg = yaml.safe_load(cfg_path.read_text())
+        cfg["inference"]["speculative_schedule"] = "llada21_block"
+        cfg["inference"]["disable_remask"] = False
+        cfg_path.write_text(yaml.safe_dump(cfg))
+
+        monkeypatch.setattr(sys, "argv", [
+            "run_tau_sweep.py",
+            "--config", str(cfg_path),
+            "--tau_r_values", "0.1",
+            "--output_root", str(tmp_path / "out"),
+        ])
+        mod.main()
+        assert captured_cfgs[0]["inference"]["disable_remask"] is False
+
     def test_pareto_data_monotonicity(self, monkeypatch, tmp_path):
         """With our fake data, accuracy should decrease and TPS should decrease as tau_r grows."""
         import scripts.run_tau_sweep as mod

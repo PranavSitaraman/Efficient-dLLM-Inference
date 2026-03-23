@@ -102,7 +102,15 @@ def _build_tau_cfg(
         cfg.setdefault("inference", {})["steps"] = int(args.steps)
     if args.gen_length is not None:
         cfg.setdefault("inference", {})["gen_length"] = int(args.gen_length)
-    cfg.setdefault("inference", {})["disable_remask"] = not args.enable_remask
+    inf_cfg = cfg.setdefault("inference", {})
+    schedule = str(inf_cfg.get("speculative_schedule", "aoae")).strip().lower()
+    if schedule == "llada21_block":
+        if args.enable_remask:
+            inf_cfg["disable_remask"] = False
+        else:
+            inf_cfg["disable_remask"] = bool(inf_cfg.get("disable_remask", False))
+    else:
+        inf_cfg["disable_remask"] = not args.enable_remask
     if args.eval_dataset is not None:
         cfg.setdefault("data", {})["eval_dataset"] = args.eval_dataset
     if args.eval_dataset_config is not None:

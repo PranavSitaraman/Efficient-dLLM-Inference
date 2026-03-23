@@ -34,7 +34,10 @@ from .inference import (
     block_smode_decode,
     llada21_official_decode,
 )
-from .dinfer_integration import run_speculative_inference
+from .dinfer_integration import (
+    run_blockwise_speculative_inference,
+    run_speculative_inference,
+)
 from .train_grpo import extract_answer, extract_prompt_and_reference
 from .runtime_checks import collect_runtime_info, set_global_seed, is_global_rank_zero
 from .evaluators import build_evaluator
@@ -583,6 +586,7 @@ def evaluate_speculative(
     mask_id = cfg["base_model"]["mask_token_id"]
     device = dual_model.device
     T = cfg["inference"]["steps"]
+    schedule = str(cfg.get("inference", {}).get("speculative_schedule", "aoae")).strip().lower()
 
     correct = 0
     total = 0
@@ -660,15 +664,26 @@ def evaluate_speculative(
             torch.cuda.synchronize()
         t0 = time.perf_counter()
         with torch.no_grad():
-            output_ids, stats = run_speculative_inference(
-                dual_model=dual_model,
-                policy=policy,
-                soft_mask_module=soft_mask,
-                prism_adapter=prism,
-                prompt_ids=prompt_ids,
-                cfg=cfg,
-                policy_temperature=policy_temperature,
-            )
+            if schedule == "llada21_block":
+                output_ids, stats = run_blockwise_speculative_inference(
+                    dual_model=dual_model,
+                    policy=policy,
+                    soft_mask_module=soft_mask,
+                    prism_adapter=prism,
+                    prompt_ids=prompt_ids,
+                    cfg=cfg,
+                    policy_temperature=policy_temperature,
+                )
+            else:
+                output_ids, stats = run_speculative_inference(
+                    dual_model=dual_model,
+                    policy=policy,
+                    soft_mask_module=soft_mask,
+                    prism_adapter=prism,
+                    prompt_ids=prompt_ids,
+                    cfg=cfg,
+                    policy_temperature=policy_temperature,
+                )
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         t1 = time.perf_counter()
@@ -696,7 +711,7 @@ def evaluate_speculative(
             is_correct=is_correct,
             generated_tokens=n_gen,
             note=_append_note(
-                f"tau_r={tau_r},tau_pi={policy_temperature},reuse={reuse_method},{pc_note}",
+                f"tau_r={tau_r},tau_pi={policy_temperature},reuse={reuse_method},{pc_note},sched={schedule}",
                 _remask_note(cfg),
             ),
         )
@@ -795,7 +810,7 @@ def evaluate_speculative(
         avg_tokens_per_sec=avg_tps,
         avg_gen_time_sec=avg_time,
         config_note=_append_note(
-            f"tau_r={tau_r},tau_pi={policy_temperature},reuse={reuse_method},{pc_note}",
+            f"tau_r={tau_r},tau_pi={policy_temperature},reuse={reuse_method},{pc_note},sched={schedule}",
             _remask_note(cfg),
         ),
         cache_hit_rate=cache_hit_rate,
@@ -1012,6 +1027,7 @@ def _build_run_metadata(
         "mode": mode,
         "model_name_or_path": cfg.get("base_model", {}).get("name_or_path", ""),
         "backend": cfg.get("base_model", {}).get("backend", "auto"),
+        "speculative_schedule": cfg.get("inference", {}).get("speculative_schedule", "aoae"),
         "routing_temperature": cfg.get("base_model", {}).get("routing_temperature"),
         "seed": int(cfg.get("hardware", {}).get("seed", 42)),
         "deterministic": bool(cfg.get("hardware", {}).get("deterministic", False)),
@@ -1023,6 +1039,11 @@ def _build_run_metadata(
         "reuse_signal_method": cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match"),
         "reuse_signal_threshold": cfg.get("inference", {}).get("reuse_signal", {}).get("threshold", 0.0),
         "compose_gamma": cfg.get("inference", {}).get("compose_gamma", 0.0),
+        "llada21_use_block_diffusion": bool(cfg.get("inference", {}).get("llada21_official", {}).get("use_block_diffusion", False)),
+        "llada21_threshold": cfg.get("inference", {}).get("llada21_official", {}).get("threshold"),
+        "llada21_editing_threshold": cfg.get("inference", {}).get("llada21_official", {}).get("editing_threshold"),
+        "llada21_max_post_steps": cfg.get("inference", {}).get("llada21_official", {}).get("max_post_steps"),
+        "llada21_enable_mbe": bool(cfg.get("inference", {}).get("llada21_official", {}).get("enable_mbe", False)),
         "candidate_policy": cfg.get("inference", {}).get("positional_cache", {}).get("candidate_policy", "learned_topb"),
         "positional_cache_enabled": bool(cfg.get("inference", {}).get("positional_cache", {}).get("enabled", False)),
         "positional_cache_horizon": int(cfg.get("inference", {}).get("positional_cache", {}).get("horizon", 4)),
@@ -1121,6 +1142,8 @@ def main(
 
     if mode == "speculative" or cfg["base_model"].get("backend") == "dual":
         from .models.dual_model import DualModelWrapper
+        schedule = str(cfg.get("inference", {}).get("speculative_schedule", "aoae")).strip().lower()
+        uses_aoae_policy = schedule != "llada21_block"
 
         if preloaded_dual_model is not None:
             dual_model = preloaded_dual_model
@@ -1136,9 +1159,8 @@ def main(
             dual_model = dual_model.to(device)
         tokenizer = dual_model.tokenizer
         mask_id = cfg["base_model"]["mask_token_id"]
-
-        embed_w = dual_model.get_embedding_weight()
-        embed_dim = embed_w.shape[1]
+        embed_w = dual_model.get_embedding_weight() if uses_aoae_policy else None
+        embed_dim = embed_w.shape[1] if embed_w is not None else None
 
         # --- Baselines using hard-routed model (standard LLaDA decoding) ---
         # Access the underlying model in hard-routing mode for baselines
@@ -1172,12 +1194,18 @@ def main(
                 if step_ckpts:
                     checkpoint_path = step_ckpts[-1]
 
-        has_trained_policy = checkpoint_path and os.path.exists(checkpoint_path)
+        has_trained_policy = checkpoint_path and os.path.exists(checkpoint_path) and uses_aoae_policy
 
-        # Setup soft_mask (needed for both trained and default policy)
-        soft_mask = SoftMaskedState(cfg, embed_w).to(device)
-        soft_mask.set_mask_embedding(mask_id)
-        soft_mask.eval()
+        soft_mask = None
+        if uses_aoae_policy:
+            soft_mask = SoftMaskedState(cfg, embed_w).to(device)
+            soft_mask.set_mask_embedding(mask_id)
+            soft_mask.eval()
+        elif checkpoint_path and os.path.exists(checkpoint_path) and is_global_rank_zero():
+            print(
+                "Checkpoint provided, but inference.speculative_schedule=llada21_block "
+                "does not use the AOAE policy. Ignoring checkpoint for this run."
+            )
 
         if has_trained_policy:
             policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
@@ -1221,15 +1249,20 @@ def main(
                 if is_global_rank_zero():
                     print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
         else:
-            # No trained policy — use DefaultPolicy (hard auxiliary as heuristic)
             tau_r = cfg["base_model"].get("routing_temperature", 0.01)
-            if is_global_rank_zero():
-                print(f"\n====== Speculative AOAE — Default Policy (tau_r={tau_r}) ======")
-                print("  (No trained checkpoint found; using hard auxiliary as heuristic policy)")
-            policy = DefaultPolicy(
-                tau_mask=0.7, num_steps=cfg["inference"]["steps"],
-            ).to(device)
-            policy.eval()
+            if uses_aoae_policy:
+                if is_global_rank_zero():
+                    print(f"\n====== Speculative AOAE — Default Policy (tau_r={tau_r}) ======")
+                    print("  (No trained checkpoint found; using hard auxiliary as heuristic policy)")
+                policy = DefaultPolicy(
+                    tau_mask=0.7, num_steps=cfg["inference"]["steps"],
+                ).to(device)
+                policy.eval()
+            else:
+                if is_global_rank_zero():
+                    print(f"\n====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r={tau_r}) ======")
+                    print("  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)")
+                policy = None
 
             r = evaluate_speculative(
                 dual_model, policy, soft_mask, None, eval_ds, tokenizer, cfg,
