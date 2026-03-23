@@ -134,11 +134,47 @@ class DualModelWrapper(nn.Module):
         return self._model.forward(input_ids)
 
     @torch.no_grad()
+    def auxiliary_forward_resp(
+        self, input_ids: torch.LongTensor, resp_slice: slice,
+    ) -> torch.Tensor:
+        """Fast forward returning logits only for the requested response span."""
+        return self.auxiliary_forward(input_ids)[:, resp_slice, :]
+
+    @torch.no_grad()
     def primary_forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
         """Slow forward: soft-routed MoE (~16B active) → [B, L, V] logits."""
         set_soft_routing(self._model.model)
         try:
             return self._model.forward(input_ids)
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def primary_forward_with_cache(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, object]:
+        """Soft-routed forward returning logits and a reusable KV cache."""
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_with_cache(input_ids)
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def primary_forward_replace_with_cache(
+        self,
+        full_input_ids: torch.LongTensor,
+        replace_slice: slice,
+        past_key_values: object,
+    ) -> Tuple[torch.Tensor, object]:
+        """Soft-routed partial recompute against an existing KV cache."""
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_replace_with_cache(
+                full_input_ids,
+                replace_slice,
+                past_key_values,
+            )
         finally:
             set_hard_routing(self._model.model)
 

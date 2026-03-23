@@ -593,6 +593,60 @@ class LLaDABaseModel(nn.Module):
                     device=device,
                 )
 
+    def _make_query_attention_mask(
+        self,
+        batch_size: int,
+        full_seq_len: int,
+        query_start: int,
+        query_end: int,
+        device: torch.device,
+        block_length: int = 0,
+    ) -> torch.Tensor:
+        """Build attention mask for a query span against a cached full prefix."""
+        if not (0 <= query_start < query_end <= full_seq_len):
+            raise ValueError(
+                f"Invalid query range [{query_start}, {query_end}) for full_seq_len={full_seq_len}."
+            )
+
+        q_len = query_end - query_start
+        if block_length > 0:
+            query_pos = torch.arange(query_start, query_end, device=device)
+            block_ends = (query_pos // block_length + 1) * block_length
+            cols = torch.arange(full_seq_len, device=device).unsqueeze(0)
+            ends = block_ends.unsqueeze(1)
+            if self._backend in ("dinfer", "soft_moe"):
+                mask = (cols < ends)
+                return mask.unsqueeze(0).unsqueeze(0).expand(batch_size, -1, -1, -1)
+            mask = torch.where(cols < ends, 0.0, float("-inf"))
+            return mask.to(dtype=self.dtype).unsqueeze(0).unsqueeze(0).expand(
+                batch_size, -1, -1, -1,
+            )
+
+        if self._backend in ("dinfer", "soft_moe"):
+            return torch.ones(
+                (batch_size, 1, q_len, full_seq_len),
+                dtype=torch.bool,
+                device=device,
+            )
+        return torch.zeros(
+            (batch_size, 1, q_len, full_seq_len),
+            dtype=self.dtype,
+            device=device,
+        )
+
+    def _forward_dinfer_outputs(self, **kwargs):
+        """Direct dInfer forward preserving the active runtime context."""
+        if self._dinfer_runtime == "vllm":
+            if self._vllm_config is None:
+                from vllm.config import get_current_vllm_config
+                self._vllm_config = get_current_vllm_config()
+            if not hasattr(self, "_set_forward_context"):
+                from vllm.forward_context import set_forward_context
+                self._set_forward_context = set_forward_context
+            with self._set_forward_context(None, self._vllm_config):
+                return self.model(**kwargs)
+        return self.model(**kwargs)
+
     # ------------------------------------------------------------------
     @torch.no_grad()
     def forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
@@ -640,22 +694,76 @@ class LLaDABaseModel(nn.Module):
                 For dInfer SDPA, this should be a boolean tensor where
                 True = attend, False = block.
         """
-        if self._dinfer_runtime == "vllm":
-            if self._vllm_config is None:
-                from vllm.config import get_current_vllm_config
-                self._vllm_config = get_current_vllm_config()
-            if not hasattr(self, '_set_forward_context'):
-                from vllm.forward_context import set_forward_context
-                self._set_forward_context = set_forward_context
-            with self._set_forward_context(None, self._vllm_config):
-                outputs = self.model(input_ids, attention_mask=attention_mask)
-        else:
-            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+        outputs = self._forward_dinfer_outputs(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+        )
         if hasattr(outputs, "logits"):
             return outputs.logits
         if isinstance(outputs, (tuple, list)):
             return outputs[0]
         raise RuntimeError(f"Unexpected dInfer model output type: {type(outputs)}")
+
+    @torch.no_grad()
+    def forward_with_cache(
+        self,
+        input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, object]:
+        """Forward pass returning logits and a dInfer KV cache object."""
+        if self._backend not in ("dinfer", "soft_moe"):
+            raise NotImplementedError("forward_with_cache is only supported for dInfer-backed models.")
+        batch_size, seq_len = input_ids.shape
+        attention_mask = self._make_attention_mask(
+            batch_size, seq_len, input_ids.device, block_length=self._block_length,
+        )
+        outputs = self._forward_dinfer_outputs(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            use_cache=True,
+        )
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+        past_key_values = getattr(outputs, "past_key_values", None)
+        if past_key_values is None:
+            raise RuntimeError("dInfer cached forward did not return past_key_values.")
+        return logits, past_key_values
+
+    @torch.no_grad()
+    def forward_replace_with_cache(
+        self,
+        full_input_ids: torch.LongTensor,
+        replace_slice: slice,
+        past_key_values: object,
+    ) -> Tuple[torch.Tensor, object]:
+        """Recompute a contiguous query span against cached prefix state."""
+        if self._backend not in ("dinfer", "soft_moe"):
+            raise NotImplementedError("forward_replace_with_cache is only supported for dInfer-backed models.")
+        if past_key_values is None:
+            raise ValueError("past_key_values must be provided for replace-position forward.")
+
+        start = int(replace_slice.start)
+        end = int(replace_slice.stop)
+        batch_size, full_seq_len = full_input_ids.shape
+        query_ids = full_input_ids[:, start:end]
+        attention_mask = self._make_query_attention_mask(
+            batch_size,
+            full_seq_len,
+            start,
+            end,
+            full_input_ids.device,
+            block_length=self._block_length,
+        )
+        outputs = self._forward_dinfer_outputs(
+            input_ids=query_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            use_cache=True,
+            replace_position=(start, end),
+        )
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+        next_cache = getattr(outputs, "past_key_values", None)
+        if next_cache is None:
+            raise RuntimeError("dInfer replace-position forward did not return updated past_key_values.")
+        return logits, next_cache
 
     # ------------------------------------------------------------------
     @torch.no_grad()
@@ -745,22 +853,11 @@ class LLaDABaseModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, list]:
         """Forward with hidden states through dInfer MoE model."""
-        if self._dinfer_runtime == "vllm":
-            if self._vllm_config is None:
-                from vllm.config import get_current_vllm_config
-                self._vllm_config = get_current_vllm_config()
-            if not hasattr(self, '_set_forward_context'):
-                from vllm.forward_context import set_forward_context
-                self._set_forward_context = set_forward_context
-            with self._set_forward_context(None, self._vllm_config):
-                outputs = self.model(
-                    input_ids, attention_mask=attention_mask, output_hidden_states=True,
-                )
-        else:
-            outputs = self.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-            )
+        outputs = self._forward_dinfer_outputs(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=(self._dinfer_runtime == "vllm"),
+        )
         return self._extract_logits_and_hidden_states(outputs, source="dinfer")
 
     def _forward_with_hidden_dinfer(

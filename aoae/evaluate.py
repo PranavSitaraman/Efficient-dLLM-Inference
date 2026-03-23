@@ -78,6 +78,11 @@ class EvalResult:
     boundary_distribution: str = "{}"
     routing_entropy: float = 0.0
     max_routing_entropy: float = 0.0
+    primary_skip_ratio: float = 0.0
+    primary_full_steps: float = 0.0
+    primary_partial_steps: float = 0.0
+    primary_verified_positions: float = 0.0
+    primary_full_equiv_positions: float = 0.0
 
 
 _DEFAULT_BASELINE_METHODS = [
@@ -617,6 +622,11 @@ def evaluate_speculative(
     total_routing_entropy = 0.0
     total_max_routing_entropy = 0.0
     routing_entropy_samples = 0
+    total_primary_skip_ratio = 0.0
+    total_primary_full_steps = 0.0
+    total_primary_partial_steps = 0.0
+    total_primary_verified_positions = 0.0
+    total_primary_full_equiv_positions = 0.0
     boundary_dist_counter: collections.Counter[str] = collections.Counter()
     evaluator = build_evaluator(cfg)
 
@@ -744,6 +754,11 @@ def evaluate_speculative(
         total_access_next_h_spec_recall += float(stats.get("access_next_h_spec_recall", 0.0))
         total_access_next_h_spec_f1 += float(stats.get("access_next_h_spec_f1", 0.0))
         total_boundary_depth += float(stats.get("mean_boundary_depth", 0.0))
+        total_primary_skip_ratio += float(stats.get("primary_skip_ratio", 0.0))
+        total_primary_full_steps += float(stats.get("primary_full_steps", 0.0))
+        total_primary_partial_steps += float(stats.get("primary_partial_steps", 0.0))
+        total_primary_verified_positions += float(stats.get("primary_verified_positions", 0.0))
+        total_primary_full_equiv_positions += float(stats.get("primary_full_equiv_positions", 0.0))
         try:
             bd = json.loads(stats.get("boundary_distribution", "{}"))
             for k, v in bd.items():
@@ -800,6 +815,11 @@ def evaluate_speculative(
 
     routing_ent = total_routing_entropy / max(routing_entropy_samples, 1)
     max_routing_ent = total_max_routing_entropy / max(routing_entropy_samples, 1)
+    primary_skip_ratio = total_primary_skip_ratio / max(total, 1)
+    primary_full_steps = total_primary_full_steps / max(total, 1)
+    primary_partial_steps = total_primary_partial_steps / max(total, 1)
+    primary_verified_positions = total_primary_verified_positions / max(total, 1)
+    primary_full_equiv_positions = total_primary_full_equiv_positions / max(total, 1)
 
     return EvalResult(
         method="Speculative-AOAE",
@@ -835,6 +855,11 @@ def evaluate_speculative(
         boundary_distribution=boundary_distribution,
         routing_entropy=routing_ent,
         max_routing_entropy=max_routing_ent,
+        primary_skip_ratio=primary_skip_ratio,
+        primary_full_steps=primary_full_steps,
+        primary_partial_steps=primary_partial_steps,
+        primary_verified_positions=primary_verified_positions,
+        primary_full_equiv_positions=primary_full_equiv_positions,
     )
 
 

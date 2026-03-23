@@ -1543,3 +1543,87 @@ class TestRunBlockwiseSpeculativeInference:
         assert stats["agreement_observations"] == 3
         assert stats["mean_agreement"] == pytest.approx(1.0 / 3.0)
         assert stats["total_invalidations"] == 1
+
+    def test_blockwise_runner_skips_primary_to_active_span(self, monkeypatch):
+        from aoae.dinfer_integration import run_blockwise_speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "inference": {
+                "gen_length": 2,
+                "block_length": 2,
+                "fallback_unmask": True,
+                "disable_remask": False,
+                "reuse_signal": {"method": "argmax_match"},
+                "llada21_official": {
+                    "use_block_diffusion": True,
+                    "threshold": 0.7,
+                    "editing_threshold": 0.5,
+                    "max_post_steps": 2,
+                    "enable_mbe": False,
+                },
+            },
+        }
+
+        class DummyDualModel:
+            def __init__(self):
+                self._model = types.SimpleNamespace(_dinfer_runtime="vllm")
+                self.aux_calls = 0
+                self.full_calls = 0
+                self.partial_calls = []
+
+            def auxiliary_forward_resp(self, input_ids, resp_slice):
+                self.aux_calls += 1
+                if self.aux_calls == 1:
+                    return torch.tensor(
+                        [[[0.0, 0.0, 8.0], [7.0, 0.0, 0.0]]],
+                        dtype=torch.float32,
+                    )
+                return torch.tensor(
+                    [[[0.0, 0.0, 8.0], [0.0, 8.0, 0.0]]],
+                    dtype=torch.float32,
+                )
+
+            def primary_forward_with_cache(self, input_ids):
+                self.full_calls += 1
+                logits = torch.zeros((1, input_ids.shape[1], 3), dtype=torch.float32)
+                logits[:, 1:, :] = torch.tensor(
+                    [[[0.0, 0.0, 8.0], [0.0, 0.2, 0.0]]],
+                    dtype=torch.float32,
+                )
+                return logits, {"cache": "full"}
+
+            def primary_forward_replace_with_cache(self, full_input_ids, replace_slice, past_key_values):
+                self.partial_calls.append((replace_slice.start, replace_slice.stop))
+                logits = torch.tensor([[[0.0, 8.0, 0.0]]], dtype=torch.float32)
+                return logits, {"cache": "partial"}
+
+        def fake_reuse_signal(resp_logits, aux_logits, cfg, state=None):
+            if state is None:
+                safe_reuse = torch.tensor([[True, False]], dtype=torch.bool)
+                return safe_reuse, {"step": 1}, {}
+            safe_reuse = torch.tensor([[True, True]], dtype=torch.bool)
+            return safe_reuse, {"step": 2}, {}
+
+        monkeypatch.setattr("aoae.dinfer_integration.compute_reuse_signal", fake_reuse_signal)
+
+        prompt_ids = torch.tensor([[1]], dtype=torch.long)
+        dual_model = DummyDualModel()
+        output_ids, stats = run_blockwise_speculative_inference(
+            dual_model=dual_model,
+            policy=None,
+            soft_mask_module=None,
+            prism_adapter=None,
+            prompt_ids=prompt_ids,
+            cfg=cfg,
+        )
+
+        assert output_ids[0, 1:].tolist() == [2, 1]
+        assert dual_model.full_calls == 1
+        assert dual_model.partial_calls == [(2, 3)]
+        assert stats["primary_steps"] == 2
+        assert stats["primary_full_steps"] == 1
+        assert stats["primary_partial_steps"] == 1
+        assert stats["primary_verified_positions"] == 3
+        assert stats["primary_full_equiv_positions"] == 4
+        assert stats["primary_skip_ratio"] == pytest.approx(0.25)

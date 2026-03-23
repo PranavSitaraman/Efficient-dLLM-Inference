@@ -192,6 +192,14 @@ class SpeculativeCacheManager:
         return self.cache_mgr.count_thrash(r_t)
 
 
+def _active_span(mask: torch.Tensor) -> Optional[Tuple[int, int]]:
+    """Return the minimal contiguous span covering any active positions."""
+    if mask.numel() == 0 or not mask.any():
+        return None
+    cols = mask.any(dim=0).nonzero(as_tuple=True)[0]
+    return int(cols[0].item()), int(cols[-1].item()) + 1
+
+
 def run_blockwise_speculative_inference(
     dual_model,
     policy,
@@ -248,10 +256,18 @@ def run_blockwise_speculative_inference(
     )
 
     cache_mgr = SpeculativeCacheManager(B, L_gen, device)
+    can_skip_primary = (
+        hasattr(dual_model, "primary_forward_with_cache")
+        and getattr(getattr(dual_model, "_model", None), "_dinfer_runtime", None) == "vllm"
+    )
     reuse_state = None
     reuse_diag_sum: Dict[str, float] = {}
     reuse_diag_steps = 0
     _primary_steps = 0
+    _primary_full_steps = 0
+    _primary_partial_steps = 0
+    _primary_verified_positions = 0
+    _primary_full_equiv_positions = 0
     _raw_agreement_sum = 0.0
     _raw_agreement_count = 0
     _safe_reuse_sum = 0.0
@@ -264,6 +280,10 @@ def run_blockwise_speculative_inference(
         blk_end = min(P + (blk_idx + 1) * block_len, P + L_gen)
         blk_slice = slice(blk_start, blk_end)
         rel_slice = slice(blk_start - P, blk_end - P)
+        blk_width = blk_end - blk_start
+        verifier_active = torch.ones((B, blk_width), dtype=torch.bool, device=device)
+        pri_logits = None
+        primary_cache = None
 
         for _ in range(max_post_steps):
             blk_tokens = y[:, blk_slice]
@@ -271,25 +291,58 @@ def run_blockwise_speculative_inference(
             if not mask_ind.any():
                 break
 
-            dual_out = dual_model.dual_forward_resp(y, blk_slice)
-            pri_logits = dual_out.primary_logits
-            aux_logits = dual_out.auxiliary_logits
-            raw_agreement = dual_out.agreement.bool()
+            prefix_ids = y[:, :blk_end]
+            prefix_blk_slice = slice(blk_start, blk_end)
+            active_mask = verifier_active | mask_ind
+            if active_mask.any() and can_skip_primary:
+                aux_logits = dual_model.auxiliary_forward_resp(prefix_ids, prefix_blk_slice)
+                span = _active_span(active_mask)
+                verified_positions = 0
+                if primary_cache is None or pri_logits is None or span == (0, blk_width):
+                    pri_prefix_logits, primary_cache = dual_model.primary_forward_with_cache(prefix_ids)
+                    pri_logits = pri_prefix_logits[:, prefix_blk_slice, :]
+                    _primary_full_steps += 1
+                    verified_positions = B * blk_width
+                elif span is not None:
+                    span_start, span_end = span
+                    pri_span_logits, primary_cache = dual_model.primary_forward_replace_with_cache(
+                        prefix_ids,
+                        slice(blk_start + span_start, blk_start + span_end),
+                        primary_cache,
+                    )
+                    pri_logits[:, span_start:span_end, :] = pri_span_logits
+                    _primary_partial_steps += 1
+                    verified_positions = B * (span_end - span_start)
+                _primary_steps += 1
+                _primary_verified_positions += verified_positions
+                _primary_full_equiv_positions += B * blk_width
+            else:
+                dual_out = dual_model.dual_forward_resp(prefix_ids, prefix_blk_slice)
+                pri_logits = dual_out.primary_logits
+                aux_logits = dual_out.auxiliary_logits
+                primary_cache = None
+                _primary_steps += 1
+                _primary_full_steps += 1
+                _primary_verified_positions += B * blk_width
+                _primary_full_equiv_positions += B * blk_width
+
+            aux_tokens = aux_logits.argmax(dim=-1)
+            pri_tokens = pri_logits.argmax(dim=-1)
+            raw_agreement = (aux_tokens == pri_tokens)
             safe_reuse, reuse_state, reuse_diag = compute_reuse_signal(
                 pri_logits, aux_logits, cfg, state=reuse_state,
             )
             safe_reuse = safe_reuse.bool()
 
-            active_mask = mask_ind.bool()
-            if active_mask.any():
-                _raw_agreement_sum += float(raw_agreement[active_mask].float().sum().item())
-                _raw_agreement_count += int(active_mask.sum().item())
-                _safe_reuse_sum += float(safe_reuse[active_mask].float().sum().item())
-                _safe_reuse_count += int(active_mask.sum().item())
+            metric_mask = active_mask.bool()
+            if metric_mask.any():
+                _raw_agreement_sum += float(raw_agreement[metric_mask].float().sum().item())
+                _raw_agreement_count += int(metric_mask.sum().item())
+                _safe_reuse_sum += float(safe_reuse[metric_mask].float().sum().item())
+                _safe_reuse_count += int(metric_mask.sum().item())
             for key, value in reuse_diag.items():
                 reuse_diag_sum[key] = reuse_diag_sum.get(key, 0.0) + float(value)
             reuse_diag_steps += 1
-            _primary_steps += 1
 
             pri_probs = F.softmax(pri_logits, dim=-1)
             pri_max_prob, pri_max_tok = pri_probs.max(dim=-1)
@@ -317,7 +370,7 @@ def run_blockwise_speculative_inference(
             if disable_remask:
                 edit_positions = torch.zeros_like(mask_ind)
             else:
-                previously_unmasked = ~mask_ind
+                previously_unmasked = (~mask_ind) & active_mask
                 disagree = (pri_max_tok != prev_tokens) & previously_unmasked
                 confident = pri_max_prob > editing_threshold
                 edit_positions = disagree & confident
@@ -334,7 +387,7 @@ def run_blockwise_speculative_inference(
             kappa_full = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
             safe_reuse_full = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
 
-            cache_commit_positions = drafted_positions & safe_reuse
+            cache_commit_positions = (drafted_positions | edit_positions) & safe_reuse
             u_full[:, rel_slice] = drafted_positions.float()
             r_full[:, rel_slice] = edit_positions.float()
             kappa_full[:, rel_slice] = cache_commit_positions.float()
@@ -342,6 +395,8 @@ def run_blockwise_speculative_inference(
             cache_mgr.step(r_full, kappa_full, u_full, safe_reuse_full)
 
             y[:, blk_slice] = next_tokens
+            next_mask_ind = next_tokens == mask_id
+            verifier_active = next_mask_ind | edit_positions | ((~next_mask_ind) & ~safe_reuse)
 
     stats = cache_mgr.get_stats()
     stats["mean_agreement"] = _raw_agreement_sum / max(_raw_agreement_count, 1)
@@ -353,7 +408,13 @@ def run_blockwise_speculative_inference(
     stats["safe_reuse_observations"] = _safe_reuse_count
     stats["primary_steps"] = _primary_steps
     stats["aux_only_steps"] = 0
-    stats["primary_skip_ratio"] = 0.0
+    stats["primary_full_steps"] = _primary_full_steps
+    stats["primary_partial_steps"] = _primary_partial_steps
+    stats["primary_verified_positions"] = _primary_verified_positions
+    stats["primary_full_equiv_positions"] = _primary_full_equiv_positions
+    stats["primary_skip_ratio"] = 1.0 - (
+        _primary_verified_positions / max(_primary_full_equiv_positions, 1)
+    )
     stats["reuse_signal_method"] = cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")
     for key, value in reuse_diag_sum.items():
         stats[f"reuse_{key}"] = value / max(reuse_diag_steps, 1)
