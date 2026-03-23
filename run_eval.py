@@ -89,6 +89,8 @@ def main():
                         help="Override base_model.backend.")
     parser.add_argument("--routing_temperature", type=float, default=None,
                         help="Override base_model.routing_temperature (tau_r).")
+    parser.add_argument("--soft_topk", type=int, default=None,
+                        help="Override base_model.soft_topk. Use the full expert count for all-experts soft gating.")
     parser.add_argument("--run_name", type=str, default=None,
                         help="Override logging.run_name.")
     parser.add_argument("--output_dir", type=str, default=None,
@@ -132,6 +134,8 @@ def main():
         bc["backend"] = args.backend
     if args.routing_temperature is not None:
         bc["routing_temperature"] = float(args.routing_temperature)
+    if args.soft_topk is not None:
+        bc["soft_topk"] = int(args.soft_topk)
     if args.task_type is not None:
         cfg.setdefault("evaluation", {})["task_type"] = args.task_type
     if args.code_timeout_sec is not None:
