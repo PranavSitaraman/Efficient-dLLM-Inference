@@ -84,6 +84,15 @@ def main():
                         help="Override data.eval_dataset_config (use empty string for no config).")
     parser.add_argument("--eval_split", type=str, default=None,
                         help="Override data.eval_split.")
+    parser.add_argument("--backend", type=str, default=None,
+                        choices=["auto", "hf", "dkv", "dinfer", "soft_moe"],
+                        help="Override base_model.backend.")
+    parser.add_argument("--routing_temperature", type=float, default=None,
+                        help="Override base_model.routing_temperature (tau_r).")
+    parser.add_argument("--run_name", type=str, default=None,
+                        help="Override logging.run_name.")
+    parser.add_argument("--output_dir", type=str, default=None,
+                        help="Override logging.output_dir.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -97,6 +106,8 @@ def main():
 
     ic = cfg.setdefault("inference", {})
     dc = cfg.setdefault("data", {})
+    bc = cfg.setdefault("base_model", {})
+    lc = cfg.setdefault("logging", {})
     if args.reuse_signal_method is not None:
         ic.setdefault("reuse_signal", {})["method"] = args.reuse_signal_method
     if args.reuse_signal_threshold is not None:
@@ -117,6 +128,10 @@ def main():
         dc["eval_dataset_config"] = args.eval_dataset_config or None
     if args.eval_split is not None:
         dc["eval_split"] = args.eval_split
+    if args.backend is not None:
+        bc["backend"] = args.backend
+    if args.routing_temperature is not None:
+        bc["routing_temperature"] = float(args.routing_temperature)
     if args.task_type is not None:
         cfg.setdefault("evaluation", {})["task_type"] = args.task_type
     if args.code_timeout_sec is not None:
@@ -132,9 +147,13 @@ def main():
         cfg.setdefault("evaluation", {})["max_saved_predictions"] = min(
             int(args.max_saved_predictions), 50
         )
+    if args.run_name is not None:
+        lc["run_name"] = args.run_name
+    if args.output_dir is not None:
+        lc["output_dir"] = args.output_dir
 
     if args.dry_run:
-        out_dir = cfg.setdefault("logging", {}).get("output_dir", "outputs/default/")
+        out_dir = lc.get("output_dir", "outputs/default/")
         import os as _os
         _os.makedirs(out_dir, exist_ok=True)
         print(f"[DryRun] Config parsed OK. Output dir ready: {out_dir}")
