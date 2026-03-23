@@ -134,11 +134,8 @@ def main():
         bc["backend"] = args.backend
     if args.routing_temperature is not None:
         bc["routing_temperature"] = float(args.routing_temperature)
-<<<<<<< HEAD
     if args.soft_topk is not None:
         bc["soft_topk"] = int(args.soft_topk)
-=======
->>>>>>> 4feb33d (baseline_eval with soft_topk)
     if args.task_type is not None:
         cfg.setdefault("evaluation", {})["task_type"] = args.task_type
     if args.code_timeout_sec is not None:
