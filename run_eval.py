@@ -68,6 +68,10 @@ def main():
                         help="Override evaluation.code.cpu_time_limit_sec.")
     parser.add_argument("--code_memory_limit_mb", type=int, default=None,
                         help="Override evaluation.code.memory_limit_mb.")
+    parser.add_argument("--save_predictions", action="store_true",
+                        help="Save a bounded set of per-sample generated responses.")
+    parser.add_argument("--max_saved_predictions", type=int, default=None,
+                        help="Maximum number of responses to save (hard-capped at 50).")
     parser.add_argument("--preflight", action="store_true",
                         help="Run environment+runtime+config preflight and exit.")
     parser.add_argument("--strict_moe", action="store_true",
@@ -121,6 +125,13 @@ def main():
         cfg.setdefault("evaluation", {}).setdefault("code", {})["cpu_time_limit_sec"] = int(args.code_cpu_time_limit_sec)
     if args.code_memory_limit_mb is not None:
         cfg.setdefault("evaluation", {}).setdefault("code", {})["memory_limit_mb"] = int(args.code_memory_limit_mb)
+    if args.save_predictions:
+        cfg.setdefault("evaluation", {})["save_predictions"] = True
+    if args.max_saved_predictions is not None:
+        cfg.setdefault("evaluation", {})["save_predictions"] = True
+        cfg.setdefault("evaluation", {})["max_saved_predictions"] = min(
+            int(args.max_saved_predictions), 50
+        )
 
     if args.dry_run:
         out_dir = cfg.setdefault("logging", {}).get("output_dir", "outputs/default/")

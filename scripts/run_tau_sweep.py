@@ -28,6 +28,12 @@ from aoae.evaluate import EvalResult, main as eval_main, _load_eval_dataset  # n
 from aoae.runtime_checks import is_global_rank_zero, ensure_vllm_moe_runtime  # noqa: E402
 
 
+def _norm_optional(value: Any) -> Any:
+    if value in ("", "null"):
+        return None
+    return value
+
+
 def _parse_tau_values(raw: str) -> List[float]:
     values: List[float] = []
     for chunk in raw.split(","):
@@ -81,6 +87,119 @@ def _select_summary_row(
             f"note_contains={note_contains!r}; got {len(rows)} rows: {notes}"
         )
     return rows[0]
+
+
+def _build_tau_cfg(
+    base_cfg: Dict[str, Any],
+    args: argparse.Namespace,
+    tau_r: float,
+    run_dir: Path,
+    sweep_name: str,
+) -> Dict[str, Any]:
+    cfg = copy.deepcopy(base_cfg)
+    cfg.setdefault("base_model", {})["routing_temperature"] = tau_r
+    if args.steps is not None:
+        cfg.setdefault("inference", {})["steps"] = int(args.steps)
+    if args.gen_length is not None:
+        cfg.setdefault("inference", {})["gen_length"] = int(args.gen_length)
+    cfg.setdefault("inference", {})["disable_remask"] = not args.enable_remask
+    if args.eval_dataset is not None:
+        cfg.setdefault("data", {})["eval_dataset"] = args.eval_dataset
+    if args.eval_dataset_config is not None:
+        cfg.setdefault("data", {})["eval_dataset_config"] = args.eval_dataset_config or None
+    if args.eval_split is not None:
+        cfg.setdefault("data", {})["eval_split"] = args.eval_split
+
+    tau_slug = _tau_slug(tau_r)
+    cfg.setdefault("logging", {})["run_name"] = f"{sweep_name}_{tau_slug}"
+    cfg["logging"]["output_dir"] = str(run_dir)
+    return cfg
+
+
+def _build_summary_row(
+    cfg: Dict[str, Any],
+    row: EvalResult,
+    tau_r: float,
+    policy_temperature: float,
+    checkpoint_path: Optional[str],
+) -> Dict[str, Any]:
+    return {
+        "tau_r": f"{tau_r:.6f}",
+        "method": row.method,
+        "policy_temperature": f"{policy_temperature:.4f}",
+        "remask_enabled": int(not bool(cfg.get("inference", {}).get("disable_remask", False))),
+        "reuse_signal_method": str(cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")),
+        "reuse_signal_threshold": f"{float(cfg.get('inference', {}).get('reuse_signal', {}).get('threshold', 0.0)):.6f}",
+        "eval_dataset": cfg.get("data", {}).get("eval_dataset", ""),
+        "eval_dataset_config": cfg.get("data", {}).get("eval_dataset_config", ""),
+        "eval_split": cfg.get("data", {}).get("eval_split", ""),
+        "accuracy": f"{row.accuracy:.6f}",
+        "tps": f"{row.avg_tokens_per_sec:.3f}",
+        "avg_nfe": f"{row.avg_nfe:.1f}",
+        "agreement_rate": f"{row.agreement_rate:.6f}",
+        "cache_hit_rate": f"{row.cache_hit_rate:.6f}",
+        "draft_accept_rate": f"{row.draft_accept_rate:.6f}",
+        "reuse_mean_safe": f"{row.reuse_mean_safe:.6f}",
+        "reuse_mean_js": f"{row.reuse_mean_js:.6f}",
+        "access_effective_budget": f"{row.access_effective_budget:.6f}",
+        "access_next_h_f1": f"{row.access_next_h_f1:.6f}",
+        "access_next_h_spec_f1": f"{row.access_next_h_spec_f1:.6f}",
+        "routing_entropy": f"{row.routing_entropy:.6f}",
+        "max_routing_entropy": f"{row.max_routing_entropy:.6f}",
+        "mean_boundary_depth": f"{row.mean_boundary_depth:.6f}",
+        "boundary_distribution": row.boundary_distribution,
+        "total_samples": row.total_samples,
+        "config_note": row.config_note,
+        "output_dir": cfg.get("logging", {}).get("output_dir", ""),
+        "checkpoint_path": checkpoint_path or "",
+    }
+
+
+def _load_completed_results(
+    run_dir: Path,
+    cfg: Dict[str, Any],
+    *,
+    mode: str,
+    max_samples: Optional[int],
+    checkpoint_path: Optional[str],
+) -> Optional[List[EvalResult]]:
+    results_path = run_dir / "eval_results.json"
+    metadata_path = run_dir / "eval_metadata.json"
+    if not results_path.exists() or not metadata_path.exists():
+        return None
+
+    try:
+        with metadata_path.open() as f:
+            metadata = json.load(f)
+    except Exception:
+        return None
+
+    expected_pairs = {
+        "mode": mode,
+        "model_name_or_path": cfg.get("base_model", {}).get("name_or_path", ""),
+        "backend": cfg.get("base_model", {}).get("backend", "auto"),
+        "routing_temperature": cfg.get("base_model", {}).get("routing_temperature"),
+        "disable_remask": bool(cfg.get("inference", {}).get("disable_remask", False)),
+        "reuse_signal_method": cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match"),
+        "reuse_signal_threshold": cfg.get("inference", {}).get("reuse_signal", {}).get("threshold", 0.0),
+        "compose_gamma": cfg.get("inference", {}).get("compose_gamma", 0.0),
+        "eval_dataset": cfg.get("data", {}).get("eval_dataset", ""),
+        "eval_dataset_config": cfg.get("data", {}).get("eval_dataset_config"),
+        "eval_split": cfg.get("data", {}).get("eval_split", ""),
+        "eval_max_samples": max_samples,
+        "checkpoint_path": checkpoint_path,
+    }
+    for key, expected in expected_pairs.items():
+        actual = metadata.get(key)
+        if _norm_optional(actual) != _norm_optional(expected):
+            return None
+
+    try:
+        with results_path.open() as f:
+            rows = json.load(f)
+        return [EvalResult(**row) for row in rows]
+    except Exception:
+        return None
 
 
 def _write_csv(rows: List[Dict[str, Any]], path: Path) -> None:
@@ -193,6 +312,8 @@ def main() -> None:
     parser.add_argument("--eval_dataset", default=None, help="Override data.eval_dataset.")
     parser.add_argument("--eval_dataset_config", default=None, help="Override data.eval_dataset_config.")
     parser.add_argument("--eval_split", default=None, help="Override data.eval_split.")
+    parser.add_argument("--no_resume", action="store_true",
+                        help="Always recompute tau points even if completed eval artifacts already exist.")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -217,17 +338,56 @@ def main() -> None:
         else:
             print("No checkpoint found; sweep will use the default heuristic policy.")
 
+    note_contains = args.summary_note_contains
+    if note_contains is None and args.summary_method == "Speculative-AOAE":
+        note_contains = f"tau_pi={args.policy_temperature}"
+
+    cached_rows: Dict[str, Dict[str, Any]] = {}
+    pending_cfgs: Dict[str, Dict[str, Any]] = {}
+    pending_tau_values: List[float] = []
+
+    for tau_r in tau_values:
+        tau_slug = _tau_slug(tau_r)
+        run_dir = output_root / tau_slug
+        cfg = _build_tau_cfg(base_cfg, args, tau_r, run_dir, sweep_name)
+        if not args.no_resume:
+            saved_results = _load_completed_results(
+                run_dir,
+                cfg,
+                mode=args.mode,
+                max_samples=args.max_samples,
+                checkpoint_path=checkpoint_path,
+            )
+            if saved_results is not None:
+                try:
+                    row = _select_summary_row(saved_results, args.summary_method, note_contains)
+                except Exception:
+                    saved_results = None
+                else:
+                    cached_rows[tau_slug] = _build_summary_row(
+                        cfg,
+                        row,
+                        tau_r,
+                        args.policy_temperature,
+                        checkpoint_path,
+                    )
+                    if is_global_rank_zero():
+                        print(f"Reusing completed results for tau_r={tau_r} from {run_dir}")
+            if saved_results is not None:
+                continue
+        pending_cfgs[tau_slug] = cfg
+        pending_tau_values.append(tau_r)
+
     # Load model ONCE and reuse across all tau_r values.
     import torch
     shared_dual_model = None
     shared_eval_ds = None
-    if args.mode == "speculative" or base_cfg.get("base_model", {}).get("backend") == "dual":
+    if pending_tau_values and (args.mode == "speculative" or base_cfg.get("base_model", {}).get("backend") == "dual"):
         from aoae.models.dual_model import DualModelWrapper
         if is_global_rank_zero():
             print("Loading dual model ONCE for sweep reuse...")
-        init_cfg = copy.deepcopy(base_cfg)
-        init_cfg.setdefault("base_model", {})["routing_temperature"] = tau_values[0]
-        shared_dual_model = DualModelWrapper(init_cfg)
+        first_pending_slug = _tau_slug(pending_tau_values[0])
+        shared_dual_model = DualModelWrapper(copy.deepcopy(pending_cfgs[first_pending_slug]))
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         shared_dual_model = shared_dual_model.to(device)
 
@@ -241,31 +401,20 @@ def main() -> None:
     if args.eval_split is not None:
         dc = dict(dc) if not isinstance(dc, dict) else dc
         dc["eval_split"] = args.eval_split
-    if is_global_rank_zero():
+    if pending_tau_values and is_global_rank_zero():
         print(f"Loading eval dataset: {dc.get('eval_dataset', '')}...")
-    shared_eval_ds = _load_eval_dataset(dc)
+    if pending_tau_values:
+        shared_eval_ds = _load_eval_dataset(dc)
 
     summary_rows: List[Dict[str, Any]] = []
 
     for idx, tau_r in enumerate(tau_values):
-        cfg = copy.deepcopy(base_cfg)
-        cfg.setdefault("base_model", {})["routing_temperature"] = tau_r
-        if args.steps is not None:
-            cfg.setdefault("inference", {})["steps"] = int(args.steps)
-        if args.gen_length is not None:
-            cfg.setdefault("inference", {})["gen_length"] = int(args.gen_length)
-        cfg.setdefault("inference", {})["disable_remask"] = not args.enable_remask
-        if args.eval_dataset is not None:
-            cfg.setdefault("data", {})["eval_dataset"] = args.eval_dataset
-        if args.eval_dataset_config is not None:
-            cfg.setdefault("data", {})["eval_dataset_config"] = args.eval_dataset_config or None
-        if args.eval_split is not None:
-            cfg.setdefault("data", {})["eval_split"] = args.eval_split
-
         tau_slug = _tau_slug(tau_r)
-        run_dir = output_root / tau_slug
-        cfg.setdefault("logging", {})["run_name"] = f"{sweep_name}_{tau_slug}"
-        cfg["logging"]["output_dir"] = str(run_dir)
+        if tau_slug in cached_rows:
+            summary_rows.append(cached_rows[tau_slug])
+            continue
+
+        cfg = pending_cfgs[tau_slug]
 
         if is_global_rank_zero():
             print(f"\n=== tau_r = {tau_r} ===")
@@ -284,41 +433,15 @@ def main() -> None:
             preloaded_eval_ds=shared_eval_ds,
         )
 
-        note_contains = args.summary_note_contains
-        if note_contains is None and args.summary_method == "Speculative-AOAE":
-            note_contains = f"tau_pi={args.policy_temperature}"
         row = _select_summary_row(results, args.summary_method, note_contains)
         summary_rows.append(
-            {
-                "tau_r": f"{tau_r:.6f}",
-                "method": row.method,
-                "policy_temperature": f"{args.policy_temperature:.4f}",
-                "remask_enabled": int(not bool(cfg.get("inference", {}).get("disable_remask", False))),
-                "reuse_signal_method": str(cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")),
-                "reuse_signal_threshold": f"{float(cfg.get('inference', {}).get('reuse_signal', {}).get('threshold', 0.0)):.6f}",
-                "eval_dataset": cfg.get("data", {}).get("eval_dataset", ""),
-                "eval_dataset_config": cfg.get("data", {}).get("eval_dataset_config", ""),
-                "eval_split": cfg.get("data", {}).get("eval_split", ""),
-                "accuracy": f"{row.accuracy:.6f}",
-                "tps": f"{row.avg_tokens_per_sec:.3f}",
-                "avg_nfe": f"{row.avg_nfe:.1f}",
-                "agreement_rate": f"{row.agreement_rate:.6f}",
-                "cache_hit_rate": f"{row.cache_hit_rate:.6f}",
-                "draft_accept_rate": f"{row.draft_accept_rate:.6f}",
-                "reuse_mean_safe": f"{row.reuse_mean_safe:.6f}",
-                "reuse_mean_js": f"{row.reuse_mean_js:.6f}",
-                "access_effective_budget": f"{row.access_effective_budget:.6f}",
-                "access_next_h_f1": f"{row.access_next_h_f1:.6f}",
-                "access_next_h_spec_f1": f"{row.access_next_h_spec_f1:.6f}",
-                "routing_entropy": f"{row.routing_entropy:.6f}",
-                "max_routing_entropy": f"{row.max_routing_entropy:.6f}",
-                "mean_boundary_depth": f"{row.mean_boundary_depth:.6f}",
-                "boundary_distribution": row.boundary_distribution,
-                "total_samples": row.total_samples,
-                "config_note": row.config_note,
-                "output_dir": cfg.get("logging", {}).get("output_dir", ""),
-                "checkpoint_path": checkpoint_path or "",
-            }
+            _build_summary_row(
+                cfg,
+                row,
+                tau_r,
+                args.policy_temperature,
+                checkpoint_path,
+            )
         )
 
     json_path = output_root / "tau_sweep_summary.json"

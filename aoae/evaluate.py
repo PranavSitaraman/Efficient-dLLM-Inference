@@ -27,11 +27,20 @@ from .models.base_model import LLaDABaseModel
 from .models.soft_mask import SoftMaskedState
 from .models.policy import AOAEPolicy, DefaultPolicy
 from .models.prism import PRISMAdapter
-from .inference import aoae_inference, uniform_decode, confidence_threshold_decode, block_smode_decode
+from .inference import (
+    aoae_inference,
+    uniform_decode,
+    confidence_threshold_decode,
+    block_smode_decode,
+    llada21_official_decode,
+)
 from .dinfer_integration import run_speculative_inference
 from .train_grpo import extract_answer, extract_prompt_and_reference
 from .runtime_checks import collect_runtime_info, set_global_seed, is_global_rank_zero
 from .evaluators import build_evaluator
+
+
+_MAX_SAVED_PREDICTIONS = 50
 
 
 @dataclass
@@ -66,6 +75,121 @@ class EvalResult:
     boundary_distribution: str = "{}"
     routing_entropy: float = 0.0
     max_routing_entropy: float = 0.0
+
+
+_DEFAULT_BASELINE_METHODS = [
+    "block_smode",
+    "block_smode_mbe",
+    "confidence_s_mode",
+    "confidence_q_mode",
+    "fast_dllm",
+]
+
+
+_BASELINE_TITLES = {
+    "block_smode": "Baseline: Block S-Mode (tau=0.7, block=32)",
+    "block_smode_mbe": "Baseline: Block S-Mode + MBE",
+    "confidence_s_mode": "Baseline: S-Mode (tau=0.7, speed)",
+    "confidence_q_mode": "Baseline: Q-Mode (tau=0.95, quality)",
+    "fast_dllm": "Baseline: Fast-dLLM (Wu et al. 2025)",
+    "llada21_speed_mode": "Baseline: LLaDA2.1 Speed Mode (threshold=0.5, edit=0.0, block diffusion)",
+    "llada21_quality_mode": "Baseline: LLaDA2.1 Quality Mode (threshold=0.7, edit=0.5, block diffusion)",
+}
+
+
+def _get_prediction_save_limit(cfg: Dict[str, Any]) -> int:
+    eval_cfg = cfg.get("evaluation", {})
+    if not bool(eval_cfg.get("save_predictions", False)):
+        return 0
+    requested = int(eval_cfg.get("max_saved_predictions", _MAX_SAVED_PREDICTIONS))
+    if requested <= 0:
+        return 0
+    return min(requested, _MAX_SAVED_PREDICTIONS)
+
+
+def _maybe_record_prediction(
+    predictions_sink: Optional[List[Dict[str, Any]]],
+    prediction_limit: int,
+    *,
+    method: str,
+    sample_index: int,
+    question: str,
+    reference: str,
+    generated_text: str,
+    is_correct: bool,
+    generated_tokens: int,
+    note: str = "",
+) -> None:
+    if predictions_sink is None or prediction_limit <= 0:
+        return
+    if len(predictions_sink) >= prediction_limit:
+        return
+    predictions_sink.append(
+        {
+            "method": method,
+            "sample_index": int(sample_index),
+            "correct": bool(is_correct),
+            "question": question,
+            "reference": reference,
+            "generated_text": generated_text,
+            "extracted_prediction": extract_answer(generated_text),
+            "extracted_reference": extract_answer(reference),
+            "generated_tokens": int(generated_tokens),
+            "config_note": note,
+        }
+    )
+
+
+def _save_prediction_artifact(
+    predictions: List[Dict[str, Any]],
+    output_dir: str,
+    prediction_limit: int,
+) -> str:
+    payload = {
+        "saved_predictions": len(predictions),
+        "max_saved_predictions": int(prediction_limit),
+        "truncated": len(predictions) >= prediction_limit,
+        "predictions": predictions,
+    }
+    predictions_path = os.path.join(output_dir, "eval_predictions.json")
+    with open(predictions_path, "w") as f:
+        json.dump(payload, f, indent=2)
+    return predictions_path
+
+
+def _get_baseline_methods(cfg: Dict[str, Any]) -> List[str]:
+    methods = cfg.get("evaluation", {}).get("baseline_methods")
+    if methods is None:
+        return list(_DEFAULT_BASELINE_METHODS)
+    return [str(method) for method in methods]
+
+
+def _run_selected_baselines(
+    base_model,
+    eval_ds,
+    tokenizer,
+    cfg: dict,
+    max_samples: Optional[int],
+    all_results: List["EvalResult"],
+    predictions_sink: Optional[List[Dict[str, Any]]] = None,
+    prediction_limit: int = 0,
+) -> None:
+    for method in _get_baseline_methods(cfg):
+        if is_global_rank_zero():
+            print(f"\n====== {_BASELINE_TITLES.get(method, f'Baseline: {method}')} ======")
+        r = evaluate_baseline(
+            base_model,
+            eval_ds,
+            tokenizer,
+            cfg,
+            method,
+            max_samples=max_samples,
+            predictions_sink=predictions_sink,
+            prediction_limit=prediction_limit,
+        )
+        all_results.append(r)
+        if is_global_rank_zero():
+            print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
 
 
 def _load_eval_dataset(dc: Dict[str, Any]):
@@ -147,6 +271,8 @@ def evaluate_aoae(
     cfg: dict,
     policy_temperature: float = 1.0,
     max_samples: Optional[int] = None,
+    predictions_sink: Optional[List[Dict[str, Any]]] = None,
+    prediction_limit: int = 0,
 ) -> EvalResult:
     """Evaluate AOAE on a dataset."""
     mask_id = cfg["base_model"]["mask_token_id"]
@@ -211,6 +337,19 @@ def evaluate_aoae(
             correct += 1
         total += 1
 
+        _maybe_record_prediction(
+            predictions_sink,
+            prediction_limit,
+            method="AOAE",
+            sample_index=i,
+            question=question,
+            reference=reference,
+            generated_text=gen_text,
+            is_correct=is_correct,
+            generated_tokens=n_gen,
+            note=_append_note(f"tau_pi={policy_temperature}", _remask_note(cfg)),
+        )
+
         elapsed = t1 - t0
         total_time += elapsed
         total_nfe += T
@@ -247,6 +386,8 @@ def evaluate_baseline(
     tau_mask: float = 0.9,
     tau_edit: float = 0.95,
     max_samples: Optional[int] = None,
+    predictions_sink: Optional[List[Dict[str, Any]]] = None,
+    prediction_limit: int = 0,
 ) -> EvalResult:
     """Evaluate a baseline decoder on a dataset."""
     mask_id = cfg["base_model"]["mask_token_id"]
@@ -334,6 +475,14 @@ def evaluate_baseline(
                     base_model, prompt_ids, cfg,
                     tau_mask=0.5, tau_edit=1.0, enable_t2t=False,
                 )
+            elif method == "llada21_speed_mode":
+                output_ids = llada21_official_decode(
+                    base_model, prompt_ids, cfg, mode="speed",
+                )
+            elif method == "llada21_quality_mode":
+                output_ids = llada21_official_decode(
+                    base_model, prompt_ids, cfg, mode="quality",
+                )
             elif method == "block_smode":
                 output_ids = block_smode_decode(
                     base_model, prompt_ids, cfg,
@@ -362,6 +511,24 @@ def evaluate_baseline(
             correct += 1
         total += 1
         total_time += (t1 - t0)
+
+        note = method
+        if method == "confidence":
+            note = f"tau_mask={tau_mask},tau_edit={tau_edit}"
+        note = _append_note(note, _remask_note(cfg))
+
+        _maybe_record_prediction(
+            predictions_sink,
+            prediction_limit,
+            method=method,
+            sample_index=i,
+            question=question,
+            reference=reference,
+            generated_text=gen_text,
+            is_correct=is_correct,
+            generated_tokens=n_gen,
+            note=note,
+        )
 
         # Debug output for first 3 samples
         if debug_eval and rank0 and i < 3:
@@ -409,6 +576,8 @@ def evaluate_speculative(
     policy_temperature: float = 1.0,
     max_samples: Optional[int] = None,
     dynamics_sink: Optional[List[Dict[str, Any]]] = None,
+    predictions_sink: Optional[List[Dict[str, Any]]] = None,
+    prediction_limit: int = 0,
 ) -> EvalResult:
     """Evaluate speculative diffusion (dual-model) on a dataset."""
     mask_id = cfg["base_model"]["mask_token_id"]
@@ -421,11 +590,13 @@ def evaluate_speculative(
     total_gen_tokens = 0
     total_nfe = 0
     total_agreement = 0.0
+    total_agreement_obs = 0
     total_cache_commits = 0
     total_cache_invalidations = 0
     total_draft_accepts = 0
     total_draft_rejects = 0
     total_reuse_safe = 0.0
+    total_reuse_safe_obs = 0
     total_reuse_js = 0.0
     total_access_rate = 0.0
     total_access_mandatory = 0.0
@@ -439,6 +610,9 @@ def evaluate_speculative(
     total_access_next_h_spec_recall = 0.0
     total_access_next_h_spec_f1 = 0.0
     total_boundary_depth = 0.0
+    total_routing_entropy = 0.0
+    total_max_routing_entropy = 0.0
+    routing_entropy_samples = 0
     boundary_dist_counter: collections.Counter[str] = collections.Counter()
     evaluator = build_evaluator(cfg)
 
@@ -511,6 +685,22 @@ def evaluate_speculative(
             correct += 1
         total += 1
 
+        _maybe_record_prediction(
+            predictions_sink,
+            prediction_limit,
+            method="Speculative-AOAE",
+            sample_index=i,
+            question=question,
+            reference=reference,
+            generated_text=gen_text,
+            is_correct=is_correct,
+            generated_tokens=n_gen,
+            note=_append_note(
+                f"tau_r={tau_r},tau_pi={policy_temperature},reuse={reuse_method},{pc_note}",
+                _remask_note(cfg),
+            ),
+        )
+
         elapsed = t1 - t0
         total_time += elapsed
         pri_steps = int(stats.get("primary_steps", T))
@@ -520,8 +710,12 @@ def evaluate_speculative(
         total_cache_invalidations += int(stats.get("total_invalidations", 0))
         total_draft_accepts += int(stats.get("draft_accepts", 0))
         total_draft_rejects += int(stats.get("draft_rejects", 0))
-        total_agreement += float(stats.get("mean_agreement", 0.0))
-        total_reuse_safe += float(stats.get("reuse_mean_safe_reuse", 0.0))
+        agreement_obs = int(stats.get("agreement_observations", 0))
+        total_agreement += float(stats.get("mean_agreement", 0.0)) * agreement_obs
+        total_agreement_obs += agreement_obs
+        safe_reuse_obs = int(stats.get("safe_reuse_observations", 0))
+        total_reuse_safe += float(stats.get("reuse_mean_safe_reuse", 0.0)) * safe_reuse_obs
+        total_reuse_safe_obs += safe_reuse_obs
         total_reuse_js += float(stats.get("reuse_mean_js_divergence", 0.0))
         total_access_rate += float(stats.get("access_access_rate", 0.0))
         total_access_mandatory += float(stats.get("access_access_mandatory_rate", 0.0))
@@ -539,6 +733,15 @@ def evaluate_speculative(
             bd = json.loads(stats.get("boundary_distribution", "{}"))
             for k, v in bd.items():
                 boundary_dist_counter[str(k)] += int(v)
+        except Exception:
+            pass
+        try:
+            from aoae.models.soft_moe import compute_routing_entropy
+            ent_info = compute_routing_entropy(dual_model._model.model)
+            if ent_info.get("num_layers_with_data", 0) > 0:
+                total_routing_entropy += float(ent_info.get("mean_entropy", 0.0))
+                total_max_routing_entropy += float(ent_info.get("max_possible_entropy", 0.0))
+                routing_entropy_samples += 1
         except Exception:
             pass
         if dynamics_sink is not None and "kv_dynamics" in stats:
@@ -563,8 +766,8 @@ def evaluate_speculative(
         (total_cache_commits - total_cache_invalidations) / max(total_cache_ops, 1)
     )
     draft_accept_rate = total_draft_accepts / max(total_draft_accepts + total_draft_rejects, 1)
-    agreement_rate = total_agreement / max(total, 1)
-    reuse_mean_safe = total_reuse_safe / max(total, 1)
+    agreement_rate = total_agreement / max(total_agreement_obs, 1)
+    reuse_mean_safe = total_reuse_safe / max(total_reuse_safe_obs, 1)
     reuse_mean_js = total_reuse_js / max(total, 1)
     access_rate = total_access_rate / max(total, 1)
     access_mandatory_rate = total_access_mandatory / max(total, 1)
@@ -580,15 +783,8 @@ def evaluate_speculative(
     mean_boundary_depth = total_boundary_depth / max(total, 1)
     boundary_distribution = json.dumps(dict(sorted(boundary_dist_counter.items(), key=lambda kv: int(kv[0]))))
 
-    routing_ent = 0.0
-    max_routing_ent = 0.0
-    try:
-        from aoae.models.soft_moe import compute_routing_entropy
-        ent_info = compute_routing_entropy(dual_model._model.model)
-        routing_ent = ent_info.get("mean_entropy", 0.0)
-        max_routing_ent = ent_info.get("max_possible_entropy", 0.0)
-    except Exception:
-        pass
+    routing_ent = total_routing_entropy / max(routing_entropy_samples, 1)
+    max_routing_ent = total_max_routing_entropy / max(routing_entropy_samples, 1)
 
     return EvalResult(
         method="Speculative-AOAE",
@@ -628,7 +824,16 @@ def evaluate_speculative(
 
 
 def run_pareto_sweep(
-    base_model, policy, soft_mask, prism, dataset, tokenizer, cfg, max_samples,
+    base_model,
+    policy,
+    soft_mask,
+    prism,
+    dataset,
+    tokenizer,
+    cfg,
+    max_samples,
+    predictions_sink: Optional[List[Dict[str, Any]]] = None,
+    prediction_limit: int = 0,
 ) -> List[EvalResult]:
     """Sweep policy temperature to generate Pareto curve points."""
     temperatures = [0.3, 0.5, 0.7, 1.0, 1.5, 2.0]
@@ -638,7 +843,10 @@ def run_pareto_sweep(
         print(f"\n--- AOAE with tau_pi = {tau_pi} ---")
         r = evaluate_aoae(
             base_model, policy, soft_mask, prism, dataset, tokenizer, cfg,
-            policy_temperature=tau_pi, max_samples=max_samples,
+            policy_temperature=tau_pi,
+            max_samples=max_samples,
+            predictions_sink=predictions_sink,
+            prediction_limit=prediction_limit,
         )
         results.append(r)
         print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
@@ -786,6 +994,9 @@ def _build_run_metadata(
     max_samples: Optional[int],
     results_path: str,
     num_results: int,
+    predictions_path: Optional[str] = None,
+    saved_predictions: int = 0,
+    prediction_limit: int = 0,
 ) -> Dict[str, Any]:
     runtime = collect_runtime_info()
     eval_cfg = cfg.get("evaluation", {})
@@ -795,6 +1006,7 @@ def _build_run_metadata(
         "run_name": cfg.get("logging", {}).get("run_name", ""),
         "output_dir": cfg.get("logging", {}).get("output_dir", ""),
         "results_path": results_path,
+        "predictions_path": predictions_path,
         "config_path": config_path,
         "checkpoint_path": checkpoint_path,
         "mode": mode,
@@ -825,6 +1037,9 @@ def _build_run_metadata(
         "eval_dataset_config": cfg.get("data", {}).get("eval_dataset_config"),
         "eval_split": cfg.get("data", {}).get("eval_split", ""),
         "eval_max_samples": max_samples,
+        "save_predictions": bool(cfg.get("evaluation", {}).get("save_predictions", False)),
+        "saved_predictions": int(saved_predictions),
+        "max_saved_predictions": int(prediction_limit),
         "num_results": num_results,
         "host": runtime.get("host"),
         "git_commit": runtime.get("git_commit"),
@@ -898,9 +1113,11 @@ def main(
         max_samples = dc.get("eval_max_samples")
     if speculative_policy_temperatures is None:
         speculative_policy_temperatures = [0.5, 1.0, 1.5]
+    prediction_limit = _get_prediction_save_limit(cfg)
 
     all_results: List[EvalResult] = []
     kv_dynamics_records: List[Dict[str, Any]] = []
+    saved_predictions: List[Dict[str, Any]] = []
 
     if mode == "speculative" or cfg["base_model"].get("backend") == "dual":
         from .models.dual_model import DualModelWrapper
@@ -927,42 +1144,17 @@ def main(
         # Access the underlying model in hard-routing mode for baselines
         base_model = dual_model._model
 
-        # Block S-Mode: paper's key TPS technique (block-wise semi-AR decoding)
         if not skip_baselines:
-            if is_global_rank_zero():
-                print("\n====== Baseline: Block S-Mode (tau=0.7, block=32) ======")
-            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
-                                  "block_smode", max_samples=max_samples)
-            all_results.append(r)
-            if is_global_rank_zero():
-                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
-
-            # Block S-Mode + MBE: with Multiple Block Editing
-            if is_global_rank_zero():
-                print("\n====== Baseline: Block S-Mode + MBE ======")
-            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
-                                  "block_smode_mbe", max_samples=max_samples)
-            all_results.append(r)
-            if is_global_rank_zero():
-                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
-
-            # S-Mode: paper's speed baseline (tau_mask=0.7, aggressive)
-            if is_global_rank_zero():
-                print("\n====== Baseline: S-Mode (tau=0.7, speed) ======")
-            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
-                                  "confidence_s_mode", max_samples=max_samples)
-            all_results.append(r)
-            if is_global_rank_zero():
-                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
-
-            # Q-Mode: paper's quality baseline (tau_mask=0.95, conservative)
-            if is_global_rank_zero():
-                print("\n====== Baseline: Q-Mode (tau=0.95, quality) ======")
-            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg,
-                                  "confidence_q_mode", max_samples=max_samples)
-            all_results.append(r)
-            if is_global_rank_zero():
-                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            _run_selected_baselines(
+                base_model,
+                eval_ds,
+                tokenizer,
+                cfg,
+                max_samples,
+                all_results,
+                predictions_sink=saved_predictions,
+                prediction_limit=prediction_limit,
+            )
 
         # --- AOAE Speculative Evaluation ---
         # Auto-detect policy checkpoint from output_dir if not explicitly provided
@@ -1022,6 +1214,8 @@ def main(
                     policy_temperature=tau_pi,
                     max_samples=max_samples,
                     dynamics_sink=kv_dynamics_records,
+                    predictions_sink=saved_predictions,
+                    prediction_limit=prediction_limit,
                 )
                 all_results.append(r)
                 if is_global_rank_zero():
@@ -1042,6 +1236,8 @@ def main(
                 policy_temperature=1.0,
                 max_samples=max_samples,
                 dynamics_sink=kv_dynamics_records,
+                predictions_sink=saved_predictions,
+                prediction_limit=prediction_limit,
             )
             all_results.append(r)
             if is_global_rank_zero():
@@ -1058,40 +1254,16 @@ def main(
 
         # --- Baselines ---
         if not skip_baselines:
-            if is_global_rank_zero():
-                print("\n====== Baseline: Block S-Mode (tau=0.7, block=32) ======")
-            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "block_smode", max_samples=max_samples)
-            all_results.append(r)
-            if is_global_rank_zero():
-                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
-
-            if is_global_rank_zero():
-                print("\n====== Baseline: Block S-Mode + MBE ======")
-            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "block_smode_mbe", max_samples=max_samples)
-            all_results.append(r)
-            if is_global_rank_zero():
-                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
-
-            if is_global_rank_zero():
-                print("\n====== Baseline: S-Mode (aggressive) ======")
-            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "confidence_s_mode", max_samples=max_samples)
-            all_results.append(r)
-            if is_global_rank_zero():
-                print(f"  Accuracy: {r.accuracy:.4f}")
-
-            if is_global_rank_zero():
-                print("\n====== Baseline: Q-Mode (conservative) ======")
-            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "confidence_q_mode", max_samples=max_samples)
-            all_results.append(r)
-            if is_global_rank_zero():
-                print(f"  Accuracy: {r.accuracy:.4f}")
-
-            if is_global_rank_zero():
-                print("\n====== Baseline: Fast-dLLM (Wu et al. 2025) ======")
-            r = evaluate_baseline(base_model, eval_ds, tokenizer, cfg, "fast_dllm", max_samples=max_samples)
-            all_results.append(r)
-            if is_global_rank_zero():
-                print(f"  Accuracy: {r.accuracy:.4f}")
+            _run_selected_baselines(
+                base_model,
+                eval_ds,
+                tokenizer,
+                cfg,
+                max_samples,
+                all_results,
+                predictions_sink=saved_predictions,
+                prediction_limit=prediction_limit,
+            )
 
         # --- AOAE ---
         if checkpoint_path and os.path.exists(checkpoint_path):
@@ -1126,7 +1298,16 @@ def main(
             if is_global_rank_zero():
                 print("\n====== AOAE Pareto Sweep ======")
             aoae_results = run_pareto_sweep(
-                base_model, policy, soft_mask, prism, eval_ds, tokenizer, cfg, max_samples,
+                base_model,
+                policy,
+                soft_mask,
+                prism,
+                eval_ds,
+                tokenizer,
+                cfg,
+                max_samples,
+                predictions_sink=saved_predictions,
+                prediction_limit=prediction_limit,
             )
             all_results.extend(aoae_results)
         else:
@@ -1141,6 +1322,15 @@ def main(
             json.dump([asdict(r) for r in all_results], f, indent=2)
         print(f"\nResults saved to {results_path}")
 
+    predictions_path = None
+    if is_global_rank_zero() and prediction_limit > 0:
+        predictions_path = _save_prediction_artifact(
+            saved_predictions,
+            cfg["logging"]["output_dir"],
+            prediction_limit,
+        )
+        print(f"Predictions saved to {predictions_path}")
+
     metadata = _build_run_metadata(
         cfg=cfg,
         mode=mode,
@@ -1149,6 +1339,9 @@ def main(
         max_samples=max_samples,
         results_path=results_path,
         num_results=len(all_results),
+        predictions_path=predictions_path,
+        saved_predictions=len(saved_predictions),
+        prediction_limit=prediction_limit,
     )
     metadata_path = os.path.join(cfg["logging"]["output_dir"], "eval_metadata.json")
     if is_global_rank_zero():

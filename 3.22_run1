@@ -1,0 +1,110 @@
+
+Loading eval dataset: openai/gsm8k...
+Loading dual model (hard auxiliary + soft primary)...
+INFO 03-22 18:23:41 [__init__.py:216] Automatically detected platform cuda.
+Traceback (most recent call last):
+  File "/n/holylabs/sitanc_lab/Users/gye/run_eval.py", line 149, in <module>
+    main()
+  File "/n/holylabs/sitanc_lab/Users/gye/run_eval.py", line 137, in main
+    eval_main(
+  File "/n/holylabs/sitanc_lab/Users/gye/aoae/evaluate.py", line 918, in main
+    dual_model = DualModelWrapper(cfg)
+  File "/n/holylabs/sitanc_lab/Users/gye/aoae/models/dual_model.py", line 90, in __init__
+    self._model = LLaDABaseModel(base_cfg)
+  File "/n/holylabs/sitanc_lab/Users/gye/aoae/models/base_model.py", line 272, in __init__
+    _INIT[self._backend](name_or_path)
+  File "/n/holylabs/sitanc_lab/Users/gye/aoae/models/base_model.py", line 357, in _init_dinfer
+    self._init_dinfer_vllm(name_or_path)
+  File "/n/holylabs/sitanc_lab/Users/gye/aoae/models/base_model.py", line 379, in _init_dinfer_vllm
+    _init_vllm_distributed(tp_size)
+  File "/n/holylabs/sitanc_lab/Users/gye/aoae/models/base_model.py", line 157, in _init_vllm_distributed
+    raise RuntimeError(
+RuntimeError: tp_size=2 requires multi-process launch (e.g., torchrun). Run with torchrun or use a single-GPU config.
+(rtx) [gye@holygpu8a27102 gye]$ 
+(rtx) [gye@holygpu8a27102 gye]$ 
+(rtx) [gye@holygpu8a27102 gye]$ torchrun \
+>   --nproc_per_node 2 \
+>   --nnodes 1 \
+>   --node_rank 0 \
+>   --master_addr 127.0.0.1 \
+>   --master_port 29510 \
+>   scripts/run_tau_sweep.py \
+>   --config configs/poc1_tau_sweep.yaml \
+>   --tau_r_values "0.001,0.005,0.01,0.05,0.1,0.2,0.5" \
+>   --max_samples 200 \
+>   --mode speculative \
+>   --sweep_name poc1_tau_sweep
+/n/home00/gye/.conda/envs/rtx/lib/python3.10/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+
+[W322 18:24:58.867695287 socket.cpp:755] [c10d] The client socket cannot be initialized to connect to [localhost]:29510 (errno: 97 - Address family not supported by protocol).
+/n/home00/gye/.conda/envs/rtx/lib/python3.10/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+/n/home00/gye/.conda/envs/rtx/lib/python3.10/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+No checkpoint found; sweep will use the default heuristic policy.
+Loading dual model ONCE for sweep reuse...
+INFO 03-22 18:25:41 [__init__.py:216] Automatically detected platform cuda.
+INFO 03-22 18:25:41 [__init__.py:216] Automatically detected platform cuda.
+[W322 18:25:48.166471242 socket.cpp:755] [c10d] The client socket cannot be initialized to connect to [localhost]:29510 (errno: 97 - Address family not supported by protocol).
+[W322 18:25:48.166912915 socket.cpp:755] [c10d] The client socket cannot be initialized to connect to [localhost]:29510 (errno: 97 - Address family not supported by protocol).
+WARNING 03-22 18:25:48 [__init__.py:3804] Current vLLM config is not set.
+WARNING 03-22 18:25:48 [__init__.py:3804] Current vLLM config is not set.
+[Gloo] Rank 1 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+[Gloo] Rank 0 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+WARNING 03-22 18:25:49 [__init__.py:3804] Current vLLM config is not set.
+WARNING 03-22 18:25:49 [__init__.py:3804] Current vLLM config is not set.
+[Gloo] Rank 1 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+[Gloo] Rank 0 is connected to 1 peer ranks. Expected number of connected peer ranks is : 1
+WARNING 03-22 18:25:49 [__init__.py:3804] Current vLLM config is not set.
+WARNING 03-22 18:25:49 [__init__.py:3804] Current vLLM config is not set.
+INFO 03-22 18:25:49 [__init__.py:1433] Found nccl from library libnccl.so.2
+INFO 03-22 18:25:49 [__init__.py:1433] Found nccl from library libnccl.so.2
+INFO 03-22 18:25:49 [pynccl.py:70] vLLM is using nccl==2.27.3
+INFO 03-22 18:25:49 [pynccl.py:70] vLLM is using nccl==2.27.3
+INFO 03-22 18:25:51 [custom_all_reduce.py:35] Skipping P2P check and trusting the driver's P2P report.
+INFO 03-22 18:25:51 [custom_all_reduce.py:35] Skipping P2P check and trusting the driver's P2P report.
+INFO 03-22 18:25:51 [shm_broadcast.py:289] vLLM message queue communication handle: Handle(local_reader_ranks=[1], buffer_handle=(1, 4194304, 6, 'psm_4b5c00b6'), local_subscribe_addr='ipc:///tmp/44fbca55-542b-45a9-96a9-c11946ee63ea', remote_subscribe_addr=None, remote_addr_ipv6=False)
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank [Gloo] Rank 10 is connected to  is connected to 11 peer ranks.  peer ranks. Expected number of connected peer ranks is : Expected number of connected peer ranks is : 11
+
+WARNING 03-22 18:25:51 [__init__.py:3804] Current vLLM config is not set.
+WARNING 03-22 18:25:51 [__init__.py:3804] Current vLLM config is not set.
+INFO 03-22 18:25:51 [parallel_state.py:1165] rank 0 in world size 2 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+INFO 03-22 18:25:51 [parallel_state.py:1165] rank 1 in world size 2 is assigned as DP rank 0, PP rank 0, TP rank 1, EP rank 1
+[Runtime] WARNING: torch.ops._moe_C.moe_align_block_size missing; using Python fallback.
+[Runtime] WARNING: torch.ops._moe_C.moe_sum missing; using Python fallback.
+[Model] Runtime patched fallback ops: ['moe_align_block_size', 'moe_sum']
+INFO 03-22 18:25:54 [layer.py:853] [EP Rank 0/2] Expert parallelism is enabled. Local/global number of experts: 128/256. Experts local to global index map: 0->0, 1->1, 2->2, 3->3, 4->4, 5->5, 6->6, 7->7, 8->8, 9->9, 10->10, 11->11, 12->12, 13->13, 14->14, 15->15, 16->16, 17->17, 18->18, 19->19, 20->20, 21->21, 22->22, 23->23, 24->24, 25->25, 26->26, 27->27, 28->28, 29->29, 30->30, 31->31, 32->32, 33->33, 34->34, 35->35, 36->36, 37->37, 38->38, 39->39, 40->40, 41->41, 42->42, 43->43, 44->44, 45->45, 46->46, 47->47, 48->48, 49->49, 50->50, 51->51, 52->52, 53->53, 54->54, 55->55, 56->56, 57->57, 58->58, 59->59, 60->60, 61->61, 62->62, 63->63, 64->64, 65->65, 66->66, 67->67, 68->68, 69->69, 70->70, 71->71, 72->72, 73->73, 74->74, 75->75, 76->76, 77->77, 78->78, 79->79, 80->80, 81->81, 82->82, 83->83, 84->84, 85->85, 86->86, 87->87, 88->88, 89->89, 90->90, 91->91, 92->92, 93->93, 94->94, 95->95, 96->96, 97->97, 98->98, 99->99, 100->100, 101->101, 102->102, 103->103, 104->104, 105->105, 106->106, 107->107, 108->108, 109->109, 110->110, 111->111, 112->112, 113->113, 114->114, 115->115, 116->116, 117->117, 118->118, 119->119, 120->120, 121->121, 122->122, 123->123, 124->124, 125->125, 126->126, 127->127.
+INFO 03-22 18:25:54 [layer.py:853] [EP Rank 1/2] Expert parallelism is enabled. Local/global number of experts: 128/256. Experts local to global index map: 0->128, 1->129, 2->130, 3->131, 4->132, 5->133, 6->134, 7->135, 8->136, 9->137, 10->138, 11->139, 12->140, 13->141, 14->142, 15->143, 16->144, 17->145, 18->146, 19->147, 20->148, 21->149, 22->150, 23->151, 24->152, 25->153, 26->154, 27->155, 28->156, 29->157, 30->158, 31->159, 32->160, 33->161, 34->162, 35->163, 36->164, 37->165, 38->166, 39->167, 40->168, 41->169, 42->170, 43->171, 44->172, 45->173, 46->174, 47->175, 48->176, 49->177, 50->178, 51->179, 52->180, 53->181, 54->182, 55->183, 56->184, 57->185, 58->186, 59->187, 60->188, 61->189, 62->190, 63->191, 64->192, 65->193, 66->194, 67->195, 68->196, 69->197, 70->198, 71->199, 72->200, 73->201, 74->202, 75->203, 76->204, 77->205, 78->206, 79->207, 80->208, 81->209, 82->210, 83->211, 84->212, 85->213, 86->214, 87->215, 88->216, 89->217, 90->218, 91->219, 92->220, 93->221, 94->222, 95->223, 96->224, 97->225, 98->226, 99->227, 100->228, 101->229, 102->230, 103->231, 104->232, 105->233, 106->234, 107->235, 108->236, 109->237, 110->238, 111->239, 112->240, 113->241, 114->242, 115->243, 116->244, 117->245, 118->246, 119->247, 120->248, 121->249, 122->250, 123->251, 124->252, 125->253, 126->254, 127->255.
+100%|█████████████████████████████████████████████████████████████████| 8/8 [00:00<00:00, 13.17it/s]
+100%|███████████████████████████████████████████████████████| 7517/7517 [00:00<00:00, 864507.35it/s]
+100%|█████████████████████████████████████████████████████████████████| 8/8 [00:00<00:00, 12.94it/s]
+100%|███████████████████████████████████████████████████████| 7517/7517 [00:00<00:00, 852469.47it/s]
+100%|███████████████████████████████████████████████████████████████| 20/20 [00:13<00:00,  1.51it/s]
+unused_keys []
+not_inited_keys ['model.layers.1.mlp.experts.expert_map', 'model.layers.2.mlp.experts.expert_map', 'model.layers.3.mlp.experts.expert_map', 'model.layers.4.mlp.experts.expert_map', 'model.layers.5.mlp.experts.expert_map', 'model.layers.6.mlp.experts.expert_map', 'model.layers.7.mlp.experts.expert_map', 'model.layers.8.mlp.experts.expert_map', 'model.layers.9.mlp.experts.expert_map', 'model.layers.10.mlp.experts.expert_map', 'model.layers.11.mlp.experts.expert_map', 'model.layers.12.mlp.experts.expert_map', 'model.layers.13.mlp.experts.expert_map', 'model.layers.14.mlp.experts.expert_map', 'model.layers.15.mlp.experts.expert_map', 'model.layers.16.mlp.experts.expert_map', 'model.layers.17.mlp.experts.expert_map', 'model.layers.18.mlp.experts.expert_map', 'model.layers.19.mlp.experts.expert_map']
+100%|████████████████████████████████████████████████████████| 259/259 [00:00<00:00, 1879454.56it/s]
+[SoftMoE] Patched 19 MoE gates with tau_r=0.001, soft_topk=16
+100%|███████████████████████████████████████████████████████████████| 20/20 [00:16<00:00,  1.18it/s]
+unused_keys []
+not_inited_keys ['model.layers.1.mlp.experts.expert_map', 'model.layers.2.mlp.experts.expert_map', 'model.layers.3.mlp.experts.expert_map', 'model.layers.4.mlp.experts.expert_map', 'model.layers.5.mlp.experts.expert_map', 'model.layers.6.mlp.experts.expert_map', 'model.layers.7.mlp.experts.expert_map', 'model.layers.8.mlp.experts.expert_map', 'model.layers.9.mlp.experts.expert_map', 'model.layers.10.mlp.experts.expert_map', 'model.layers.11.mlp.experts.expert_map', 'model.layers.12.mlp.experts.expert_map', 'model.layers.13.mlp.experts.expert_map', 'model.layers.14.mlp.experts.expert_map', 'model.layers.15.mlp.experts.expert_map', 'model.layers.16.mlp.experts.expert_map', 'model.layers.17.mlp.experts.expert_map', 'model.layers.18.mlp.experts.expert_map', 'model.layers.19.mlp.experts.expert_map']
+100%|████████████████████████████████████████████████████████| 259/259 [00:00<00:00, 1895854.69it/s]
+[SoftMoE] Patched 19 MoE gates with tau_r=0.001, soft_topk=16
+Loading eval dataset: openai/gsm8k...
+
+=== tau_r = 0.001 ===
+
+====== Speculative AOAE — Default Policy (tau_r=0.001) ======
+  (No trained checkpoint found; using hard auxiliary as heuristic policy)
+
+====== Speculative AOAE — Default Policy (tau_r=0.001) ======
+  (No trained checkpoint found; using hard auxiliary as heuristic policy)
+WARNING 03-22 18:26:31 [fused_moe.py:727] Using default MoE config. Performance might be sub-optimal! Config file not found at ['/n/home00/gye/.conda/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=128,N=512,device_name=NVIDIA_A100-SXM4-80GB.json']
+WARNING 03-22 18:26:31 [fused_moe.py:727] Using default MoE config. Performance might be sub-optimal! Config file not found at ['/n/home00/gye/.conda/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=128,N=512,device_name=NVIDIA_A100-SXM4-80GB.json']
+

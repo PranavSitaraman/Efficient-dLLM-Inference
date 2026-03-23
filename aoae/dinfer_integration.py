@@ -263,6 +263,12 @@ def run_speculative_inference(
     _ema_agreement = 1.0  # optimistic init: first step is always primary, will update
     _primary_steps = 0
     _aux_only_steps = 0
+    _raw_agreement_sum = 0.0
+    _raw_agreement_count = 0
+    _safe_reuse_sum = 0.0
+    _safe_reuse_count = 0
+    _draft_accepts = 0
+    _draft_rejects = 0
 
     for t in range(T, 0, -1):
         step_frac = t / T
@@ -290,10 +296,17 @@ def run_speculative_inference(
             )
             resp_logits = dual_out.primary_logits
             aux_logits = dual_out.auxiliary_logits
-            agreement, reuse_state, reuse_diag = compute_reuse_signal(
+            raw_agreement = dual_out.agreement.bool()
+            safe_reuse, reuse_state, reuse_diag = compute_reuse_signal(
                 resp_logits, aux_logits, cfg, state=reuse_state,
             )
-            agreement = agreement.bool()
+            safe_reuse = safe_reuse.bool()
+            active_mask = mask_ind.bool()
+            if active_mask.any():
+                _raw_agreement_sum += float(raw_agreement[active_mask].float().sum().item())
+                _raw_agreement_count += int(active_mask.sum().item())
+                _safe_reuse_sum += float(safe_reuse[active_mask].float().sum().item())
+                _safe_reuse_count += int(active_mask.sum().item())
             _ema_agreement = 0.8 * _ema_agreement + 0.2 * dual_out.agreement_rate
             _primary_steps += 1
             for k, v in reuse_diag.items():
@@ -302,7 +315,8 @@ def run_speculative_inference(
         else:
             aux_logits = dual_model.auxiliary_forward(y)[:, resp_slice, :]
             resp_logits = aux_logits
-            agreement = torch.ones(B, L_gen, dtype=torch.bool, device=device)
+            raw_agreement = torch.ones(B, L_gen, dtype=torch.bool, device=device)
+            safe_reuse = raw_agreement
             _aux_only_steps += 1
 
         q_scores = None
@@ -319,7 +333,7 @@ def run_speculative_inference(
                 H_t_dummy, mask_ind, step_frac,
                 temperature=policy_temperature,
                 quality_scores=q_scores,
-                agreement=agreement.float(),
+                agreement=safe_reuse.float(),
             )
         else:
             H_t, confidence, entropy = soft_mask_module(resp_logits, mask_ind, step_frac)
@@ -331,7 +345,7 @@ def run_speculative_inference(
                 H_t, mask_ind, step_frac,
                 temperature=policy_temperature,
                 quality_scores=q_scores,
-                agreement=agreement.float(),
+                agreement=safe_reuse.float(),
                 age_feature=age_feat,
                 last_action_feature=last_action_feat,
             )
@@ -369,11 +383,12 @@ def run_speculative_inference(
 
         # Phase 2: Unmask with composed prediction
         unmask_positions = u_t.bool() & mask_ind
+        drafted_positions = unmask_positions.clone()
         if unmask_positions.any():
             use_composition = gamma > 0 and run_primary and resp_logits is not aux_logits
             if use_composition:
                 composed_logits = compose_prediction_dual(
-                    resp_logits, aux_logits, agreement, gamma=gamma,
+                    resp_logits, aux_logits, safe_reuse, gamma=gamma,
                 )
             else:
                 composed_logits = resp_logits
@@ -400,6 +415,12 @@ def run_speculative_inference(
                 best_tok = resp_logits.argmax(dim=-1)
                 for b_idx in no_unmasks.nonzero(as_tuple=True)[0]:
                     resp_tokens[b_idx, best_pos[b_idx]] = best_tok[b_idx, best_pos[b_idx]]
+                    drafted_positions[b_idx, best_pos[b_idx]] = True
+
+        if run_primary and drafted_positions.any():
+            drafted_agreement = raw_agreement[drafted_positions]
+            _draft_accepts += int(drafted_agreement.sum().item())
+            _draft_rejects += int(drafted_positions.sum().item() - drafted_agreement.sum().item())
 
         if dynamics_tracker is not None and run_primary:
             layer_hiddens = dual_out.primary_hidden_states
@@ -414,7 +435,7 @@ def run_speculative_inference(
                     layer_hiddens=layer_hiddens,
                     max_prob=max_prob,
                     mask_ind=mask_ind,
-                    agreement=agreement.float(),
+                    agreement=raw_agreement.float(),
                     u_t=u_t,
                     r_t=r_t,
                     kappa_t=kappa_t,
@@ -426,7 +447,7 @@ def run_speculative_inference(
                 )
 
         # Phase 3: Agreement-gated cache commit
-        cache_mgr.step(r_t, kappa_t * q_exec, u_t, agreement)
+        cache_mgr.step(r_t, kappa_t * q_exec, u_t, safe_reuse.float())
 
         changed = (u_t.bool() | r_t.bool()).float()
         if use_positional_cache:
@@ -438,6 +459,13 @@ def run_speculative_inference(
         y[:, resp_slice] = resp_tokens
 
     stats = cache_mgr.get_stats()
+    stats["mean_agreement"] = _raw_agreement_sum / max(_raw_agreement_count, 1)
+    stats["agreement_observations"] = _raw_agreement_count
+    stats["draft_accepts"] = _draft_accepts
+    stats["draft_rejects"] = _draft_rejects
+    stats["draft_accept_rate"] = _draft_accepts / max(_draft_accepts + _draft_rejects, 1)
+    stats["reuse_mean_safe_reuse"] = _safe_reuse_sum / max(_safe_reuse_count, 1)
+    stats["safe_reuse_observations"] = _safe_reuse_count
     stats["primary_steps"] = _primary_steps
     stats["aux_only_steps"] = _aux_only_steps
     stats["primary_skip_ratio"] = _aux_only_steps / max(_primary_steps + _aux_only_steps, 1)

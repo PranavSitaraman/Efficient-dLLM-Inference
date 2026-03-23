@@ -520,3 +520,56 @@ def block_smode_decode(
             y[:, prev_slice] = prev_tokens
 
     return y
+
+
+def llada21_official_decode(
+    base_model,
+    prompt_ids: torch.LongTensor,
+    cfg: dict,
+    mode: str = "speed",
+) -> torch.Tensor:
+    """
+    LLaDA2.1 paper/model-card style threshold decoding.
+
+    This path keeps the official semantics separate from AOAE-specific
+    ablations such as ``disable_remask``:
+      - Speed mode: threshold=0.5, editing_threshold=0.0
+      - Quality mode: threshold=0.7, editing_threshold=0.5
+      - block diffusion enabled by default with max_post_steps=16
+    """
+    mode = str(mode).lower()
+    if mode not in {"speed", "quality"}:
+        raise ValueError(f"Unknown LLaDA2.1 decode mode: {mode!r}")
+
+    defaults = {
+        "speed": {"threshold": 0.5, "editing_threshold": 0.0},
+        "quality": {"threshold": 0.7, "editing_threshold": 0.5},
+    }
+    off_cfg = cfg.get("inference", {}).get("llada21_official", {})
+    threshold = float(off_cfg.get("threshold", defaults[mode]["threshold"]))
+    editing_threshold = float(
+        off_cfg.get("editing_threshold", defaults[mode]["editing_threshold"])
+    )
+    use_block_diffusion = bool(off_cfg.get("use_block_diffusion", True))
+    max_post_steps = int(off_cfg.get("max_post_steps", 16))
+    enable_mbe = bool(off_cfg.get("enable_mbe", False))
+
+    if use_block_diffusion:
+        return block_smode_decode(
+            base_model,
+            prompt_ids,
+            cfg,
+            tau_mask=threshold,
+            tau_edit=editing_threshold,
+            max_steps_per_block=max_post_steps,
+            enable_mbe=enable_mbe,
+        )
+
+    return confidence_threshold_decode(
+        base_model,
+        prompt_ids,
+        cfg,
+        tau_mask=threshold,
+        tau_edit=editing_threshold,
+        enable_t2t=True,
+    )

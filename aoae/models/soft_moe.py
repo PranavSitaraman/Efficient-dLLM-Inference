@@ -76,8 +76,10 @@ class SoftMoERouter(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Compute temperature-softmax weights, then prune to top-K_soft."""
         full_weights = F.softmax(logits / self._tau_r, dim=-1).type_as(hidden_states)
-        if self.training:
-            self._last_weights = full_weights.detach()
+        # Keep the most recent routing distribution for eval-time diagnostics
+        # such as routing entropy. This is a single forward's worth of weights,
+        # not a history, so the memory cost stays bounded.
+        self._last_weights = full_weights.detach()
 
         k = min(self._soft_topk, self.num_experts)
         if k >= self.num_experts:
@@ -128,11 +130,20 @@ class SGLangSoftTopKRouter(nn.Module):
         tau_r: float = 0.01,
         soft_topk: Optional[int] = None,
         score_function: Optional[str] = None,
+        top_k_override: Optional[int] = None,
     ):
         super().__init__()
         self.original_topk = original_topk
         self.num_experts = int(num_experts)
-        self.top_k = int(getattr(original_topk, "top_k"))
+        _topk_val = getattr(original_topk, "top_k", None)
+        if _topk_val is None:
+            _topk_val = top_k_override
+        if _topk_val is None:
+            raise RuntimeError(
+                "SGLangSoftTopKRouter: cannot determine top_k — "
+                "TopK module has no 'top_k' attribute and no top_k_override given."
+            )
+        self.top_k = int(_topk_val)
         self.routed_scaling_factor = float(
             getattr(original_topk, "routed_scaling_factor", 1.0)
         )
@@ -176,15 +187,18 @@ class SGLangSoftTopKRouter(nn.Module):
         scaled_logits = router_logits / self._tau_r
         self._record_weights(scaled_logits)
 
+        # Try to override top_k on the TopK module for soft_topk pruning.
+        # Some SGLang TopK implementations don't expose top_k as a settable
+        # attribute — in that case we still apply temperature scaling but skip
+        # the top_k override (soft_topk pruning is a secondary optimisation).
         original_top_k = getattr(self.original_topk, "top_k", None)
-        if original_top_k is None:
-            raise RuntimeError("SGLang TopK module does not expose a top_k attribute.")
-
-        self.original_topk.top_k = min(self._soft_topk, self.num_experts)
+        if original_top_k is not None:
+            self.original_topk.top_k = min(self._soft_topk, self.num_experts)
         try:
             return self.original_topk(hidden_states, scaled_logits, *args, **kwargs)
         finally:
-            self.original_topk.top_k = original_top_k
+            if original_top_k is not None:
+                self.original_topk.top_k = original_top_k
 
 
 _PATCHED_BLOCKS: Dict[int, List[Dict[str, Any]]] = {}
@@ -249,25 +263,31 @@ def _maybe_build_patch_entry(
         }
 
     topk = getattr(module, "topk", None)
-    if gate is not None and topk is not None and hasattr(topk, "top_k"):
-        effective_topk = soft_topk
-        num_experts = int(getattr(module, "num_experts", getattr(gate, "num_experts", 0)))
-        hard_topk = int(getattr(topk, "top_k"))
-        if effective_topk is None:
-            effective_topk = min(hard_topk * 2, num_experts)
-        soft_router = SGLangSoftTopKRouter(
-            topk,
-            num_experts=num_experts,
-            tau_r=tau_r,
-            soft_topk=effective_topk,
-            score_function=getattr(module, "score_function", None),
-        )
-        return {
-            "kind": "topk",
-            "block": module,
-            "original_topk": module.topk,
-            "soft_router": soft_router,
-        }
+    if gate is not None and topk is not None:
+        # Try to get top_k from the TopK module itself; fall back to the parent
+        # block's self.top_k (LLaDA2SparseMoeBlock always stores it).
+        _topk_on_topk = getattr(topk, "top_k", None)
+        hard_topk_val = _topk_on_topk if _topk_on_topk is not None else getattr(module, "top_k", None)
+        if hard_topk_val is not None:
+            effective_topk = soft_topk
+            num_experts = int(getattr(module, "num_experts", getattr(gate, "num_experts", 0)))
+            hard_topk = int(hard_topk_val)
+            if effective_topk is None:
+                effective_topk = min(hard_topk * 2, num_experts)
+            soft_router = SGLangSoftTopKRouter(
+                topk,
+                num_experts=num_experts,
+                tau_r=tau_r,
+                soft_topk=effective_topk,
+                score_function=getattr(module, "score_function", None),
+                top_k_override=hard_topk,
+            )
+            return {
+                "kind": "topk",
+                "block": module,
+                "original_topk": module.topk,
+                "soft_router": soft_router,
+            }
 
     return None
 
@@ -441,11 +461,12 @@ def compute_routing_entropy(model: nn.Module) -> dict:
         return {"mean_entropy": 0.0, "num_layers": 0}
 
     valid = [e for e in layer_entropies if not math.isnan(e)]
-    mean_ent = sum(valid) / len(valid) if valid else float("nan")
+    mean_ent = sum(valid) / len(valid) if valid else 0.0
     return {
         "mean_entropy": mean_ent,
         "max_possible_entropy": math.log(last_router.num_experts),
         "num_layers": len(layer_entropies),
+        "num_layers_with_data": len(valid),
         "tau_r": last_router.tau_r,
         "layer_entropies": layer_entropies,
     }

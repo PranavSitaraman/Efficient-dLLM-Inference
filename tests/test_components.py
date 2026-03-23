@@ -703,6 +703,39 @@ class TestSoftMoERouter:
         # At very low temp, one expert should dominate
         assert weights.max() > 0.99
 
+    def test_records_last_weights_in_eval_mode(self):
+        from aoae.models.soft_moe import SoftMoERouter
+
+        class MockGate(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = 4
+                self.top_k = 2
+                self.routed_scaling_factor = 1.0
+                self.weight = torch.nn.Parameter(torch.randn(4, 16))
+                self.register_buffer("expert_bias", torch.zeros(4))
+
+            def get_logits(self, h):
+                return torch.nn.functional.linear(h, self.weight)
+
+            def group_limited_topk(self, scores):
+                return scores.topk(self.top_k, dim=-1)
+
+        gate = MockGate()
+        soft = SoftMoERouter(gate, tau_r=0.25)
+        soft.eval()
+
+        hidden = torch.randn(3, 16)
+        _, _, _ = soft(hidden)
+
+        assert soft._last_weights is not None
+        assert soft._last_weights.shape == (3, 4)
+        assert torch.allclose(
+            soft._last_weights.sum(dim=-1),
+            torch.ones(3),
+            atol=1e-5,
+        )
+
     def _make_mock_moe_model(self):
         """Helper: create a mock model with MoE blocks for patching tests."""
         class MockGateModule(torch.nn.Module):
@@ -993,6 +1026,28 @@ class TestDualModelOutput:
         out = mock.dual_forward_resp(ids, resp_slice)
         assert out.primary_logits.shape == (1, 20, 100)
         assert out.agreement.shape == (1, 20)
+
+    def test_dual_forward_resp_recomputes_agreement_rate(self):
+        from aoae.models.dual_model import DualModelOutput, DualModelWrapper
+
+        def fake_dual_forward(input_ids, need_hidden=False, need_all_hidden=False):
+            agreement = torch.tensor([[True, True, False, False]])
+            return DualModelOutput(
+                primary_logits=torch.zeros(1, 4, 3),
+                auxiliary_logits=torch.zeros(1, 4, 3),
+                agreement=agreement,
+                agreement_rate=0.5,
+                primary_hidden=None,
+                primary_hidden_states=None,
+            )
+
+        dummy = types.SimpleNamespace(dual_forward=fake_dual_forward)
+        ids = torch.randint(0, 3, (1, 4))
+
+        out = DualModelWrapper.dual_forward_resp(dummy, ids, slice(2, 4))
+
+        assert out.agreement.shape == (1, 2)
+        assert out.agreement_rate == 0.0
 
     def test_with_hidden(self):
         mock = MockDualModel()
@@ -1298,3 +1353,109 @@ class TestSpeculativeCacheManager:
         stats = mgr.get_stats()
         assert stats["total_invalidations"] == 1
         assert stats["total_remasks"] == 1
+
+
+class TestRunSpeculativeInferenceMetrics:
+    def test_metrics_distinguish_raw_agreement_safe_reuse_and_draft_acceptance(self, monkeypatch):
+        from aoae.dinfer_integration import run_speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "inference": {
+                "steps": 1,
+                "gen_length": 2,
+                "temperature": 0.0,
+                "fallback_unmask": False,
+                "compose_gamma": 0.0,
+                "disable_remask": False,
+                "reuse_signal": {"method": "argmax_match"},
+            },
+            "analysis": {"track_kv_dynamics": False},
+        }
+
+        class DummyDualModel:
+            def dual_forward_resp(self, input_ids, resp_slice, need_hidden=False, need_all_hidden=False):
+                primary_logits = torch.tensor(
+                    [[[5.0, 0.0, 0.0], [0.0, 4.0, 0.0]]],
+                    dtype=torch.float32,
+                )
+                auxiliary_logits = torch.tensor(
+                    [[[4.0, 0.0, 0.0], [4.0, 0.0, 0.0]]],
+                    dtype=torch.float32,
+                )
+                agreement = torch.tensor([[True, False]])
+                return types.SimpleNamespace(
+                    primary_logits=primary_logits,
+                    auxiliary_logits=auxiliary_logits,
+                    agreement=agreement,
+                    agreement_rate=0.5,
+                    primary_hidden=None,
+                    primary_hidden_states=None,
+                )
+
+            def auxiliary_forward(self, input_ids):
+                raise AssertionError("auxiliary_forward should not run when primary_every_n=1")
+
+        class DummyPolicy:
+            def __call__(
+                self,
+                H_t,
+                mask_ind,
+                step_frac,
+                temperature=1.0,
+                quality_scores=None,
+                agreement=None,
+                age_feature=None,
+                last_action_feature=None,
+            ):
+                return {"agreement_seen": agreement}
+
+            def sample_actions(self, policy_out, mask_ind):
+                ones = torch.ones_like(mask_ind, dtype=torch.float32)
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return {"u_t": ones, "r_t": zeros, "kappa_t": ones}
+
+        class DummySoftMask:
+            def __call__(self, resp_logits, mask_ind, step_frac):
+                hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
+                confidence = torch.ones_like(mask_ind, dtype=torch.float32)
+                entropy = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return hidden, confidence, entropy
+
+        def fake_reuse_signal(resp_logits, aux_logits, cfg, state=None):
+            safe_reuse = torch.tensor([[False, False]])
+            return safe_reuse, state, {}
+
+        def fake_build_access_set(
+            actions,
+            policy_out,
+            cfg,
+            confidence=None,
+            boundary_action=None,
+            boundary_num_bins=None,
+        ):
+            q_exec = torch.ones_like(actions["u_t"], dtype=torch.float32)
+            q_mandatory = torch.zeros_like(actions["u_t"], dtype=torch.float32)
+            return q_exec, q_mandatory, {}
+
+        monkeypatch.setattr("aoae.dinfer_integration.compute_reuse_signal", fake_reuse_signal)
+        monkeypatch.setattr("aoae.dinfer_integration.build_access_set", fake_build_access_set)
+
+        prompt_ids = torch.tensor([[1]], dtype=torch.long)
+        _, stats = run_speculative_inference(
+            dual_model=DummyDualModel(),
+            policy=DummyPolicy(),
+            soft_mask_module=DummySoftMask(),
+            prism_adapter=None,
+            prompt_ids=prompt_ids,
+            cfg=cfg,
+        )
+
+        assert stats["mean_agreement"] == pytest.approx(0.5)
+        assert stats["agreement_observations"] == 2
+        assert stats["reuse_mean_safe_reuse"] == pytest.approx(0.0)
+        assert stats["safe_reuse_observations"] == 2
+        assert stats["draft_accepts"] == 1
+        assert stats["draft_rejects"] == 1
+        assert stats["draft_accept_rate"] == pytest.approx(0.5)
+        assert stats["total_commits"] == 0

@@ -233,6 +233,7 @@ class DualModelWrapper(nn.Module):
         out.primary_logits = out.primary_logits[:, resp_slice, :]
         out.auxiliary_logits = out.auxiliary_logits[:, resp_slice, :]
         out.agreement = out.agreement[:, resp_slice]
+        out.agreement_rate = out.agreement.float().mean().item()
         if out.primary_hidden is not None:
             out.primary_hidden = out.primary_hidden[:, resp_slice, :]
         if out.primary_hidden_states is not None:
