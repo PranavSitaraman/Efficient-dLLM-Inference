@@ -260,6 +260,64 @@ def _block_routing_function(
     return block.gate.routing(hidden_states, gating_output, topk=topk, renormalize=renormalize)
 
 
+def _apply_gate_runtime_state(entry: Dict[str, Any]) -> None:
+    block = entry["block"]
+    experts = entry["experts"]
+    soft_topk = entry["soft_topk"]
+
+    if entry["original_block_top_k"] is not None:
+        block.top_k = soft_topk
+
+    if experts is None:
+        return
+
+    if entry["original_experts_top_k"] is not None:
+        experts.top_k = soft_topk
+
+    routing_fn = partial(_block_routing_function, block)
+    if entry["original_custom_routing_function"] is not None:
+        experts.custom_routing_function = routing_fn
+
+    router = getattr(experts, "router", None)
+    if router is not None:
+        if entry["original_router_top_k"] is not None:
+            router.top_k = soft_topk
+        if entry["original_router_custom_routing_function"] is not None:
+            router.custom_routing_function = routing_fn
+
+    moe_config = getattr(experts, "moe_config", None)
+    if moe_config is not None and entry["original_moe_config_experts_per_token"] is not None:
+        moe_config.experts_per_token = soft_topk
+
+
+def _restore_gate_runtime_state(entry: Dict[str, Any]) -> None:
+    block = entry["block"]
+    experts = entry["experts"]
+
+    if entry["original_block_top_k"] is not None:
+        block.top_k = entry["original_block_top_k"]
+
+    if experts is None:
+        return
+
+    if entry["original_experts_top_k"] is not None:
+        experts.top_k = entry["original_experts_top_k"]
+
+    if entry["original_custom_routing_function"] is not None:
+        experts.custom_routing_function = entry["original_custom_routing_function"]
+
+    router = getattr(experts, "router", None)
+    if router is not None:
+        if entry["original_router_top_k"] is not None:
+            router.top_k = entry["original_router_top_k"]
+        if entry["original_router_custom_routing_function"] is not None:
+            router.custom_routing_function = entry["original_router_custom_routing_function"]
+
+    moe_config = getattr(experts, "moe_config", None)
+    if moe_config is not None and entry["original_moe_config_experts_per_token"] is not None:
+        moe_config.experts_per_token = entry["original_moe_config_experts_per_token"]
+
+
 def _maybe_build_patch_entry(
     module: nn.Module,
     tau_r: float,
@@ -285,6 +343,18 @@ def _maybe_build_patch_entry(
             "original_experts_top_k": getattr(experts, "top_k", None) if experts is not None else None,
             "original_custom_routing_function": (
                 getattr(experts, "custom_routing_function", None)
+                if experts is not None else None
+            ),
+            "original_router_top_k": (
+                getattr(getattr(experts, "router", None), "top_k", None)
+                if experts is not None else None
+            ),
+            "original_router_custom_routing_function": (
+                getattr(getattr(experts, "router", None), "custom_routing_function", None)
+                if experts is not None else None
+            ),
+            "original_moe_config_experts_per_token": (
+                getattr(getattr(experts, "moe_config", None), "experts_per_token", None)
                 if experts is not None else None
             ),
         }
@@ -352,14 +422,7 @@ def patch_model_with_soft_routing(
         entries.append(entry)
         if entry["kind"] == "gate":
             entry["block"].gate = entry["soft_router"]
-            if entry["original_block_top_k"] is not None:
-                entry["block"].top_k = entry["soft_topk"]
-            experts = entry["experts"]
-            if experts is not None:
-                if entry["original_experts_top_k"] is not None:
-                    experts.top_k = entry["soft_topk"]
-                if entry["original_custom_routing_function"] is not None:
-                    experts.custom_routing_function = partial(_block_routing_function, entry["block"])
+            _apply_gate_runtime_state(entry)
         elif entry["kind"] == "topk":
             entry["block"].topk = entry["soft_router"]
 
@@ -404,14 +467,7 @@ def set_hard_routing(model: nn.Module) -> None:
     for entry in entries:
         if entry["kind"] == "gate":
             entry["block"].gate = entry["original_gate"]
-            if entry["original_block_top_k"] is not None:
-                entry["block"].top_k = entry["original_block_top_k"]
-            experts = entry["experts"]
-            if experts is not None:
-                if entry["original_experts_top_k"] is not None:
-                    experts.top_k = entry["original_experts_top_k"]
-                if entry["original_custom_routing_function"] is not None:
-                    experts.custom_routing_function = entry["original_custom_routing_function"]
+            _restore_gate_runtime_state(entry)
         elif entry["kind"] == "topk":
             entry["block"].topk = entry["original_topk"]
     _ROUTING_STATE[mid] = "hard"
@@ -432,14 +488,7 @@ def set_soft_routing(model: nn.Module) -> None:
     for entry in entries:
         if entry["kind"] == "gate":
             entry["block"].gate = entry["soft_router"]
-            if entry["original_block_top_k"] is not None:
-                entry["block"].top_k = entry["soft_topk"]
-            experts = entry["experts"]
-            if experts is not None:
-                if entry["original_experts_top_k"] is not None:
-                    experts.top_k = entry["soft_topk"]
-                if entry["original_custom_routing_function"] is not None:
-                    experts.custom_routing_function = partial(_block_routing_function, entry["block"])
+            _apply_gate_runtime_state(entry)
         elif entry["kind"] == "topk":
             entry["block"].topk = entry["soft_router"]
     _ROUTING_STATE[mid] = "soft"
@@ -472,11 +521,7 @@ def set_soft_topk(model: nn.Module, soft_topk: int) -> None:
         if entry["kind"] == "gate":
             entry["soft_topk"] = soft_topk
             if _ROUTING_STATE.get(id(model)) == "soft":
-                if entry["original_block_top_k"] is not None:
-                    entry["block"].top_k = soft_topk
-                experts = entry["experts"]
-                if experts is not None and entry["original_experts_top_k"] is not None:
-                    experts.top_k = soft_topk
+                _apply_gate_runtime_state(entry)
 
 
 @contextmanager
