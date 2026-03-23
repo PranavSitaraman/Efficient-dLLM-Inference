@@ -281,6 +281,7 @@ def run_blockwise_speculative_inference(
         blk_slice = slice(blk_start, blk_end)
         rel_slice = slice(blk_start - P, blk_end - P)
         blk_width = blk_end - blk_start
+        reuse_state = None
         verifier_active = torch.ones((B, blk_width), dtype=torch.bool, device=device)
         pri_logits = None
         primary_cache = None

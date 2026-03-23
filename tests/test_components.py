@@ -1627,3 +1627,60 @@ class TestRunBlockwiseSpeculativeInference:
         assert stats["primary_verified_positions"] == 3
         assert stats["primary_full_equiv_positions"] == 4
         assert stats["primary_skip_ratio"] == pytest.approx(0.25)
+
+
+class TestDInferCacheReuse:
+    def test_base_model_consolidates_cache_before_replace(self):
+        from aoae.models.base_model import LLaDABaseModel
+
+        model = object.__new__(LLaDABaseModel)
+        model._backend = "dinfer"
+        model._block_length = 32
+        model._dinfer_runtime = "vllm"
+        model.dtype = torch.float32
+        model._make_attention_mask = lambda b, s, d, block_length=32: torch.ones(
+            (b, 1, s, s), dtype=torch.bool, device=d
+        )
+        model._make_query_attention_mask = lambda b, fs, qs, qe, d, block_length=32: torch.ones(
+            (b, 1, qe - qs, fs), dtype=torch.bool, device=d
+        )
+
+        class DummyCache:
+            def __init__(self):
+                self.consolidated = 0
+
+            def consolidate(self):
+                self.consolidated += 1
+
+        first_cache = DummyCache()
+        second_cache = DummyCache()
+        calls = []
+
+        def fake_forward(**kwargs):
+            calls.append(kwargs)
+            if "replace_position" in kwargs:
+                return types.SimpleNamespace(
+                    logits=torch.randn(1, 1, 3),
+                    past_key_values=second_cache,
+                )
+            return types.SimpleNamespace(
+                logits=torch.randn(1, 3, 3),
+                past_key_values=first_cache,
+            )
+
+        model._forward_dinfer_outputs = fake_forward
+
+        _, cached = LLaDABaseModel.forward_with_cache(model, torch.tensor([[1, 2, 3]]))
+        assert cached is first_cache
+        assert first_cache.consolidated == 1
+
+        _, updated = LLaDABaseModel.forward_replace_with_cache(
+            model,
+            torch.tensor([[1, 2, 3]]),
+            slice(1, 2),
+            cached,
+        )
+        assert updated is second_cache
+        assert first_cache.consolidated == 2
+        assert second_cache.consolidated == 1
+        assert calls[1]["replace_position"] == (1, 2)
