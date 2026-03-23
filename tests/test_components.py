@@ -10,6 +10,7 @@ import pytest
 import sys
 import os
 import types
+from functools import partial
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -763,6 +764,50 @@ class TestSoftMoERouter:
 
         return MockModel()
 
+    def _make_mock_dinfer_moe_model(self):
+        """Helper: model whose fused layer stores a routing callback bound to the original gate."""
+        def static_routing_function(gate, hidden_states, gating_output, topk, renormalize):
+            return gate.routing(hidden_states, gating_output, topk, renormalize)
+
+        class MockGateModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = 4
+                self.top_k = 2
+                self.routed_scaling_factor = 1.0
+                self.weight = torch.nn.Parameter(torch.randn(4, 16))
+                self.register_buffer("expert_bias", torch.zeros(4))
+
+            def group_limited_topk(self, scores):
+                return scores.topk(self.top_k, dim=-1)
+
+            def routing(self, hidden_states, gating_output, topk, renormalize):
+                del hidden_states, gating_output, renormalize
+                num_tokens = 3 if topk is None else 3
+                k = self.top_k if topk is None else int(topk)
+                weights = torch.ones(num_tokens, k, dtype=torch.float32)
+                indices = torch.arange(k, dtype=torch.int64).unsqueeze(0).expand(num_tokens, -1)
+                return weights, indices
+
+        class MockExperts:
+            def __init__(self, gate):
+                self.top_k = gate.top_k
+                self.custom_routing_function = partial(static_routing_function, gate)
+
+        class MockMoeBlock(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.gate = MockGateModule()
+                self.top_k = self.gate.top_k
+                self.experts = MockExperts(self.gate)
+
+        class MockModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layer1 = MockMoeBlock()
+
+        return MockModel()
+
     def _make_mock_sglang_moe_model(self):
         """Helper: create a mock SGLang-shaped MoE model for patching tests."""
         class MockGateModule(torch.nn.Module):
@@ -852,6 +897,51 @@ class TestSoftMoERouter:
         patched = patch_model_with_soft_routing(model, tau_r=0.01)
         assert isinstance(patched.layer1.gate, SoftMoERouter)
         assert isinstance(patched.layer2.gate, SoftMoERouter)
+
+    def test_patch_updates_fused_routing_callback_and_effective_topk(self):
+        from aoae.models.soft_moe import (
+            SoftMoERouter,
+            patch_model_with_soft_routing,
+            set_hard_routing,
+            set_soft_topk,
+        )
+
+        model = self._make_mock_dinfer_moe_model()
+        original_gate = model.layer1.gate
+
+        patch_model_with_soft_routing(model, tau_r=0.5, soft_topk=4)
+
+        assert isinstance(model.layer1.gate, SoftMoERouter)
+        assert model.layer1.top_k == 4
+        assert model.layer1.experts.top_k == 4
+
+        weights, indices = model.layer1.experts.custom_routing_function(
+            torch.randn(3, 16),
+            torch.randn(3, 4),
+            model.layer1.experts.top_k,
+            False,
+        )
+        assert weights.shape == (3, 4)
+        assert indices.shape == (3, 4)
+        assert model.layer1.experts.custom_routing_function.args[0] is model.layer1
+
+        set_soft_topk(model, 3)
+        assert model.layer1.top_k == 3
+        assert model.layer1.experts.top_k == 3
+        weights3, indices3 = model.layer1.experts.custom_routing_function(
+            torch.randn(3, 16),
+            torch.randn(3, 4),
+            model.layer1.experts.top_k,
+            False,
+        )
+        assert weights3.shape == (3, 3)
+        assert indices3.shape == (3, 3)
+
+        set_hard_routing(model)
+        assert model.layer1.gate is original_gate
+        assert model.layer1.top_k == 2
+        assert model.layer1.experts.top_k == 2
+        assert model.layer1.experts.custom_routing_function.args[0] is original_gate
 
     def test_routing_mode_switching(self):
         from aoae.models.soft_moe import (

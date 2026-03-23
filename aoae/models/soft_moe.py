@@ -13,6 +13,7 @@ import math
 import types
 import weakref
 from contextlib import contextmanager
+from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -242,6 +243,23 @@ def _iter_known_moe_blocks(model: nn.Module):
         yield name, block
 
 
+def _block_routing_function(
+    block: nn.Module,
+    hidden_states: torch.Tensor,
+    gating_output: torch.Tensor,
+    topk: int,
+    renormalize: bool,
+):
+    """Route through the block's current gate.
+
+    dInfer binds ``custom_routing_function`` to the original gate object when the
+    MoE block is constructed. If we only swap ``block.gate``, the fused runtime
+    continues to call the stale hard gate. Binding the callback to the block
+    instead makes routing follow whichever gate is currently active.
+    """
+    return block.gate.routing(hidden_states, gating_output, topk=topk, renormalize=renormalize)
+
+
 def _maybe_build_patch_entry(
     module: nn.Module,
     tau_r: float,
@@ -255,11 +273,20 @@ def _maybe_build_patch_entry(
         soft_router = SoftMoERouter(
             gate, tau_r=tau_r, soft_topk=effective_topk,
         )
+        experts = getattr(module, "experts", None)
         return {
             "kind": "gate",
             "block": module,
+            "experts": experts,
             "original_gate": gate,
             "soft_router": soft_router,
+            "soft_topk": effective_topk,
+            "original_block_top_k": getattr(module, "top_k", None),
+            "original_experts_top_k": getattr(experts, "top_k", None) if experts is not None else None,
+            "original_custom_routing_function": (
+                getattr(experts, "custom_routing_function", None)
+                if experts is not None else None
+            ),
         }
 
     topk = getattr(module, "topk", None)
@@ -325,6 +352,14 @@ def patch_model_with_soft_routing(
         entries.append(entry)
         if entry["kind"] == "gate":
             entry["block"].gate = entry["soft_router"]
+            if entry["original_block_top_k"] is not None:
+                entry["block"].top_k = entry["soft_topk"]
+            experts = entry["experts"]
+            if experts is not None:
+                if entry["original_experts_top_k"] is not None:
+                    experts.top_k = entry["soft_topk"]
+                if entry["original_custom_routing_function"] is not None:
+                    experts.custom_routing_function = partial(_block_routing_function, entry["block"])
         elif entry["kind"] == "topk":
             entry["block"].topk = entry["soft_router"]
 
@@ -369,6 +404,14 @@ def set_hard_routing(model: nn.Module) -> None:
     for entry in entries:
         if entry["kind"] == "gate":
             entry["block"].gate = entry["original_gate"]
+            if entry["original_block_top_k"] is not None:
+                entry["block"].top_k = entry["original_block_top_k"]
+            experts = entry["experts"]
+            if experts is not None:
+                if entry["original_experts_top_k"] is not None:
+                    experts.top_k = entry["original_experts_top_k"]
+                if entry["original_custom_routing_function"] is not None:
+                    experts.custom_routing_function = entry["original_custom_routing_function"]
         elif entry["kind"] == "topk":
             entry["block"].topk = entry["original_topk"]
     _ROUTING_STATE[mid] = "hard"
@@ -389,6 +432,14 @@ def set_soft_routing(model: nn.Module) -> None:
     for entry in entries:
         if entry["kind"] == "gate":
             entry["block"].gate = entry["soft_router"]
+            if entry["original_block_top_k"] is not None:
+                entry["block"].top_k = entry["soft_topk"]
+            experts = entry["experts"]
+            if experts is not None:
+                if entry["original_experts_top_k"] is not None:
+                    experts.top_k = entry["soft_topk"]
+                if entry["original_custom_routing_function"] is not None:
+                    experts.custom_routing_function = partial(_block_routing_function, entry["block"])
         elif entry["kind"] == "topk":
             entry["block"].topk = entry["soft_router"]
     _ROUTING_STATE[mid] = "soft"
@@ -418,6 +469,14 @@ def set_soft_topk(model: nn.Module, soft_topk: int) -> None:
         )
     for entry in entries:
         entry["soft_router"].soft_topk = soft_topk
+        if entry["kind"] == "gate":
+            entry["soft_topk"] = soft_topk
+            if _ROUTING_STATE.get(id(model)) == "soft":
+                if entry["original_block_top_k"] is not None:
+                    entry["block"].top_k = soft_topk
+                experts = entry["experts"]
+                if experts is not None and entry["original_experts_top_k"] is not None:
+                    experts.top_k = soft_topk
 
 
 @contextmanager
