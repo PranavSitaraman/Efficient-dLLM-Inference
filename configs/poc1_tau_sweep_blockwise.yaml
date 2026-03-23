@@ -64,7 +64,7 @@ inference:
   speculative_schedule: "llada21_block"
   llada21_official:
     use_block_diffusion: true
-    max_post_steps: 16
+    max_post_steps: 8
     threshold: 0.7
     editing_threshold: 0.5
     enable_mbe: false
