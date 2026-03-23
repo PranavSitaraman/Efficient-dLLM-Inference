@@ -72,24 +72,57 @@ class SoftMoERouter(nn.Module):
             )
         self._soft_topk = value
 
+    def _group_limited_topk(self, scores_for_routing: torch.Tensor, k: int) -> torch.Tensor:
+        original_top_k = getattr(self.original_gate, "top_k", None)
+        if original_top_k is None or not hasattr(self.original_gate, "group_limited_topk"):
+            return scores_for_routing.topk(k, dim=-1, sorted=False).indices
+
+        self.original_gate.top_k = k
+        try:
+            _, topk_indices = self.original_gate.group_limited_topk(scores_for_routing)
+        finally:
+            self.original_gate.top_k = original_top_k
+        return topk_indices
+
     def _compute_soft_topk(
         self, logits: torch.Tensor, hidden_states: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Compute temperature-softmax weights, then prune to top-K_soft."""
-        full_weights = F.softmax(logits / self._tau_r, dim=-1).type_as(hidden_states)
-        # Keep the most recent routing distribution for eval-time diagnostics
-        # such as routing entropy. This is a single forward's worth of weights,
-        # not a history, so the memory cost stays bounded.
-        self._last_weights = full_weights.detach()
+        """Compute a temperature-softened variant of the original gate.
+
+        We preserve the original LLaDA gate semantics:
+        - logits -> sigmoid scores
+        - expert_bias only affects routing selection
+        - group_limited_topk controls which experts are reachable
+
+        Soft routing is introduced by temperature-scaling the logits before the
+        sigmoid and by allowing a wider ``soft_topk`` selection set than the
+        original hard gate.
+        """
+        del hidden_states
+        scaled_logits = logits / self._tau_r
+        scores = torch.sigmoid(scaled_logits.float()).type_as(logits)
+
+        # Keep a normalized full routing distribution for diagnostics such as
+        # routing entropy without affecting the execution-time router math.
+        self._last_weights = (
+            scores / scores.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+        ).detach()
 
         k = min(self._soft_topk, self.num_experts)
         if k >= self.num_experts:
             indices = torch.arange(
-                self.num_experts, device=hidden_states.device,
-            ).unsqueeze(0).expand(hidden_states.shape[0], -1).contiguous()
-            return full_weights * self.routed_scaling_factor, indices
+                self.num_experts, device=logits.device,
+            ).unsqueeze(0).expand(logits.shape[0], -1).contiguous()
+            full_weights = self._last_weights.type_as(logits) * self.routed_scaling_factor
+            return full_weights, indices
 
-        topk_weights, topk_indices = full_weights.topk(k, dim=-1, sorted=False)
+        expert_bias = getattr(self.original_gate, "expert_bias", None)
+        if expert_bias is not None:
+            scores_for_routing = scores + expert_bias
+        else:
+            scores_for_routing = scores
+        topk_indices = self._group_limited_topk(scores_for_routing, k)
+        topk_weights = torch.gather(scores, dim=1, index=topk_indices).type_as(logits)
         topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True).clamp(min=1e-12)
         topk_weights = topk_weights * self.routed_scaling_factor
         return topk_weights.contiguous(), topk_indices.contiguous()
