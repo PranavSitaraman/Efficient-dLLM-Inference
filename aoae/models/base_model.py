@@ -10,12 +10,14 @@ Supports four backends selected via config ``base_model.backend``:
   - ``hf``       — HuggingFace AutoModelForCausalLM (default for dense LLaDA models).
   - ``dkv``      — dKV-Cache patched model (external/dKV-Cache).
   - ``dinfer``   — dInfer framework (external/dInfer; for LLaDA2.X MoE).
-  - ``soft_moe`` — dInfer MoE with soft routing (all experts active; paper §3.7).
+  - ``soft_moe`` — dInfer MoE with hard-top-k-preserving tail-expanded routing
+    (paper §3.7).
   - ``auto``     — auto-detect from model name.
 
 All backends fail hard on missing dependencies (no silent fallbacks).
 """
 
+import gc
 import os
 import sys
 import torch
@@ -187,6 +189,34 @@ def _init_vllm_distributed(tp_size: int = 1):
     vllm_dist.initialize_model_parallel(tp_size, backend="nccl")
 
 
+def _cleanup_vllm_distributed() -> None:
+    """Best-effort teardown for in-process vLLM model-parallel state."""
+    try:
+        from vllm import distributed as vllm_dist
+    except ImportError:
+        vllm_dist = None
+
+    if vllm_dist is not None:
+        destroy_model_parallel = getattr(vllm_dist, "destroy_model_parallel", None)
+        if callable(destroy_model_parallel):
+            try:
+                destroy_model_parallel()
+            except Exception:
+                pass
+        destroy_distributed_environment = getattr(vllm_dist, "destroy_distributed_environment", None)
+        if callable(destroy_distributed_environment):
+            try:
+                destroy_distributed_environment()
+            except Exception:
+                pass
+
+    if torch.distributed.is_initialized():
+        try:
+            torch.distributed.destroy_process_group()
+        except Exception:
+            pass
+
+
 def _init_sglang_distributed(tp_size: int = 1, ep_size: int = 1):
     """Initialize SGLang distributed/model-parallel state for dInfer MoE models."""
     from sglang.srt import distributed as sglang_dist
@@ -221,6 +251,32 @@ def _patch_missing_moe_align_block_size(cfg: Optional[dict] = None) -> None:
     )
     if report.get("patched_fallback_ops") and is_global_rank_zero():
         print(f"[Model] Runtime patched fallback ops: {report['patched_fallback_ops']}")
+
+
+def _extract_to_device(args, kwargs) -> Optional[torch.device]:
+    target = kwargs.get("device")
+    if target is None and args:
+        first = args[0]
+        if isinstance(first, torch.Tensor):
+            target = first.device
+        elif not isinstance(first, torch.dtype):
+            try:
+                target = torch.device(first)
+            except (TypeError, ValueError, RuntimeError):
+                target = None
+    if target is None:
+        return None
+    return torch.device(target)
+
+
+def _devices_match(current: Optional[torch.device], target: Optional[torch.device]) -> bool:
+    if current is None or target is None or current.type != target.type:
+        return False
+    if current.type != "cuda":
+        return True
+    if current.index is None or target.index is None:
+        return True
+    return current.index == target.index
 
 
 class LLaDABaseModel(nn.Module):
@@ -284,6 +340,31 @@ class LLaDABaseModel(nn.Module):
         self._embedding_weight = self._resolve_embedding_weight()
         self.vocab_size = self._embedding_weight.shape[0]
         self.hidden_dim = self._embedding_weight.shape[1]
+        self._closed = False
+
+    def to(self, *args, **kwargs):
+        """Move the wrapper when safe, and no-op for runtime-managed backends.
+
+        dInfer/vLLM-backed MoE models already allocate onto their runtime-owned
+        CUDA device in some environments, but in others they still need a single
+        initial promotion from CPU to CUDA after weight loading. Calling
+        ``nn.Module.to()`` repeatedly on the outer wrapper can therefore either
+        be necessary once or catastrophically duplicate tens of GB on the next
+        call.
+
+        For ``dinfer`` and ``soft_moe`` we therefore:
+          - allow the first real move when the model is still on CPU, and
+          - no-op if the requested device already matches the current device.
+
+        Standard HF and dKV backends still honor ``.to(...)`` normally.
+        """
+        target_device = _extract_to_device(args, kwargs)
+        if self._backend in {"dinfer", "soft_moe"} and _devices_match(self.device, target_device):
+            return self
+
+        super().to(*args, **kwargs)
+        self._embedding_weight = self._resolve_embedding_weight()
+        return self
 
     # ------------------------------------------------------------------
     # Backend initializers (fail hard on missing deps)
@@ -490,7 +571,7 @@ class LLaDABaseModel(nn.Module):
         """Initialize dInfer MoE model with soft routing (paper §3.7).
 
         Same as _init_dinfer but replaces hard top-k routing with
-        temperature-controlled soft routing using top-K_soft pruning.
+        hard-top-k-preserving tail-expanded routing using top-K_soft pruning.
         """
         self._init_dinfer(name_or_path)
 
@@ -504,6 +585,40 @@ class LLaDABaseModel(nn.Module):
         self.model.eval()
         for p in self.model.parameters():
             p.requires_grad_(False)
+
+    def close(self) -> None:
+        """Release heavyweight runtime state for sequential evals in one process."""
+        if getattr(self, "_closed", False):
+            return
+
+        if getattr(self, "_vllm_config_ctx", None) is not None:
+            try:
+                self._vllm_config_ctx.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._vllm_config_ctx = None
+
+        backend = getattr(self, "_backend", None)
+        runtime = getattr(self, "_dinfer_runtime", None)
+        self.model = None
+        self._embedding_weight = None
+        gc.collect()
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        if backend in {"dinfer", "soft_moe"}:
+            if runtime == "vllm":
+                _cleanup_vllm_distributed()
+            elif torch.distributed.is_initialized():
+                try:
+                    torch.distributed.destroy_process_group()
+                except Exception:
+                    pass
+
+        self._closed = True
 
     # ------------------------------------------------------------------
     def _resolve_embedding_weight(self) -> torch.Tensor:
@@ -536,7 +651,22 @@ class LLaDABaseModel(nn.Module):
     # ------------------------------------------------------------------
     @property
     def device(self):
-        return self._embedding_weight.device
+        embedding_weight = getattr(self, "_embedding_weight", None)
+        if embedding_weight is not None:
+            return embedding_weight.device
+
+        model = getattr(self, "model", None)
+        if model is not None:
+            try:
+                return next(model.parameters()).device
+            except (StopIteration, AttributeError, TypeError):
+                pass
+            try:
+                return next(model.buffers()).device
+            except (StopIteration, AttributeError, TypeError):
+                pass
+
+        return torch.device("cpu")
 
     @property
     def backend(self) -> str:
@@ -545,6 +675,24 @@ class LLaDABaseModel(nn.Module):
     def get_embedding_weight(self) -> torch.Tensor:
         """Return [V, D] token embedding matrix (frozen)."""
         return self._embedding_weight
+
+    def set_routing_temperature(self, tau_r: float) -> None:
+        """Update soft-routing temperature in-place for patched MoE models."""
+        self.cfg.setdefault("base_model", {})["routing_temperature"] = float(tau_r)
+        if self._backend != "soft_moe":
+            return
+        from .soft_moe import set_routing_temperature
+
+        set_routing_temperature(self.model, float(tau_r))
+
+    def set_soft_topk(self, soft_topk: int) -> None:
+        """Update soft-routing expert budget in-place for patched MoE models."""
+        self.cfg.setdefault("base_model", {})["soft_topk"] = int(soft_topk)
+        if self._backend != "soft_moe":
+            return
+        from .soft_moe import set_soft_topk
+
+        set_soft_topk(self.model, int(soft_topk))
 
     # ------------------------------------------------------------------
     def _make_attention_mask(
@@ -647,6 +795,23 @@ class LLaDABaseModel(nn.Module):
                 return self.model(**kwargs)
         return self.model(**kwargs)
 
+    def _forward_hf_outputs(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        *,
+        output_hidden_states: bool = False,
+        backbone=None,
+    ):
+        """HF/remote-code forward using 4D block masks as attention_bias."""
+        model = self.model if backbone is None else backbone
+        kwargs = {}
+        if attention_mask is not None:
+            kwargs["attention_bias"] = attention_mask
+        if output_hidden_states:
+            kwargs["output_hidden_states"] = True
+        return model(input_ids, **kwargs)
+
     # ------------------------------------------------------------------
     @torch.no_grad()
     def forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
@@ -665,13 +830,15 @@ class LLaDABaseModel(nn.Module):
         Full attention within each block, causal across blocks.
         This allows KV caching of completed blocks.
         """
+        if input_ids.device != self.device:
+            input_ids = input_ids.to(self.device)
         batch_size, seq_len = input_ids.shape
         attention_mask = self._make_attention_mask(
             batch_size, seq_len, input_ids.device, block_length=block_length,
         )
         if self._backend in ("dinfer", "soft_moe"):
             return self._forward_dinfer(input_ids, attention_mask=attention_mask)
-        outputs = self.model(input_ids, attention_mask=attention_mask)
+        outputs = self._forward_hf_outputs(input_ids, attention_mask=attention_mask)
         if hasattr(outputs, "logits"):
             return outputs.logits
         if isinstance(outputs, (tuple, list)):
@@ -712,6 +879,8 @@ class LLaDABaseModel(nn.Module):
         """Forward pass returning logits and a dInfer KV cache object."""
         if self._backend not in ("dinfer", "soft_moe"):
             raise NotImplementedError("forward_with_cache is only supported for dInfer-backed models.")
+        if input_ids.device != self.device:
+            input_ids = input_ids.to(self.device)
         batch_size, seq_len = input_ids.shape
         attention_mask = self._make_attention_mask(
             batch_size, seq_len, input_ids.device, block_length=self._block_length,
@@ -743,6 +912,8 @@ class LLaDABaseModel(nn.Module):
             raise ValueError("past_key_values must be provided for replace-position forward.")
         if hasattr(past_key_values, "consolidate"):
             past_key_values.consolidate()
+        if full_input_ids.device != self.device:
+            full_input_ids = full_input_ids.to(self.device)
 
         start = int(replace_slice.start)
         end = int(replace_slice.stop)
@@ -783,6 +954,8 @@ class LLaDABaseModel(nn.Module):
         self, input_ids: torch.LongTensor,
     ) -> Tuple[torch.Tensor, list]:
         """Forward pass → (logits [B,L,V], hidden_states [num_layers][B,L,D])."""
+        if input_ids.device != self.device:
+            input_ids = input_ids.to(self.device)
         batch_size, seq_len = input_ids.shape
         attention_mask = self._make_attention_mask(
             batch_size, seq_len, input_ids.device, block_length=self._block_length,
@@ -790,7 +963,11 @@ class LLaDABaseModel(nn.Module):
         if self._backend in ("dinfer", "soft_moe"):
             return self._forward_with_all_hidden_dinfer(input_ids, attention_mask=attention_mask)
 
-        outputs = self.model(input_ids, attention_mask=attention_mask, output_hidden_states=True)
+        outputs = self._forward_hf_outputs(
+            input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=True,
+        )
         return self._extract_logits_and_hidden_states(outputs, source="hf")
 
     @torch.no_grad()
@@ -803,6 +980,8 @@ class LLaDABaseModel(nn.Module):
 
         Uses block-causal attention (the pattern LLaDA2 was trained with).
         """
+        if input_ids.device != self.device:
+            input_ids = input_ids.to(self.device)
         if self._backend in ("dinfer", "soft_moe"):
             return self.forward_with_hidden(input_ids)[1]
 
@@ -817,7 +996,11 @@ class LLaDABaseModel(nn.Module):
             # Fallback for other HF architectures that don't expose .model
             return self.forward_with_hidden(input_ids)[1]
 
-        outputs = backbone(input_ids, attention_mask=attention_mask)
+        outputs = self._forward_hf_outputs(
+            input_ids,
+            attention_mask=attention_mask,
+            backbone=backbone,
+        )
         if hasattr(outputs, "last_hidden_state"):
             return outputs.last_hidden_state
         if isinstance(outputs, (tuple, list)):

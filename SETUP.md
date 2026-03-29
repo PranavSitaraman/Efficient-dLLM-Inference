@@ -1,74 +1,86 @@
-# Setup Guide — AOAE on Kempner H100 Cluster
+# Setup Guide
 
-## Quick Start (< 15 minutes)
+## Environment
 
 ```bash
-# 1. Load modules
 module load python/3.12.5-fasrc01 cuda/11.8.0-fasrc01 cudnn/8.9.2.26_cuda11-fasrc01
-
-# 2. Create environment
 conda create -n rtx python=3.10 -y
 conda activate rtx
 
-# 3. Install everything (PyTorch + deps + dInfer + SGLang)
 bash setup.sh
-
-# 4. Authenticate with HuggingFace (needed for gated models)
-huggingface-cli login
+pip install -e .
 ```
 
-## Verify Installation
+For dense / HF-only work:
 
 ```bash
-# Check core deps
-python3 -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}, GPUs: {torch.cuda.device_count()}')"
-python3 -c "import transformers; print(f'Transformers {transformers.__version__}')"
-python3 scripts/preflight.py --config configs/default.yaml
-
-# Run unit tests (no GPU needed, uses mock model)
-python3 -m pytest tests/ -v
+bash setup.sh --minimal
+pip install -e .
 ```
 
-## Model Access
-
-| Model | Size | GPUs needed | Backend |
-|-------|------|-------------|---------|
-| `GSAI-ML/LLaDA-8B-Instruct` | 8B | 1 | HuggingFace |
-| `inclusionAI/LLaDA2.1-mini` | 16B | 2 | dInfer/HF |
-| `inclusionAI/LLaDA2.1-flash` | 100B MoE | 4 | dInfer+SGLang |
-| `inclusionAI/LLaDA2.0-flash` | 100B MoE | 4 | dInfer+SGLang |
-| `inclusionAI/LLaDA2.0-flash-CAP` | 100B MoE | 4 | dInfer+SGLang |
-
-## Running on SLURM
+## Verify
 
 ```bash
-# Full reproduction pipeline (PRISM → GRPO → Eval, chained jobs)
-bash reproduce.sh --slurm
+python3 -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.device_count())"
+python3 -c "import transformers; print(transformers.__version__)"
+aoae preflight --config configs/default.yaml
+aoae test
+```
 
-# With a specific config
-bash reproduce.sh --slurm --config configs/llada21_mini.yaml
+## Recommended configs
 
-# Individual jobs
-sbatch slurm/train_prism.sh configs/default.yaml
-sbatch slurm/train_grpo.sh configs/default.yaml
+| Config | Use case |
+| --- | --- |
+| `configs/default.yaml` | Main 8B training/eval path |
+| `configs/paper.yaml` | Main paper suite |
+| `configs/poc1.yaml` | PoC 1 tau sweep |
+| `configs/poc2.yaml` | PoC 2 reuse sweep |
+| `configs/llada21_hard.yaml` | Routing sweep hard baseline |
+| `configs/llada21_soft.yaml` | Routing sweep soft config |
+| `configs/llada21_flash.yaml` | Large MoE / dInfer runtime |
+
+## Local usage
+
+```bash
+aoae pipeline --config configs/default.yaml
+
+aoae tau-sweep --config configs/poc1.yaml --max_samples 100
+aoae reuse-sweep --config configs/poc2.yaml --max_samples 100
+aoae paper-suite --config configs/paper.yaml --max_samples 100
+```
+
+If a config sets `hardware.tp_size > 1`, the local `aoae` CLI will relaunch itself under `torchrun` automatically.
+
+## SLURM usage
+
+Training / eval:
+
+```bash
+sbatch slurm/train.sh prism configs/default.yaml
+sbatch slurm/train.sh grpo configs/default.yaml auto
 sbatch slurm/eval.sh configs/default.yaml outputs/default/policy_final.pt
 ```
 
-## Running Locally (single GPU)
+Paper / POCs:
 
 ```bash
-# Full pipeline
-bash reproduce.sh
+sbatch slurm/paper.sh suite configs/paper.yaml --max_samples 100
+sbatch slurm/paper.sh poc1 configs/poc1.yaml --max_samples 100
+sbatch slurm/paper.sh poc2 configs/poc2.yaml --max_samples 100
+sbatch slurm/paper.sh ablations configs/paper.yaml --max_samples 100
+sbatch slurm/paper.sh routing configs/llada21_hard.yaml configs/llada21_soft.yaml --max_samples 100
+```
 
-# Or step by step:
-python3 run_train.py --config configs/default.yaml --stage prism
-python3 run_train.py --config configs/default.yaml --stage grpo
-python3 run_eval.py --config configs/default.yaml --checkpoint outputs/default/policy_final.pt
+Workflow wrapper:
+
+```bash
+bash reproduce.sh --slurm
+bash reproduce.sh --slurm --workflow paper --max_samples 100
 ```
 
 ## Troubleshooting
 
-- **OOM on LLaDA-8B**: Reduce `inference.gen_length` or `grpo.group_size` in config.
-- **dInfer import error**: Run `pip install -e external/dInfer` after `pip install sglang`.
-- **Tokenizer error**: Make sure you ran `huggingface-cli login` with a valid token.
-- **NCCL timeout**: Increase `NCCL_BLOCKING_WAIT` or check inter-node connectivity.
+- OOM: reduce `inference.gen_length`, `grpo.group_size`, or `max_samples`.
+- Missing dInfer / vLLM MoE ops: rerun `aoae preflight --config configs/llada21_flash.yaml --strict_moe`.
+- HF model access issues: authenticate with `huggingface-cli login`.
+- Unexpected runtime drift after a dependency change: rerun `aoae test` and a small `aoae eval --max_samples 10`.

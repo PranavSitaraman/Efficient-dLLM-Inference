@@ -14,7 +14,6 @@ Key design choices:
 
 import os
 import math
-import re
 import time
 import yaml
 import random
@@ -27,24 +26,10 @@ from tqdm import tqdm
 import numpy as np
 from typing import Optional, List, Dict, Tuple, Any
 
+from .checkpoints import find_latest_checkpoint, load_state_dict_flexible
 from .inference import aoae_inference, AOAETrajectory
 from .speculative_inference import speculative_inference, SpeculativeTrajectory
-import glob
-
-
-def _load_state_dict_flexible(module, state_dict: Dict[str, torch.Tensor], label: str) -> None:
-    own = module.state_dict()
-    compatible = {
-        k: v for k, v in state_dict.items()
-        if (k in own) and (own[k].shape == v.shape)
-    }
-    skipped = [
-        k for k, v in state_dict.items()
-        if (k not in own) or (k in own and own[k].shape != v.shape)
-    ]
-    module.load_state_dict(compatible, strict=False)
-    if skipped:
-        print(f"[Checkpoint] {label}: skipped {len(skipped)} incompatible keys.")
+from .tasks import check_math_correctness, extract_answer, extract_prompt_and_reference
 
 
 # ======================================================================
@@ -122,137 +107,6 @@ def compute_reward(
         reward = reward + access_w * torch.full_like(reward, spec_f1)
 
     return reward
-
-
-def check_math_correctness(generated: str, reference: str) -> bool:
-    """
-    Check if the generated answer matches the reference for math problems.
-
-    Extracts the final numerical answer from \\boxed{} or after "####".
-    """
-    gen_answer = extract_answer(generated)
-    ref_answer = extract_answer(reference)
-
-    if gen_answer is None or ref_answer is None:
-        return False
-
-    try:
-        return abs(float(gen_answer) - float(ref_answer)) < 1e-3
-    except (ValueError, TypeError):
-        return gen_answer.strip() == ref_answer.strip()
-
-
-def extract_answer(text: str) -> Optional[str]:
-    """Extract numerical answer from text (supports \\boxed{} and #### formats)."""
-
-    # Try \boxed{...}
-    match = re.findall(r'\\boxed\{([^}]+)\}', text)
-    if match:
-        return match[-1].strip()
-
-    # Try #### answer format (GSM8K)
-    match = re.findall(r'####\s*(.+)', text)
-    if match:
-        return match[-1].strip().replace(",", "")
-
-    # Try last number in text
-    numbers = re.findall(r'-?\d+\.?\d*', text)
-    if numbers:
-        return numbers[-1]
-
-    return None
-
-
-def extract_prompt_and_reference(sample: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    """Extract (prompt, reference_answer) from heterogeneous math dataset schemas."""
-
-    def _collect_text(value: Any) -> List[str]:
-        """Recursively collect textual fragments from nested json-like values."""
-        out: List[str] = []
-        if isinstance(value, str):
-            s = value.strip()
-            if s:
-                out.append(s)
-            return out
-        if isinstance(value, dict):
-            # Prefer common content carriers first for stable ordering.
-            for k in ("content", "text", "value"):
-                if k in value:
-                    out.extend(_collect_text(value[k]))
-            for k, v in value.items():
-                if k not in ("content", "text", "value"):
-                    out.extend(_collect_text(v))
-            return out
-        if isinstance(value, list):
-            for item in value:
-                out.extend(_collect_text(item))
-            return out
-        return out
-
-    prompt: Optional[str] = None
-    reference: Optional[str] = None
-
-    # Common prompt fields
-    for key in ("question", "problem", "prompt", "instruction", "input"):
-        value = sample.get(key)
-        if isinstance(value, str) and value.strip():
-            prompt = value.strip()
-            break
-
-    # Common target/reference fields
-    for key in ("answer", "solution", "canonical_solution", "output", "response", "completion", "final_answer"):
-        value = sample.get(key)
-        if isinstance(value, str) and value.strip():
-            reference = value.strip()
-            break
-
-    # Chat-style fallback
-    messages = sample.get("messages") or sample.get("conversations")
-    if isinstance(messages, list):
-        user_chunks = []
-        assistant_chunks = []
-        for turn in messages:
-            if not isinstance(turn, dict):
-                continue
-            role = str(turn.get("role", "")).lower()
-            content_chunks = _collect_text(turn.get("content"))
-            if not content_chunks:
-                continue
-            content = "\n".join(content_chunks)
-            if role == "user":
-                user_chunks.append(content)
-            elif role == "assistant":
-                assistant_chunks.append(content)
-        if prompt is None and user_chunks:
-            prompt = "\n".join(user_chunks)
-        if reference is None and assistant_chunks:
-            reference = "\n".join(assistant_chunks)
-
-    # Last-resort fallback: choose two longest textual fields from the sample.
-    if prompt is None or reference is None:
-        field_texts: List[Tuple[str, str]] = []
-        for key, value in sample.items():
-            chunks = _collect_text(value)
-            if chunks:
-                merged = "\n".join(chunks).strip()
-                if merged:
-                    field_texts.append((key, merged))
-
-        # Prefer not to use metadata-like fields when alternatives exist.
-        preferred = [
-            kv for kv in field_texts
-            if kv[0].lower() not in {"id", "source", "split", "dataset", "metadata"}
-        ]
-        pool = preferred if preferred else field_texts
-        pool.sort(key=lambda kv: len(kv[1]), reverse=True)
-
-        if pool:
-            if prompt is None:
-                prompt = pool[0][1]
-            if reference is None:
-                reference = pool[1][1] if len(pool) > 1 else pool[0][1]
-
-    return prompt, reference
 
 
 # ======================================================================
@@ -444,26 +298,6 @@ def collect_rollout_group(
 # ======================================================================
 # Main training loop
 # ======================================================================
-
-def find_latest_checkpoint(output_dir: str) -> Optional[str]:
-    """Find the latest policy_step*.pt checkpoint in output_dir by step number."""
-    pattern = os.path.join(output_dir, "policy_step*.pt")
-    ckpts = glob.glob(pattern)
-    if not ckpts:
-        return None
-    # Extract step number and sort
-    def _step_num(path: str) -> int:
-        base = os.path.basename(path)
-        # policy_step1000.pt -> 1000
-        num_str = base.replace("policy_step", "").replace(".pt", "")
-        try:
-            return int(num_str)
-        except ValueError:
-            return -1
-    ckpts.sort(key=_step_num)
-    return ckpts[-1]
-
-
 def train(cfg: dict, resume_from: Optional[str] = None):
     """
     Main GRPO training entrypoint.
@@ -625,9 +459,9 @@ def train(cfg: dict, resume_from: Optional[str] = None):
 
         # Restore model weights
         pol_inner = policy.module if hasattr(policy, 'module') else policy
-        _load_state_dict_flexible(pol_inner, ckpt["policy"], "policy")
+        load_state_dict_flexible(pol_inner, ckpt["policy"], "policy")
         sm_inner = soft_mask.module if hasattr(soft_mask, 'module') else soft_mask
-        _load_state_dict_flexible(sm_inner, ckpt["soft_mask"], "soft_mask")
+        load_state_dict_flexible(sm_inner, ckpt["soft_mask"], "soft_mask")
 
         # Restore optimizer
         if "optimizer" in ckpt:

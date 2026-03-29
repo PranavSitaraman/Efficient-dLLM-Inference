@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from .cache import DKVCacheManager
 from .models.composed_prediction import compose_prediction_dual
 from .models.dual_model import DualModelWrapper, DualModelOutput
+from .models.policy import call_policy
 from .agreement_signals import compute_reuse_signal
 from .positional_cache import (
     init_positional_state,
@@ -160,9 +161,11 @@ def speculative_inference(
             age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
 
         # --- Policy forward (with agreement signal) ---
-        policy_out = policy(
+        policy_out = call_policy(
+            policy,
             H_t, mask_ind, step_frac,
             temperature=policy_temperature,
+            confidence=confidence,
             quality_scores=q_scores,
             agreement=agreement.float(),
             age_feature=age_feat,

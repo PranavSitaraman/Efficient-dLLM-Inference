@@ -23,6 +23,11 @@ from dataclasses import dataclass, asdict
 from datasets import load_dataset
 from typing import Optional, List, Dict, Any
 
+from .checkpoints import (
+    load_state_dict_flexible,
+    resolve_policy_checkpoint,
+    resolve_sidecar_artifact,
+)
 from .models.base_model import LLaDABaseModel
 from .models.soft_mask import SoftMaskedState
 from .models.policy import AOAEPolicy, DefaultPolicy
@@ -38,9 +43,9 @@ from .dinfer_integration import (
     run_blockwise_speculative_inference,
     run_speculative_inference,
 )
-from .train_grpo import extract_answer, extract_prompt_and_reference
 from .runtime_checks import collect_runtime_info, set_global_seed, is_global_rank_zero
 from .evaluators import build_evaluator
+from .tasks import extract_answer, extract_prompt_and_reference
 
 
 _MAX_SAVED_PREDICTIONS = 50
@@ -228,45 +233,6 @@ def _remask_note(cfg: dict) -> str:
 
 def _append_note(note: str, extra: str) -> str:
     return f"{note},{extra}" if note else extra
-
-
-def _load_state_dict_flexible(module, state_dict: Dict[str, torch.Tensor], label: str) -> None:
-    """
-    Load compatible checkpoint weights and skip shape-mismatched keys.
-    """
-    own = module.state_dict()
-    compatible = {
-        k: v for k, v in state_dict.items()
-        if (k in own) and (own[k].shape == v.shape)
-    }
-    skipped = [
-        k for k, v in state_dict.items()
-        if (k not in own) or (k in own and own[k].shape != v.shape)
-    ]
-    module.load_state_dict(compatible, strict=False)
-    if skipped:
-        print(f"[Checkpoint] {label}: skipped {len(skipped)} incompatible keys.")
-
-
-def _resolve_sidecar_artifact(
-    checkpoint_path: Optional[str],
-    output_dir: str,
-    filename: str,
-) -> Optional[str]:
-    """Locate an artifact stored next to the checkpoint or in the run output dir."""
-    candidates: List[str] = []
-    if checkpoint_path:
-        candidates.append(os.path.join(os.path.dirname(checkpoint_path), filename))
-    candidates.append(os.path.join(output_dir, filename))
-
-    seen = set()
-    for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if os.path.exists(candidate):
-            return candidate
-    return None
 
 
 def evaluate_aoae(
@@ -1126,6 +1092,7 @@ def main(
     speculative_policy_temperatures: Optional[List[float]] = None,
     preloaded_dual_model=None,
     preloaded_eval_ds=None,
+    preloaded_base_model=None,
 ):
     """Run full evaluation suite.
 
@@ -1139,6 +1106,7 @@ def main(
         speculative_policy_temperatures: optional tau_pi list for speculative runs.
         preloaded_dual_model: reuse a previously loaded DualModelWrapper (avoids reload).
         preloaded_eval_ds: reuse a previously loaded eval dataset.
+        preloaded_base_model: reuse a previously loaded LLaDABaseModel for standard evals.
     """
     seed = int(cfg.get("hardware", {}).get("seed", 42))
     deterministic = bool(cfg.get("hardware", {}).get("deterministic", False))
@@ -1164,107 +1132,123 @@ def main(
     all_results: List[EvalResult] = []
     kv_dynamics_records: List[Dict[str, Any]] = []
     saved_predictions: List[Dict[str, Any]] = []
+    owned_model = None
+    try:
+        if mode == "speculative" or cfg["base_model"].get("backend") == "dual":
+            from .models.dual_model import DualModelWrapper
+            schedule = str(cfg.get("inference", {}).get("speculative_schedule", "aoae")).strip().lower()
+            uses_aoae_policy = schedule != "llada21_block"
 
-    if mode == "speculative" or cfg["base_model"].get("backend") == "dual":
-        from .models.dual_model import DualModelWrapper
-        schedule = str(cfg.get("inference", {}).get("speculative_schedule", "aoae")).strip().lower()
-        uses_aoae_policy = schedule != "llada21_block"
+            if preloaded_dual_model is not None:
+                dual_model = preloaded_dual_model
+                tau_r = cfg["base_model"].get("routing_temperature", 0.01)
+                dual_model.set_tau_r(tau_r)
+                soft_topk = cfg["base_model"].get("soft_topk")
+                if soft_topk is not None:
+                    dual_model.set_soft_topk(soft_topk)
+            else:
+                if is_global_rank_zero():
+                    print("Loading dual model (hard auxiliary + soft primary)...")
+                dual_model = DualModelWrapper(cfg)
+                dual_model = dual_model.to(device)
+                owned_model = dual_model
+            tokenizer = dual_model.tokenizer
+            mask_id = cfg["base_model"]["mask_token_id"]
+            embed_w = dual_model.get_embedding_weight() if uses_aoae_policy else None
+            embed_dim = embed_w.shape[1] if embed_w is not None else None
 
-        if preloaded_dual_model is not None:
-            dual_model = preloaded_dual_model
-            tau_r = cfg["base_model"].get("routing_temperature", 0.01)
-            dual_model.set_tau_r(tau_r)
-            soft_topk = cfg["base_model"].get("soft_topk")
-            if soft_topk is not None:
-                dual_model.set_soft_topk(soft_topk)
-        else:
-            if is_global_rank_zero():
-                print("Loading dual model (hard auxiliary + soft primary)...")
-            dual_model = DualModelWrapper(cfg)
-            dual_model = dual_model.to(device)
-        tokenizer = dual_model.tokenizer
-        mask_id = cfg["base_model"]["mask_token_id"]
-        embed_w = dual_model.get_embedding_weight() if uses_aoae_policy else None
-        embed_dim = embed_w.shape[1] if embed_w is not None else None
+            base_model = dual_model._model
 
-        # --- Baselines using hard-routed model (standard LLaDA decoding) ---
-        # Access the underlying model in hard-routing mode for baselines
-        base_model = dual_model._model
+            if not skip_baselines:
+                _run_selected_baselines(
+                    base_model,
+                    eval_ds,
+                    tokenizer,
+                    cfg,
+                    max_samples,
+                    all_results,
+                    predictions_sink=saved_predictions,
+                    prediction_limit=prediction_limit,
+                )
 
-        if not skip_baselines:
-            _run_selected_baselines(
-                base_model,
-                eval_ds,
-                tokenizer,
-                cfg,
-                max_samples,
-                all_results,
-                predictions_sink=saved_predictions,
-                prediction_limit=prediction_limit,
-            )
-
-        # --- AOAE Speculative Evaluation ---
-        # Auto-detect policy checkpoint from output_dir if not explicitly provided
-        if not checkpoint_path:
-            for name in ("policy_best.pt", "policy_final.pt"):
-                candidate = os.path.join(cfg["logging"]["output_dir"], name)
-                if os.path.exists(candidate):
-                    checkpoint_path = candidate
-                    break
             if not checkpoint_path:
-                import glob as _glob
-                step_ckpts = sorted(_glob.glob(
-                    os.path.join(cfg["logging"]["output_dir"], "policy_step*.pt")
-                ))
-                if step_ckpts:
-                    checkpoint_path = step_ckpts[-1]
+                checkpoint_path = resolve_policy_checkpoint(
+                    checkpoint_path,
+                    cfg["logging"]["output_dir"],
+                )
 
-        has_trained_policy = checkpoint_path and os.path.exists(checkpoint_path) and uses_aoae_policy
+            has_trained_policy = checkpoint_path and os.path.exists(checkpoint_path) and uses_aoae_policy
 
-        soft_mask = None
-        if uses_aoae_policy:
-            soft_mask = SoftMaskedState(cfg, embed_w).to(device)
-            soft_mask.set_mask_embedding(mask_id)
-            soft_mask.eval()
-        elif checkpoint_path and os.path.exists(checkpoint_path) and is_global_rank_zero():
-            print(
-                "Checkpoint provided, but inference.speculative_schedule=llada21_block "
-                "does not use the AOAE policy. Ignoring checkpoint for this run."
-            )
+            soft_mask = None
+            if uses_aoae_policy:
+                soft_mask = SoftMaskedState(cfg, embed_w).to(device)
+                soft_mask.set_mask_embedding(mask_id)
+                soft_mask.eval()
+            elif checkpoint_path and os.path.exists(checkpoint_path) and is_global_rank_zero():
+                print(
+                    "Checkpoint provided, but inference.speculative_schedule=llada21_block "
+                    "does not use the AOAE policy. Ignoring checkpoint for this run."
+                )
 
-        if has_trained_policy:
-            policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
-            if is_global_rank_zero():
-                print(f"\nLoading trained policy from {checkpoint_path}")
-            ckpt = torch.load(checkpoint_path, map_location=device)
-            _load_state_dict_flexible(policy, ckpt["policy"], "policy")
-            if "soft_mask" in ckpt:
-                _load_state_dict_flexible(soft_mask, ckpt["soft_mask"], "soft_mask")
-            policy.eval()
-
-            # PRISM adapter
-            prism_path = _resolve_sidecar_artifact(
-                checkpoint_path,
-                cfg["logging"]["output_dir"],
-                "prism_adapter.pt",
-            )
-            prism = None
-            if prism_path is not None:
-                prism = PRISMAdapter(cfg, embed_dim).to(device)
-                prism.load_state_dict(torch.load(prism_path, map_location=device))
-                prism.eval()
+            if has_trained_policy:
+                policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
                 if is_global_rank_zero():
-                    print(f"  Loaded PRISM adapter from {prism_path}")
+                    print(f"\nLoading trained policy from {checkpoint_path}")
+                ckpt = torch.load(checkpoint_path, map_location=device)
+                load_state_dict_flexible(policy, ckpt["policy"], "policy")
+                if "soft_mask" in ckpt:
+                    load_state_dict_flexible(soft_mask, ckpt["soft_mask"], "soft_mask")
+                policy.eval()
 
-            tau_r = cfg["base_model"].get("routing_temperature", 0.01)
-            if is_global_rank_zero():
-                print(f"\n====== Speculative AOAE — Trained Policy (tau_r={tau_r}) ======")
-            for tau_pi in speculative_policy_temperatures:
+                prism_path = resolve_sidecar_artifact(
+                    checkpoint_path,
+                    cfg["logging"]["output_dir"],
+                    "prism_adapter.pt",
+                )
+                prism = None
+                if prism_path is not None:
+                    prism = PRISMAdapter(cfg, embed_dim).to(device)
+                    prism.load_state_dict(torch.load(prism_path, map_location=device))
+                    prism.eval()
+                    if is_global_rank_zero():
+                        print(f"  Loaded PRISM adapter from {prism_path}")
+
+                tau_r = cfg["base_model"].get("routing_temperature", 0.01)
                 if is_global_rank_zero():
-                    print(f"\n--- tau_pi = {tau_pi} ---")
+                    print(f"\n====== Speculative AOAE — Trained Policy (tau_r={tau_r}) ======")
+                for tau_pi in speculative_policy_temperatures:
+                    if is_global_rank_zero():
+                        print(f"\n--- tau_pi = {tau_pi} ---")
+                    r = evaluate_speculative(
+                        dual_model, policy, soft_mask, prism, eval_ds, tokenizer, cfg,
+                        policy_temperature=tau_pi,
+                        max_samples=max_samples,
+                        dynamics_sink=kv_dynamics_records,
+                        predictions_sink=saved_predictions,
+                        prediction_limit=prediction_limit,
+                    )
+                    all_results.append(r)
+                    if is_global_rank_zero():
+                        print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            else:
+                tau_r = cfg["base_model"].get("routing_temperature", 0.01)
+                if uses_aoae_policy:
+                    if is_global_rank_zero():
+                        print(f"\n====== Speculative AOAE — Default Policy (tau_r={tau_r}) ======")
+                        print("  (No trained checkpoint found; using a confidence-guided training-free heuristic policy)")
+                    policy = DefaultPolicy(
+                        tau_mask=0.7, num_steps=cfg["inference"]["steps"],
+                    ).to(device)
+                    policy.eval()
+                else:
+                    if is_global_rank_zero():
+                        print(f"\n====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r={tau_r}) ======")
+                        print("  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)")
+                    policy = None
+
                 r = evaluate_speculative(
-                    dual_model, policy, soft_mask, prism, eval_ds, tokenizer, cfg,
-                    policy_temperature=tau_pi,
+                    dual_model, policy, soft_mask, None, eval_ds, tokenizer, cfg,
+                    policy_temperature=1.0,
                     max_samples=max_samples,
                     dynamics_sink=kv_dynamics_records,
                     predictions_sink=saved_predictions,
@@ -1273,167 +1257,153 @@ def main(
                 all_results.append(r)
                 if is_global_rank_zero():
                     print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+
         else:
-            tau_r = cfg["base_model"].get("routing_temperature", 0.01)
-            if uses_aoae_policy:
-                if is_global_rank_zero():
-                    print(f"\n====== Speculative AOAE — Default Policy (tau_r={tau_r}) ======")
-                    print("  (No trained checkpoint found; using hard auxiliary as heuristic policy)")
-                policy = DefaultPolicy(
-                    tau_mask=0.7, num_steps=cfg["inference"]["steps"],
-                ).to(device)
-                policy.eval()
+            if preloaded_base_model is not None:
+                base_model = preloaded_base_model
+                tau_r = cfg.get("base_model", {}).get("routing_temperature")
+                if tau_r is not None:
+                    set_tau = getattr(base_model, "set_routing_temperature", None)
+                    if callable(set_tau):
+                        set_tau(float(tau_r))
+                soft_topk = cfg.get("base_model", {}).get("soft_topk")
+                if soft_topk is not None:
+                    set_topk = getattr(base_model, "set_soft_topk", None)
+                    if callable(set_topk):
+                        set_topk(int(soft_topk))
             else:
                 if is_global_rank_zero():
-                    print(f"\n====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r={tau_r}) ======")
-                    print("  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)")
-                policy = None
+                    print("Loading base model...")
+                base_model = LLaDABaseModel(cfg)
+                base_model = base_model.to(device)
+                owned_model = base_model
+            tokenizer = base_model.tokenizer
+            mask_id = cfg["base_model"]["mask_token_id"]
 
-            r = evaluate_speculative(
-                dual_model, policy, soft_mask, None, eval_ds, tokenizer, cfg,
-                policy_temperature=1.0,
-                max_samples=max_samples,
-                dynamics_sink=kv_dynamics_records,
-                predictions_sink=saved_predictions,
-                prediction_limit=prediction_limit,
-            )
-            all_results.append(r)
-            if is_global_rank_zero():
-                print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
+            if not skip_baselines:
+                _run_selected_baselines(
+                    base_model,
+                    eval_ds,
+                    tokenizer,
+                    cfg,
+                    max_samples,
+                    all_results,
+                    predictions_sink=saved_predictions,
+                    prediction_limit=prediction_limit,
+                )
 
-    else:
-        # ====== Standard Single-Model Evaluation ======
+            if checkpoint_path and os.path.exists(checkpoint_path):
+                if is_global_rank_zero():
+                    print(f"\nLoading AOAE policy from {checkpoint_path}")
+                embed_w = base_model.get_embedding_weight()
+                embed_dim = embed_w.shape[1]
+
+                soft_mask = SoftMaskedState(cfg, embed_w).to(device)
+                soft_mask.set_mask_embedding(mask_id)
+                policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
+
+                ckpt = torch.load(checkpoint_path, map_location=device)
+                load_state_dict_flexible(policy, ckpt["policy"], "policy")
+                if "soft_mask" in ckpt:
+                    load_state_dict_flexible(soft_mask, ckpt["soft_mask"], "soft_mask")
+                policy.eval()
+                soft_mask.eval()
+
+                prism_path = resolve_sidecar_artifact(
+                    checkpoint_path,
+                    cfg["logging"]["output_dir"],
+                    "prism_adapter.pt",
+                )
+                prism = None
+                if prism_path is not None:
+                    prism = PRISMAdapter(cfg, embed_dim).to(device)
+                    prism.load_state_dict(torch.load(prism_path, map_location=device))
+                    prism.eval()
+
+                if is_global_rank_zero():
+                    print("\n====== AOAE Pareto Sweep ======")
+                aoae_results = run_pareto_sweep(
+                    base_model,
+                    policy,
+                    soft_mask,
+                    prism,
+                    eval_ds,
+                    tokenizer,
+                    cfg,
+                    max_samples,
+                    predictions_sink=saved_predictions,
+                    prediction_limit=prediction_limit,
+                )
+                all_results.extend(aoae_results)
+            else:
+                if is_global_rank_zero():
+                    print("\nNo AOAE checkpoint provided — skipping AOAE evaluation.")
+
+        os.makedirs(cfg["logging"]["output_dir"], exist_ok=True)
+        results_path = os.path.join(cfg["logging"]["output_dir"], "eval_results.json")
         if is_global_rank_zero():
-            print("Loading base model...")
-        base_model = LLaDABaseModel(cfg)
-        base_model = base_model.to(device)
-        tokenizer = base_model.tokenizer
-        mask_id = cfg["base_model"]["mask_token_id"]
+            with open(results_path, "w") as f:
+                json.dump([asdict(r) for r in all_results], f, indent=2)
+            print(f"\nResults saved to {results_path}")
 
-        # --- Baselines ---
-        if not skip_baselines:
-            _run_selected_baselines(
-                base_model,
-                eval_ds,
-                tokenizer,
-                cfg,
-                max_samples,
-                all_results,
-                predictions_sink=saved_predictions,
-                prediction_limit=prediction_limit,
-            )
-
-        # --- AOAE ---
-        if checkpoint_path and os.path.exists(checkpoint_path):
-            if is_global_rank_zero():
-                print(f"\nLoading AOAE policy from {checkpoint_path}")
-            embed_w = base_model.get_embedding_weight()
-            embed_dim = embed_w.shape[1]
-
-            soft_mask = SoftMaskedState(cfg, embed_w).to(device)
-            soft_mask.set_mask_embedding(mask_id)
-            policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
-
-            ckpt = torch.load(checkpoint_path, map_location=device)
-            _load_state_dict_flexible(policy, ckpt["policy"], "policy")
-            if "soft_mask" in ckpt:
-                _load_state_dict_flexible(soft_mask, ckpt["soft_mask"], "soft_mask")
-            policy.eval()
-            soft_mask.eval()
-
-            # PRISM adapter
-            prism_path = _resolve_sidecar_artifact(
-                checkpoint_path,
+        predictions_path = None
+        if is_global_rank_zero() and prediction_limit > 0:
+            predictions_path = _save_prediction_artifact(
+                saved_predictions,
                 cfg["logging"]["output_dir"],
-                "prism_adapter.pt",
+                prediction_limit,
             )
-            prism = None
-            if prism_path is not None:
-                prism = PRISMAdapter(cfg, embed_dim).to(device)
-                prism.load_state_dict(torch.load(prism_path, map_location=device))
-                prism.eval()
+            print(f"Predictions saved to {predictions_path}")
 
-            if is_global_rank_zero():
-                print("\n====== AOAE Pareto Sweep ======")
-            aoae_results = run_pareto_sweep(
-                base_model,
-                policy,
-                soft_mask,
-                prism,
-                eval_ds,
-                tokenizer,
-                cfg,
-                max_samples,
-                predictions_sink=saved_predictions,
-                prediction_limit=prediction_limit,
-            )
-            all_results.extend(aoae_results)
-        else:
-            if is_global_rank_zero():
-                print("\nNo AOAE checkpoint provided — skipping AOAE evaluation.")
-
-    # --- Save results ---
-    os.makedirs(cfg["logging"]["output_dir"], exist_ok=True)
-    results_path = os.path.join(cfg["logging"]["output_dir"], "eval_results.json")
-    if is_global_rank_zero():
-        with open(results_path, "w") as f:
-            json.dump([asdict(r) for r in all_results], f, indent=2)
-        print(f"\nResults saved to {results_path}")
-
-    predictions_path = None
-    if is_global_rank_zero() and prediction_limit > 0:
-        predictions_path = _save_prediction_artifact(
-            saved_predictions,
-            cfg["logging"]["output_dir"],
-            prediction_limit,
+        metadata = _build_run_metadata(
+            cfg=cfg,
+            mode=mode,
+            config_path=config_path,
+            checkpoint_path=checkpoint_path,
+            max_samples=max_samples,
+            results_path=results_path,
+            num_results=len(all_results),
+            predictions_path=predictions_path,
+            saved_predictions=len(saved_predictions),
+            prediction_limit=prediction_limit,
         )
-        print(f"Predictions saved to {predictions_path}")
+        metadata_path = os.path.join(cfg["logging"]["output_dir"], "eval_metadata.json")
+        if is_global_rank_zero():
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+            print(f"Metadata saved to {metadata_path}")
 
-    metadata = _build_run_metadata(
-        cfg=cfg,
-        mode=mode,
-        config_path=config_path,
-        checkpoint_path=checkpoint_path,
-        max_samples=max_samples,
-        results_path=results_path,
-        num_results=len(all_results),
-        predictions_path=predictions_path,
-        saved_predictions=len(saved_predictions),
-        prediction_limit=prediction_limit,
-    )
-    metadata_path = os.path.join(cfg["logging"]["output_dir"], "eval_metadata.json")
-    if is_global_rank_zero():
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
-        print(f"Metadata saved to {metadata_path}")
+        if is_global_rank_zero():
+            manifest_path = _append_manifest(metadata, all_results)
+            print(f"Manifest updated at {manifest_path}")
 
-    if is_global_rank_zero():
-        manifest_path = _append_manifest(metadata, all_results)
-        print(f"Manifest updated at {manifest_path}")
+            _save_kv_dynamics_artifacts(kv_dynamics_records, cfg["logging"]["output_dir"])
+            _save_eval_plots(all_results, cfg["logging"]["output_dir"])
 
-        _save_kv_dynamics_artifacts(kv_dynamics_records, cfg["logging"]["output_dir"])
-        _save_eval_plots(all_results, cfg["logging"]["output_dir"])
-
-    # --- Print summary table ---
-    if is_global_rank_zero():
-        print("\n" + "=" * 196)
-        print(
-            f"{'Method':<25} {'Accuracy':>10} {'TPS':>10} {'NFE':>8} "
-            f"{'CacheHit':>10} {'Agree':>8} {'DraftAcc':>10} {'Reuse':>8} {'ReuseJS':>9} "
-            f"{'AccF1':>8} {'SpecF1':>8} {'Note':<40}"
-        )
-        print("-" * 196)
-        for r in all_results:
+        if is_global_rank_zero():
+            print("\n" + "=" * 196)
             print(
-                f"{r.method:<25} {r.accuracy:>10.4f} {r.avg_tokens_per_sec:>10.1f} "
-                f"{r.avg_nfe:>8.0f} {r.cache_hit_rate:>10.4f} "
-                f"{r.agreement_rate:>8.4f} {r.draft_accept_rate:>10.4f} "
-                f"{r.reuse_mean_safe:>8.4f} {r.reuse_mean_js:>9.4f} "
-                f"{r.access_next_h_f1:>8.4f} {r.access_next_h_spec_f1:>8.4f} {r.config_note:<40}"
+                f"{'Method':<25} {'Accuracy':>10} {'TPS':>10} {'NFE':>8} "
+                f"{'CacheKeep':>10} {'Agree':>8} {'DraftAcc':>10} {'Reuse':>8} {'ReuseJS':>9} "
+                f"{'AccF1':>8} {'SpecF1':>8} {'Note':<40}"
             )
-        print("=" * 196)
+            print("-" * 196)
+            for r in all_results:
+                print(
+                    f"{r.method:<25} {r.accuracy:>10.4f} {r.avg_tokens_per_sec:>10.1f} "
+                    f"{r.avg_nfe:>8.0f} {r.cache_hit_rate:>10.4f} "
+                    f"{r.agreement_rate:>8.4f} {r.draft_accept_rate:>10.4f} "
+                    f"{r.reuse_mean_safe:>8.4f} {r.reuse_mean_js:>9.4f} "
+                    f"{r.access_next_h_f1:>8.4f} {r.access_next_h_spec_f1:>8.4f} {r.config_note:<40}"
+                )
+            print("=" * 196)
 
-    return all_results
+        return all_results
+    finally:
+        if owned_model is not None:
+            close_fn = getattr(owned_model, "close", None)
+            if callable(close_fn):
+                close_fn()
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ Modules:
   - dual_model: DualModelWrapper for speculative diffusion (hard aux + soft primary).
   - policy: Lightweight steering policy with unmask/remask/cache heads (D+4 input).
   - soft_mask: Soft-masked state construction from model logits.
-  - soft_moe: SoftMoERouter for temperature-controlled soft routing.
+  - soft_moe: SoftMoERouter for hard-top-k-preserving widened routing.
   - composed_prediction: Dual-model composed prediction for cache-aligned tokens.
   - prism: PRISM quality adapter for self-correction signals.
 """

@@ -13,11 +13,32 @@ is replaced by a "remask" head that simply reverts positions to [M],
 preserving the any-order property of masked diffusion models.
 """
 
+import inspect
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, Optional
+
+
+def call_policy(
+    policy,
+    H_t: torch.Tensor,
+    mask_indicator: torch.BoolTensor,
+    step_frac: float,
+    **kwargs,
+):
+    """Call a policy while keeping backward compatibility with older call signatures."""
+    target = policy.module if hasattr(policy, "module") else policy
+    forward_fn = getattr(target, "forward", None)
+    candidate = forward_fn if callable(forward_fn) else getattr(target, "__call__", None)
+    try:
+        params = inspect.signature(candidate).parameters if candidate is not None else {}
+    except (TypeError, ValueError):
+        params = {}
+    if "confidence" not in params:
+        kwargs.pop("confidence", None)
+    return policy(H_t, mask_indicator, step_frac, **kwargs)
 
 
 class AOAEPolicy(nn.Module):
@@ -43,12 +64,13 @@ class AOAEPolicy(nn.Module):
         self.d_model = d
 
         self.use_positional_features = bool(pc.get("use_positional_features", False))
+        self.use_agreement_feature = bool(pc.get("use_agreement_feature", True))
         self.use_age_feature = bool(pc.get("use_age_feature", self.use_positional_features))
         self.use_last_action_feature = bool(pc.get("use_last_action_feature", self.use_positional_features))
         self.boundary_cfg = pc.get("boundary_head", {})
         self.boundary_enabled = bool(self.boundary_cfg.get("enabled", False))
         self.boundary_num_bins = max(2, int(self.boundary_cfg.get("num_bins", 8)))
-        extra_feats = 4 + int(self.use_age_feature) + int(self.use_last_action_feature)
+        extra_feats = 3 + int(self.use_agreement_feature) + int(self.use_age_feature) + int(self.use_last_action_feature)
         # --- Input projection: base + optional positional features ---
         self.input_proj = nn.Linear(input_dim + extra_feats, d)
 
@@ -91,6 +113,7 @@ class AOAEPolicy(nn.Module):
         mask_indicator: torch.BoolTensor,
         step_frac: float,
         temperature: float = 1.0,
+        confidence: Optional[torch.Tensor] = None,
         quality_scores: Optional[torch.Tensor] = None,
         agreement: Optional[torch.Tensor] = None,
         age_feature: Optional[torch.Tensor] = None,
@@ -104,6 +127,8 @@ class AOAEPolicy(nn.Module):
             mask_indicator: [B, L]     True where token is [M].
             step_frac:      scalar     t / T.
             temperature:    policy temperature tau_pi.
+            confidence:     [B, L]     optional per-position primary confidence.
+                            Reserved for heuristic fallback policies; ignored here.
             quality_scores: [B, L]     PRISM quality scores (0=bad, 1=good).
                             If None, defaults to zeros.
             agreement:      [B, L]     auxiliary-primary agreement (0/1 float).
@@ -124,6 +149,7 @@ class AOAEPolicy(nn.Module):
         """
         B, L, D = H_t.shape
         device = H_t.device
+        del confidence  # Kept for interface parity with heuristic fallback policies.
 
         # --- Build per-position input features ---
         m_feat = mask_indicator.float().unsqueeze(-1)              # [B, L, 1]
@@ -131,12 +157,14 @@ class AOAEPolicy(nn.Module):
             q_feat = quality_scores.unsqueeze(-1)                  # [B, L, 1]
         else:
             q_feat = torch.zeros(B, L, 1, device=device)          # [B, L, 1]
-        if agreement is not None:
-            a_feat = agreement.unsqueeze(-1)                       # [B, L, 1]
-        else:
-            a_feat = torch.zeros(B, L, 1, device=device)          # [B, L, 1]
         t_feat = torch.full((B, L, 1), step_frac, device=device)  # [B, L, 1]
-        feats = [H_t, m_feat, q_feat, a_feat, t_feat]
+        feats = [H_t, m_feat, q_feat, t_feat]
+        if self.use_agreement_feature:
+            if agreement is not None:
+                a_feat = agreement.unsqueeze(-1)                   # [B, L, 1]
+            else:
+                a_feat = torch.zeros(B, L, 1, device=device)      # [B, L, 1]
+            feats.append(a_feat)
         if self.use_age_feature:
             if age_feature is not None:
                 age_feat = age_feature.unsqueeze(-1)
@@ -274,14 +302,14 @@ class AOAEPolicy(nn.Module):
 class DefaultPolicy(nn.Module):
     """Heuristic policy for speculative eval without GRPO training.
 
-    Uses the auxiliary model's confidence as the basis for unmask/cache
-    decisions, mimicking AOAEPolicy's interface so it can be dropped
-    into the speculative inference loop.
+    Uses primary-model confidence and draft/primary agreement as a deterministic,
+    training-free fallback when no learned AOAE checkpoint is available.
 
     Behavior:
       - Unmask: masked positions where confidence > tau_mask
       - Remask: never (all zeros)
       - Cache:  positions where auxiliary and primary agree
+      - Access: same as cache when positional caching is enabled
 
     Args:
         tau_mask: confidence threshold for unmasking (default 0.7 = S-mode).
@@ -298,6 +326,7 @@ class DefaultPolicy(nn.Module):
         mask_indicator: torch.BoolTensor,
         step_frac: float,
         temperature: float = 1.0,
+        confidence: Optional[torch.Tensor] = None,
         quality_scores: Optional[torch.Tensor] = None,
         agreement: Optional[torch.Tensor] = None,
         age_feature: Optional[torch.Tensor] = None,
@@ -305,15 +334,19 @@ class DefaultPolicy(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         B, L, D = H_t.shape
         device = H_t.device
+        del step_frac, temperature, quality_scores, age_feature, last_action_feature, D
 
-        cache_probs = agreement if agreement is not None else torch.zeros(B, L, device=device)
+        if confidence is None:
+            confidence = torch.zeros(B, L, device=device)
+        else:
+            confidence = confidence.to(device=device, dtype=torch.float32).clamp(0.0, 1.0)
+        if agreement is None:
+            cache_probs = torch.zeros(B, L, device=device)
+        else:
+            cache_probs = agreement.to(device=device, dtype=torch.float32).clamp(0.0, 1.0)
         access_probs = cache_probs
 
-        # Uniform unmask schedule: unmask 1/t of remaining at step t.
-        # step_frac = t/T, so t = step_frac * T.
-        t_remaining = max(step_frac * self._num_steps, 1.0)
-        unmask_rate = 1.0 / t_remaining
-        unmask_probs = mask_indicator.float() * unmask_rate
+        unmask_probs = mask_indicator.float() * (confidence > self.tau_mask).float()
 
         # Never remask
         remask_probs = torch.zeros(B, L, device=device)
@@ -338,10 +371,10 @@ class DefaultPolicy(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         unmask_probs = policy_out["unmask_probs"]
         B = unmask_probs.shape[0]
-        u_t = (torch.rand_like(unmask_probs) < unmask_probs).float() * mask_indicator.float()
+        u_t = (unmask_probs > 0.5).float() * mask_indicator.float()
         r_t = torch.zeros_like(u_t)
-        kappa_t = torch.bernoulli(policy_out["cache_probs"].clamp(0.0, 1.0))
-        q_t = torch.bernoulli(policy_out["access_probs"].clamp(0.0, 1.0))
+        kappa_t = (policy_out["cache_probs"].clamp(0.0, 1.0) > 0.5).float()
+        q_t = (policy_out["access_probs"].clamp(0.0, 1.0) > 0.5).float()
         ell_t = torch.zeros(B, dtype=torch.long, device=u_t.device)
         return {"u_t": u_t, "r_t": r_t, "kappa_t": kappa_t, "q_t": q_t, "ell_t": ell_t}
 

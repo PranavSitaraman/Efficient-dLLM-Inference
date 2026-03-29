@@ -2,7 +2,7 @@
 AOAE preflight checks for environment + runtime capability + config sanity.
 
 Usage:
-  python -m aoae.preflight --config configs/llada21_mini_hard.yaml
+  python -m aoae.preflight --config configs/llada21_hard.yaml
 """
 
 from __future__ import annotations

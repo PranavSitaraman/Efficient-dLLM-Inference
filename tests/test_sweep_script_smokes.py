@@ -29,7 +29,7 @@ def _fake_result() -> EvalResult:
 
 
 def test_reuse_signal_sweep_smoke(monkeypatch, tmp_path):
-    import scripts.run_reuse_signal_sweep as mod
+    import aoae.paper as mod
 
     cfg = {
         "logging": {"run_name": "smoke", "output_dir": str(tmp_path / "run")},
@@ -43,20 +43,20 @@ def test_reuse_signal_sweep_smoke(monkeypatch, tmp_path):
         sys,
         "argv",
         [
-            "run_reuse_signal_sweep.py",
+            "reuse-sweep",
             "--config",
             str(cfg_path),
             "--output_root",
             str(tmp_path / "out"),
         ],
     )
-    mod.main()
+    mod.reuse_signal_sweep_main()
     assert (tmp_path / "out" / "reuse_signal_sweep_full.json").exists()
     assert (tmp_path / "out" / "best_method_by_constraint.json").exists()
 
 
 def test_ablation_matrix_smoke(monkeypatch, tmp_path):
-    import scripts.run_ablation_matrix as mod
+    import aoae.paper as mod
 
     cfg = {
         "logging": {"run_name": "smoke", "output_dir": str(tmp_path / "run")},
@@ -70,7 +70,7 @@ def test_ablation_matrix_smoke(monkeypatch, tmp_path):
         sys,
         "argv",
         [
-            "run_ablation_matrix.py",
+            "ablations",
             "--config",
             str(cfg_path),
             "--output_root",
@@ -79,7 +79,7 @@ def test_ablation_matrix_smoke(monkeypatch, tmp_path):
             str(_write_matrix(tmp_path)),
         ],
     )
-    mod.main()
+    mod.ablation_matrix_main()
     assert (tmp_path / "abl" / "ablation_matrix_results.json").exists()
 
 
@@ -87,4 +87,3 @@ def _write_matrix(tmp_path: Path) -> Path:
     p = tmp_path / "matrix.json"
     p.write_text('[{"name":"base","overrides":{}},{"name":"noremask","overrides":{"inference.disable_remask":true}}]')
     return p
-

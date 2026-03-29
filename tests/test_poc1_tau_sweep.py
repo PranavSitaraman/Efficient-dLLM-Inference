@@ -78,7 +78,7 @@ def _make_base_cfg(tmp_path: Path) -> Path:
 class TestTauSweep:
     def test_sweep_produces_all_outputs(self, monkeypatch, tmp_path):
         """Full sweep with 3 tau_r values produces JSON, CSV, and markdown."""
-        import scripts.run_tau_sweep as mod
+        import aoae.paper as mod
 
         captured_tau_values = []
 
@@ -92,12 +92,12 @@ class TestTauSweep:
         out_dir = tmp_path / "sweep_out"
 
         monkeypatch.setattr(sys, "argv", [
-            "run_tau_sweep.py",
+            "tau-sweep",
             "--config", str(cfg_path),
             "--tau_r_values", "0.01,0.1,0.5",
             "--output_root", str(out_dir),
         ])
-        mod.main()
+        mod.tau_sweep_main()
 
         assert captured_tau_values == [0.01, 0.1, 0.5]
         assert (out_dir / "tau_sweep_summary.json").exists()
@@ -112,7 +112,7 @@ class TestTauSweep:
 
     def test_sweep_includes_routing_entropy(self, monkeypatch, tmp_path):
         """Routing entropy fields are present in sweep output."""
-        import scripts.run_tau_sweep as mod
+        import aoae.paper as mod
 
         monkeypatch.setattr(mod, "eval_main",
                             lambda cfg, **kw: [_fake_speculative_result(cfg["base_model"]["routing_temperature"])])
@@ -120,12 +120,12 @@ class TestTauSweep:
         out_dir = tmp_path / "ent_out"
 
         monkeypatch.setattr(sys, "argv", [
-            "run_tau_sweep.py",
+            "tau-sweep",
             "--config", str(cfg_path),
             "--tau_r_values", "0.1",
             "--output_root", str(out_dir),
         ])
-        mod.main()
+        mod.tau_sweep_main()
 
         with (out_dir / "tau_sweep_summary.json").open() as f:
             rows = json.load(f)
@@ -134,8 +134,8 @@ class TestTauSweep:
         assert float(rows[0]["routing_entropy"]) > 0
 
     def test_remask_disabled_by_default(self, monkeypatch, tmp_path):
-        """Without --enable_remask, disable_remask should be True."""
-        import scripts.run_tau_sweep as mod
+        """Explicit AOAE sweeps should disable remasking unless requested."""
+        import aoae.paper as mod
 
         captured_cfgs = []
 
@@ -145,19 +145,22 @@ class TestTauSweep:
 
         monkeypatch.setattr(mod, "eval_main", mock_eval)
         cfg_path = _make_base_cfg(tmp_path)
+        cfg = yaml.safe_load(cfg_path.read_text())
+        cfg["inference"]["speculative_schedule"] = "aoae"
+        cfg_path.write_text(yaml.safe_dump(cfg))
 
         monkeypatch.setattr(sys, "argv", [
-            "run_tau_sweep.py",
+            "tau-sweep",
             "--config", str(cfg_path),
             "--tau_r_values", "0.1",
             "--output_root", str(tmp_path / "out"),
         ])
-        mod.main()
+        mod.tau_sweep_main()
         assert captured_cfgs[0]["inference"]["disable_remask"] is True
 
     def test_remask_enabled_flag(self, monkeypatch, tmp_path):
-        """With --enable_remask, disable_remask should be False."""
-        import scripts.run_tau_sweep as mod
+        """With --enable_remask, AOAE sweeps should keep remasking on."""
+        import aoae.paper as mod
 
         captured_cfgs = []
 
@@ -167,20 +170,23 @@ class TestTauSweep:
 
         monkeypatch.setattr(mod, "eval_main", mock_eval)
         cfg_path = _make_base_cfg(tmp_path)
+        cfg = yaml.safe_load(cfg_path.read_text())
+        cfg["inference"]["speculative_schedule"] = "aoae"
+        cfg_path.write_text(yaml.safe_dump(cfg))
 
         monkeypatch.setattr(sys, "argv", [
-            "run_tau_sweep.py",
+            "tau-sweep",
             "--config", str(cfg_path),
             "--tau_r_values", "0.1",
             "--output_root", str(tmp_path / "out"),
             "--enable_remask",
         ])
-        mod.main()
+        mod.tau_sweep_main()
         assert captured_cfgs[0]["inference"]["disable_remask"] is False
 
     def test_blockwise_schedule_respects_config_remask_default(self, monkeypatch, tmp_path):
         """The blockwise fidelity schedule should keep its config remask setting by default."""
-        import scripts.run_tau_sweep as mod
+        import aoae.paper as mod
 
         captured_cfgs = []
 
@@ -196,17 +202,68 @@ class TestTauSweep:
         cfg_path.write_text(yaml.safe_dump(cfg))
 
         monkeypatch.setattr(sys, "argv", [
-            "run_tau_sweep.py",
+            "tau-sweep",
             "--config", str(cfg_path),
             "--tau_r_values", "0.1",
             "--output_root", str(tmp_path / "out"),
         ])
-        mod.main()
+        mod.tau_sweep_main()
         assert captured_cfgs[0]["inference"]["disable_remask"] is False
+
+    def test_sweep_can_enable_prediction_saving(self, monkeypatch, tmp_path):
+        import aoae.paper as mod
+
+        captured_cfgs = []
+
+        def mock_eval(cfg, **kw):
+            captured_cfgs.append(cfg)
+            return [_fake_speculative_result(cfg["base_model"]["routing_temperature"])]
+
+        monkeypatch.setattr(mod, "eval_main", mock_eval)
+        cfg_path = _make_base_cfg(tmp_path)
+
+        monkeypatch.setattr(sys, "argv", [
+            "tau-sweep",
+            "--config", str(cfg_path),
+            "--tau_r_values", "0.1",
+            "--output_root", str(tmp_path / "out"),
+            "--save_predictions",
+            "--max_saved_predictions", "99",
+        ])
+        mod.tau_sweep_main()
+
+        ev_cfg = captured_cfgs[0]["evaluation"]
+        assert ev_cfg["save_predictions"] is True
+        assert ev_cfg["max_saved_predictions"] == 50
+
+    def test_missing_schedule_defaults_to_blockwise_without_checkpoint(self, monkeypatch, tmp_path):
+        """Training-free tau sweeps should default to the official blockwise schedule."""
+        import aoae.paper as mod
+
+        captured_cfgs = []
+
+        def mock_eval(cfg, **kw):
+            captured_cfgs.append(cfg)
+            return [_fake_speculative_result(cfg["base_model"]["routing_temperature"])]
+
+        monkeypatch.setattr(mod, "eval_main", mock_eval)
+        cfg_path = _make_base_cfg(tmp_path)
+
+        monkeypatch.setattr(sys, "argv", [
+            "tau-sweep",
+            "--config", str(cfg_path),
+            "--tau_r_values", "0.1",
+            "--output_root", str(tmp_path / "out"),
+        ])
+        mod.tau_sweep_main()
+
+        inf_cfg = captured_cfgs[0]["inference"]
+        assert inf_cfg["speculative_schedule"] == "llada21_block"
+        assert inf_cfg["llada21_official"]["use_block_diffusion"] is True
 
     def test_pareto_data_monotonicity(self, monkeypatch, tmp_path):
         """With our fake data, accuracy should decrease and TPS should decrease as tau_r grows."""
-        import scripts.run_tau_sweep as mod
+        import aoae.paper as mod
 
         monkeypatch.setattr(mod, "eval_main",
                             lambda cfg, **kw: [_fake_speculative_result(cfg["base_model"]["routing_temperature"])])
@@ -214,12 +271,12 @@ class TestTauSweep:
         out_dir = tmp_path / "mono_out"
 
         monkeypatch.setattr(sys, "argv", [
-            "run_tau_sweep.py",
+            "tau-sweep",
             "--config", str(cfg_path),
             "--tau_r_values", "0.01,0.1,0.5",
             "--output_root", str(out_dir),
         ])
-        mod.main()
+        mod.tau_sweep_main()
 
         with (out_dir / "tau_sweep_summary.json").open() as f:
             rows = json.load(f)
@@ -227,3 +284,39 @@ class TestTauSweep:
         tps_vals = [float(r["tps"]) for r in rows]
         assert accuracies == sorted(accuracies, reverse=True)
         assert tps_vals == sorted(tps_vals, reverse=True)
+
+    def test_failed_dual_preload_is_closed_before_fallback(self, monkeypatch, tmp_path):
+        import aoae.paper as mod
+
+        closed = {"count": 0}
+
+        class FailingDualModel:
+            def __init__(self, cfg):
+                del cfg
+
+            def to(self, device):
+                del device
+                raise RuntimeError("synthetic preload OOM")
+
+            def close(self):
+                closed["count"] += 1
+
+        monkeypatch.setattr(mod, "eval_main",
+                            lambda cfg, **kw: [_fake_speculative_result(cfg["base_model"]["routing_temperature"])])
+        monkeypatch.setattr(
+            __import__("aoae.models.dual_model", fromlist=["DualModelWrapper"]),
+            "DualModelWrapper",
+            FailingDualModel,
+        )
+        cfg_path = _make_base_cfg(tmp_path)
+        out_dir = tmp_path / "fallback_out"
+
+        monkeypatch.setattr(sys, "argv", [
+            "tau-sweep",
+            "--config", str(cfg_path),
+            "--tau_r_values", "0.01",
+            "--output_root", str(out_dir),
+        ])
+        mod.tau_sweep_main()
+
+        assert closed["count"] == 1

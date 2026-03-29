@@ -1,5 +1,12 @@
 __pycache__/
+*.pyc
 *.pt
+*.egg-info/
 external/
 logs/
+outputs/
 .pytest_cache/
+results/*.csv
+results/*.md
+results/*.jsonl
+*.swp

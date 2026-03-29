@@ -285,7 +285,10 @@ def ensure_vllm_moe_runtime(
 
     if "moe_align_block_size" in report["missing_required_ops"]:
         patched = False
-        if not getattr(vllm_ops, "_aoae_moe_align_external_fallback", False):
+        if getattr(vllm_ops, "_aoae_moe_align_external_fallback", False):
+            report["patched_fast_fallback_ops"].append("moe_align_block_size")
+            patched = True
+        elif not getattr(vllm_ops, "_aoae_moe_align_external_fallback", False):
             try:
                 # Prefer a Triton implementation over the Python fallback.
                 if _load_vllm_triton_moe_align() is None and _load_external_dinfer_fuse_moe() is None:
@@ -301,23 +304,28 @@ def ensure_vllm_moe_runtime(
                     )
             except Exception:
                 patched = False
-        if not patched and not getattr(vllm_ops, "_aoae_moe_align_fallback", False):
-            if not allow_python_fallback:
-                raise RuntimeError(
-                    "Compiled vLLM MoE custom ops are required for fast inference, and no Triton fallback "
-                    "was available for moe_align_block_size. Rebuild/install a compatible vLLM with _moe_C ops."
-                )
-            vllm_ops.moe_align_block_size = _fallback_moe_align_block_size
-            vllm_ops._aoae_moe_align_fallback = True
-            report["patched_fallback_ops"].append("moe_align_block_size")
-            if verbose:
-                print(
-                    "[Runtime] WARNING: torch.ops._moe_C.moe_align_block_size missing; "
-                    "using Python fallback."
-                )
+        if not patched:
+            if getattr(vllm_ops, "_aoae_moe_align_fallback", False):
+                report["patched_fallback_ops"].append("moe_align_block_size")
+            else:
+                if not allow_python_fallback:
+                    raise RuntimeError(
+                        "Compiled vLLM MoE custom ops are required for fast inference, and no Triton fallback "
+                        "was available for moe_align_block_size. Rebuild/install a compatible vLLM with _moe_C ops."
+                    )
+                vllm_ops.moe_align_block_size = _fallback_moe_align_block_size
+                vllm_ops._aoae_moe_align_fallback = True
+                report["patched_fallback_ops"].append("moe_align_block_size")
+                if verbose:
+                    print(
+                        "[Runtime] WARNING: torch.ops._moe_C.moe_align_block_size missing; "
+                        "using Python fallback."
+                    )
 
     if "moe_sum" in report["missing_required_ops"]:
-        if not getattr(vllm_ops, "_aoae_moe_sum_fallback", False):
+        if getattr(vllm_ops, "_aoae_moe_sum_fallback", False):
+            report["patched_fallback_ops"].append("moe_sum")
+        else:
             vllm_ops.moe_sum = _fallback_moe_sum
             vllm_ops._aoae_moe_sum_fallback = True
             report["patched_fallback_ops"].append("moe_sum")

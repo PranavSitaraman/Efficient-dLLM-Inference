@@ -45,8 +45,8 @@ def main(cfg: dict):
     dc = cfg["data"]
     lc = cfg["logging"]
 
-    # Support both direct torchrun invocation and run_train.py dispatch.
-    # run_train.py injects cfg["_dist"]; direct torchrun invocation does not.
+    # Support both direct torchrun invocation and aoae.cli train dispatch.
+    # The canonical CLI injects cfg["_dist"]; direct torchrun invocation does not.
     if cfg.get("_dist") is not None:
         rank = cfg["_dist"]["rank"]
         local_rank = cfg["_dist"]["local_rank"]

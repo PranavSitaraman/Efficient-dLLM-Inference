@@ -5,7 +5,7 @@
 # dense model with the HuggingFace backend (no vLLM/TP needed).
 # Matches paper §3.7: "LLaDA 2.1-Instruct (8B, frozen)".
 #
-# For the 100B MoE model, see configs/default_large.yaml.
+# For the 100B MoE model, see configs/llada21_flash.yaml.
 # ============================================================
 
 # ---- Base model (frozen) -----------------------------------

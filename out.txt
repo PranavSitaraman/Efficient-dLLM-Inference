@@ -1,0 +1,757 @@
+[pranavsitaraman@holygpu8a15104 Efficient-dLLM-Inference]$ module load python/3.12.5-fasrc01 cuda/11.8.0-fasrc01 cudnn/8.9.2.26_cuda11-fasrc01
+[pranavsitaraman@holygpu8a15104 Efficient-dLLM-Inference]$ conda activate rtx
+(rtx) [pranavsitaraman@holygpu8a15104 Efficient-dLLM-Inference]$ aoae routing-sweep --hard_config configs/llada21_hard.yaml --soft_config configs/llada21_soft.yaml --max_samples 10
+
+=== hard routing (tau_r = 0 / dinfer) ===
+/n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/torch/__init__.py:1617: UserWarning: Please use the new API settings to control TF32 behavior, such as torch.backends.cudnn.conv.fp32_precision = 'tf32' or torch.backends.cuda.matmul.fp32_precision = 'ieee'. Old settings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends.cudnn.allow_tf32 = True, allowTF32CuDNN() and allowTF32CuBLAS() will be deprecated after Pytorch 2.9. Please see https://pytorch.org/docs/main/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:80.)
+  _C._set_float32_matmul_precision(precision)
+Loading eval dataset: openai/gsm8k...
+Loading base model...
+[W329 09:34:18.722799776 socket.cpp:767] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+WARNING 03-29 09:34:18 [vllm.py:1135] Current vLLM config is not set.
+INFO 03-29 09:34:19 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+WARNING 03-29 09:34:19 [vllm.py:1135] Current vLLM config is not set.
+INFO 03-29 09:34:19 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+INFO 03-29 09:34:19 [parallel_state.py:1394] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+[Runtime] WARNING: torch.ops._moe_C.moe_align_block_size missing; using Python fallback.
+[Runtime] WARNING: torch.ops._moe_C.moe_sum missing; using Python fallback.
+[Model] Runtime patched fallback ops: ['moe_align_block_size', 'moe_sum']
+INFO 03-29 09:34:19 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 03-29 09:34:20 [layer.py:342] Enabled separate cuda stream for MoE shared_experts
+100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:21<00:00,  2.74s/it]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 14813/14813 [00:00<00:00, 1393491.79it/s]
+100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [01:29<00:00,  4.48s/it]
+unused_keys []
+not_inited_keys []
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 259/259 [00:00<00:00, 3094942.27it/s]
+
+====== Baseline: LLaDA2.1 Speed Mode (threshold=0.5, edit=0.0, block diffusion) ======
+INFO 03-29 09:36:23 [fused_moe.py:875] Using configuration from /n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=256,N=512,device_name=NVIDIA_H100_80GB_HBM3.json for MoE layer.
+Baseline (llada21_speed_mode): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:19<00:00,  1.92s/it]
+  Accuracy: 0.6000  TPS: 133.6
+
+====== Baseline: LLaDA2.1 Quality Mode (threshold=0.7, edit=0.5, block diffusion) ======
+Baseline (llada21_quality_mode): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:20<00:00,  2.06s/it]
+  Accuracy: 0.6000  TPS: 124.1
+
+No AOAE checkpoint provided — skipping AOAE evaluation.
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/hard/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/hard/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/hard/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+llada21_speed_mode            0.6000      133.6       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_speed_mode,remask=off           
+llada21_quality_mode          0.6000      124.1       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_quality_mode,remask=off         
+====================================================================================================================================================================================================
+Loading soft-routing base model ONCE for sweep reuse...
+[W329 09:37:06.332104892 socket.cpp:767] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+WARNING 03-29 09:37:06 [vllm.py:1135] Current vLLM config is not set.
+INFO 03-29 09:37:06 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+WARNING 03-29 09:37:06 [vllm.py:1135] Current vLLM config is not set.
+INFO 03-29 09:37:06 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Model] Runtime patched fallback ops: ['moe_align_block_size', 'moe_sum']
+INFO 03-29 09:37:06 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:00<00:00, 35.74it/s]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 14813/14813 [00:00<00:00, 1433851.63it/s]
+100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:06<00:00,  3.25it/s]
+unused_keys []
+not_inited_keys []
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 259/259 [00:00<00:00, 3009209.80it/s]
+[SoftMoE] Patched 19 MoE gates with tau_r=0.0001, soft_topk=16
+Loading eval dataset ONCE: openai/gsm8k...
+
+=== soft routing (tau_r = 0.0001) ===
+
+====== Baseline: LLaDA2.1 Speed Mode (threshold=0.5, edit=0.0, block diffusion) ======
+Baseline (llada21_speed_mode): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:20<00:00,  2.06s/it]
+  Accuracy: 0.4000  TPS: 124.5
+
+====== Baseline: LLaDA2.1 Quality Mode (threshold=0.7, edit=0.5, block diffusion) ======
+Baseline (llada21_quality_mode): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:22<00:00,  2.21s/it]
+  Accuracy: 0.6000  TPS: 116.0
+
+No AOAE checkpoint provided — skipping AOAE evaluation.
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0001/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0001/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0001/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+llada21_speed_mode            0.4000      124.5       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_speed_mode,remask=off           
+llada21_quality_mode          0.6000      116.0       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_quality_mode,remask=off         
+====================================================================================================================================================================================================
+
+=== soft routing (tau_r = 0.001) ===
+
+====== Baseline: LLaDA2.1 Speed Mode (threshold=0.5, edit=0.0, block diffusion) ======
+Baseline (llada21_speed_mode): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:19<00:00,  1.90s/it]
+  Accuracy: 0.4000  TPS: 134.8
+
+====== Baseline: LLaDA2.1 Quality Mode (threshold=0.7, edit=0.5, block diffusion) ======
+Baseline (llada21_quality_mode): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:22<00:00,  2.28s/it]
+  Accuracy: 0.4000  TPS: 112.1
+
+No AOAE checkpoint provided — skipping AOAE evaluation.
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0010/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0010/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0010/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+llada21_speed_mode            0.4000      134.8       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_speed_mode,remask=off           
+llada21_quality_mode          0.4000      112.1       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_quality_mode,remask=off         
+====================================================================================================================================================================================================
+
+=== soft routing (tau_r = 0.005) ===
+
+====== Baseline: LLaDA2.1 Speed Mode (threshold=0.5, edit=0.0, block diffusion) ======
+Baseline (llada21_speed_mode): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:19<00:00,  1.93s/it]
+  Accuracy: 0.6000  TPS: 132.8
+
+====== Baseline: LLaDA2.1 Quality Mode (threshold=0.7, edit=0.5, block diffusion) ======
+Baseline (llada21_quality_mode): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:26<00:00,  2.63s/it]
+  Accuracy: 0.5000  TPS: 97.3
+
+No AOAE checkpoint provided — skipping AOAE evaluation.
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0050/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0050/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0050/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+llada21_speed_mode            0.6000      132.8       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_speed_mode,remask=off           
+llada21_quality_mode          0.5000       97.3       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_quality_mode,remask=off         
+====================================================================================================================================================================================================
+
+=== soft routing (tau_r = 0.01) ===
+
+====== Baseline: LLaDA2.1 Speed Mode (threshold=0.5, edit=0.0, block diffusion) ======
+Baseline (llada21_speed_mode): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:21<00:00,  2.16s/it]
+  Accuracy: 0.5000  TPS: 118.4
+
+====== Baseline: LLaDA2.1 Quality Mode (threshold=0.7, edit=0.5, block diffusion) ======
+Baseline (llada21_quality_mode): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:21<00:00,  2.18s/it]
+  Accuracy: 0.6000  TPS: 117.5
+
+No AOAE checkpoint provided — skipping AOAE evaluation.
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0100/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0100/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0100/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+llada21_speed_mode            0.5000      118.4       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_speed_mode,remask=off           
+llada21_quality_mode          0.6000      117.5       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_quality_mode,remask=off         
+====================================================================================================================================================================================================
+
+=== soft routing (tau_r = 0.02) ===
+
+====== Baseline: LLaDA2.1 Speed Mode (threshold=0.5, edit=0.0, block diffusion) ======
+Baseline (llada21_speed_mode): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:17<00:00,  1.76s/it]
+  Accuracy: 0.5000  TPS: 145.3
+
+====== Baseline: LLaDA2.1 Quality Mode (threshold=0.7, edit=0.5, block diffusion) ======
+Baseline (llada21_quality_mode): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:22<00:00,  2.27s/it]
+  Accuracy: 0.6000  TPS: 113.0
+
+No AOAE checkpoint provided — skipping AOAE evaluation.
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0200/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0200/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0200/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+llada21_speed_mode            0.5000      145.3       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_speed_mode,remask=off           
+llada21_quality_mode          0.6000      113.0       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_quality_mode,remask=off         
+====================================================================================================================================================================================================
+
+=== soft routing (tau_r = 0.05) ===
+
+====== Baseline: LLaDA2.1 Speed Mode (threshold=0.5, edit=0.0, block diffusion) ======
+Baseline (llada21_speed_mode): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:17<00:00,  1.75s/it]
+  Accuracy: 0.7000  TPS: 146.0
+
+====== Baseline: LLaDA2.1 Quality Mode (threshold=0.7, edit=0.5, block diffusion) ======
+Baseline (llada21_quality_mode): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:22<00:00,  2.24s/it]
+  Accuracy: 0.5000  TPS: 114.2
+
+No AOAE checkpoint provided — skipping AOAE evaluation.
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0500/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0500/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/tau_0p0500/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+llada21_speed_mode            0.7000      146.0       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_speed_mode,remask=off           
+llada21_quality_mode          0.5000      114.2       64     0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 llada21_quality_mode,remask=off         
+====================================================================================================================================================================================================
+
+Routing sweep full table written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/routing_sweep_full.json
+Routing sweep full table written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/routing_sweep_full.csv
+Routing sweep full table written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/routing_sweep_full.md
+Routing sweep summary written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/routing_sweep_summary.json
+Routing sweep summary written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/routing_sweep_summary.csv
+Routing sweep summary written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/routing_sweep_summary.md
+Routing-condition plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/routing_sweep_vs_condition.png
+Pareto plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/routing_sweep_pareto.png
+(rtx) [pranavsitaraman@holygpu8a15104 Efficient-dLLM-Inference]$ aoae tau-sweep --config configs/poc1.yaml --max_samples 10
+No checkpoint found; defaulting to the training-free blockwise LLaDA2.1 schedule.
+Loading dual model ONCE for sweep reuse...
+[W329 09:49:46.304094852 socket.cpp:767] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+WARNING 03-29 09:49:46 [vllm.py:1135] Current vLLM config is not set.
+INFO 03-29 09:49:46 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+WARNING 03-29 09:49:46 [vllm.py:1135] Current vLLM config is not set.
+INFO 03-29 09:49:46 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+INFO 03-29 09:49:46 [parallel_state.py:1394] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+[Runtime] WARNING: torch.ops._moe_C.moe_align_block_size missing; using Python fallback.
+[Runtime] WARNING: torch.ops._moe_C.moe_sum missing; using Python fallback.
+[Model] Runtime patched fallback ops: ['moe_align_block_size', 'moe_sum']
+INFO 03-29 09:49:46 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 03-29 09:49:48 [layer.py:342] Enabled separate cuda stream for MoE shared_experts
+100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:00<00:00, 42.26it/s]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 14813/14813 [00:00<00:00, 1334125.51it/s]
+100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:06<00:00,  3.24it/s]
+unused_keys []
+not_inited_keys []
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 259/259 [00:00<00:00, 3068713.94it/s]
+[SoftMoE] Patched 19 MoE gates with tau_r=0.0001, soft_topk=16
+Loading eval dataset: openai/gsm8k...
+
+=== tau_r = 0.0001 ===
+/n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/torch/__init__.py:1617: UserWarning: Please use the new API settings to control TF32 behavior, such as torch.backends.cudnn.conv.fp32_precision = 'tf32' or torch.backends.cuda.matmul.fp32_precision = 'ieee'. Old settings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends.cudnn.allow_tf32 = True, allowTF32CuDNN() and allowTF32CuBLAS() will be deprecated after Pytorch 2.9. Please see https://pytorch.org/docs/main/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:80.)
+  _C._set_float32_matmul_precision(precision)
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.0001) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+INFO 03-29 09:50:02 [fused_moe.py:875] Using configuration from /n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=256,N=512,device_name=NVIDIA_H100_80GB_HBM3.json for MoE layer.
+Speculative (tau_r=0.0001): 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [01:02<00:00,  6.27s/it]
+  Accuracy: 0.3000  TPS: 40.9
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0001/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0001/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0001/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.3000       40.9      168     1.0000   0.7258     0.9254   0.8266    0.0000   0.0000   0.0000 tau_r=0.0001,tau_pi=1.0,reuse=argmax_match,pc=off,sched=llada21_block,remask=off
+====================================================================================================================================================================================================
+
+=== tau_r = 0.001 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.001) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.001): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [01:11<00:00,  7.18s/it]
+  Accuracy: 0.6000  TPS: 35.6
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0010/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0010/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0010/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.6000       35.6      200     1.0000   0.7430     0.9090   0.8259    0.0000   0.0000   0.0000 tau_r=0.001,tau_pi=1.0,reuse=argmax_match,pc=off,sched=llada21_block,remask=off
+====================================================================================================================================================================================================
+
+=== tau_r = 0.005 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.005) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.005): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:59<00:00,  5.94s/it]
+  Accuracy: 0.5000  TPS: 43.1
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0050/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0050/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0050/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.5000       43.1      166     1.0000   0.7427     0.9309   0.8400    0.0000   0.0000   0.0000 tau_r=0.005,tau_pi=1.0,reuse=argmax_match,pc=off,sched=llada21_block,remask=off
+====================================================================================================================================================================================================
+
+=== tau_r = 0.01 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.01) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.01): 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:58<00:00,  5.90s/it]
+  Accuracy: 0.4000  TPS: 43.4
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0100/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0100/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0100/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.4000       43.4      165     1.0000   0.7318     0.9230   0.8347    0.0000   0.0000   0.0000 tau_r=0.01,tau_pi=1.0,reuse=argmax_match,pc=off,sched=llada21_block,remask=off
+====================================================================================================================================================================================================
+
+=== tau_r = 0.02 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.02) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.02): 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [01:07<00:00,  6.75s/it]
+  Accuracy: 0.3000  TPS: 38.0
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0200/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0200/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0200/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.3000       38.0      188     1.0000   0.7084     0.9172   0.8052    0.0000   0.0000   0.0000 tau_r=0.02,tau_pi=1.0,reuse=argmax_match,pc=off,sched=llada21_block,remask=off
+====================================================================================================================================================================================================
+
+=== tau_r = 0.05 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.05) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.05): 100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [01:04<00:00,  6.40s/it]
+  Accuracy: 0.4000  TPS: 40.0
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0500/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0500/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_0p0500/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.4000       40.0      178     1.0000   0.7303     0.9230   0.8246    0.0000   0.0000   0.0000 tau_r=0.05,tau_pi=1.0,reuse=argmax_match,pc=off,sched=llada21_block,remask=off
+====================================================================================================================================================================================================
+
+Sweep summary written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_sweep_summary.json
+Sweep summary written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_sweep_summary.csv
+Sweep summary written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_sweep_summary.md
+Sweep plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_sweep_vs_tau.png
+Pareto plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc1_tau_sweep/tau_sweep_pareto.png
+(rtx) [pranavsitaraman@holygpu8a15104 Efficient-dLLM-Inference]$ aoae reuse-sweep --config configs/poc2.yaml --max_samples 10
+No checkpoint found; defaulting to the training-free blockwise LLaDA2.1 schedule.
+Loading dual model ONCE for sweep reuse...
+[W329 09:57:56.731078198 socket.cpp:767] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+WARNING 03-29 09:57:56 [vllm.py:1135] Current vLLM config is not set.
+INFO 03-29 09:57:57 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+WARNING 03-29 09:57:57 [vllm.py:1135] Current vLLM config is not set.
+INFO 03-29 09:57:57 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+INFO 03-29 09:57:57 [parallel_state.py:1394] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+[Runtime] WARNING: torch.ops._moe_C.moe_align_block_size missing; using Python fallback.
+[Runtime] WARNING: torch.ops._moe_C.moe_sum missing; using Python fallback.
+[Model] Runtime patched fallback ops: ['moe_align_block_size', 'moe_sum']
+INFO 03-29 09:57:57 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 03-29 09:57:58 [layer.py:342] Enabled separate cuda stream for MoE shared_experts
+100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:00<00:00, 41.03it/s]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 14813/14813 [00:00<00:00, 1401633.88it/s]
+100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:06<00:00,  3.17it/s]
+unused_keys []
+not_inited_keys []
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 259/259 [00:00<00:00, 3051473.98it/s]
+[SoftMoE] Patched 19 MoE gates with tau_r=0.1, soft_topk=16
+Loading eval dataset: openai/gsm8k...
+
+=== reuse=no_reuse threshold=-1.0 ===
+/n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/torch/__init__.py:1617: UserWarning: Please use the new API settings to control TF32 behavior, such as torch.backends.cudnn.conv.fp32_precision = 'tf32' or torch.backends.cuda.matmul.fp32_precision = 'ieee'. Old settings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends.cudnn.allow_tf32 = True, allowTF32CuDNN() and allowTF32CuBLAS() will be deprecated after Pytorch 2.9. Please see https://pytorch.org/docs/main/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:80.)
+  _C._set_float32_matmul_precision(precision)
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+INFO 03-29 09:58:13 [fused_moe.py:875] Using configuration from /n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=256,N=512,device_name=NVIDIA_H100_80GB_HBM3.json for MoE layer.
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:47<00:00,  4.77s/it]
+  Accuracy: 0.4000  TPS: 53.7
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/no_reuse_thr_-1p0000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/no_reuse_thr_-1p0000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/no_reuse_thr_-1p0000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.4000       53.7      126    -1.0000   0.8553     0.9875   0.0000    0.0039   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=js_divergence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=oracle_reuse threshold=999.0 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [01:07<00:00,  6.72s/it]
+  Accuracy: 0.5000  TPS: 38.1
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/oracle_reuse_thr_999p0000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/oracle_reuse_thr_999p0000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/oracle_reuse_thr_999p0000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.5000       38.1      183     1.0000   0.7166     0.9027   1.0000    0.0392   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=js_divergence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=argmax_match threshold=0.0 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:57<00:00,  5.78s/it]
+  Accuracy: 0.4000  TPS: 44.3
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/argmax_match_thr_0p0000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/argmax_match_thr_0p0000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/argmax_match_thr_0p0000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.4000       44.3      160     0.9925   0.7408     0.9375   0.8540    0.0000   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=argmax_match,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=topk_overlap threshold=0.0 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [01:07<00:00,  6.78s/it]
+  Accuracy: 0.6000  TPS: 37.8
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/topk_overlap_thr_0p0000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/topk_overlap_thr_0p0000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/topk_overlap_thr_0p0000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.6000       37.8      185     1.0000   0.7229     0.9051   0.9960    0.0374   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=topk_overlap,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=min_confidence threshold=0.3 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:53<00:00,  5.36s/it]
+  Accuracy: 0.6000  TPS: 47.8
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p3000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p3000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p3000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.6000       47.8      147     0.9878   0.7460     0.9469   0.5897    0.0444   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=min_confidence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=min_confidence threshold=0.5 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:48<00:00,  4.87s/it]
+  Accuracy: 0.6000  TPS: 52.6
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p5000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p5000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p5000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.6000       52.6      134     0.9772   0.8060     0.9539   0.4720    0.0322   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=min_confidence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=min_confidence threshold=0.7 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:48<00:00,  4.84s/it]
+  Accuracy: 0.5000  TPS: 52.9
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p7000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p7000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p7000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.5000       52.9      132     0.9735   0.8089     0.9652   0.3814    0.0271   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=min_confidence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=min_confidence threshold=0.9 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:45<00:00,  4.59s/it]
+  Accuracy: 0.4000  TPS: 55.8
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p9000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p9000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_confidence_thr_0p9000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.4000       55.8      125     0.9139   0.8554     0.9801   0.2465    0.0111   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=min_confidence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=min_margin threshold=0.0 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:58<00:00,  5.85s/it]
+  Accuracy: 0.4000  TPS: 43.8
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p0000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p0000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p0000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.4000       43.8      160     0.9925   0.7408     0.9375   0.8540    0.0433   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=min_margin,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=min_margin threshold=0.1 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:56<00:00,  5.68s/it]
+  Accuracy: 0.5000  TPS: 45.1
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p1000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p1000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p1000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.5000       45.1      156     0.9891   0.7527     0.9402   0.7996    0.0404   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=min_margin,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=min_margin threshold=0.2 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:56<00:00,  5.68s/it]
+  Accuracy: 0.5000  TPS: 45.1
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p2000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p2000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p2000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.5000       45.1      156     0.9906   0.7354     0.9270   0.7649    0.0443   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=min_margin,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=min_margin threshold=0.4 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [01:00<00:00,  6.06s/it]
+  Accuracy: 0.4000  TPS: 42.3
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p4000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p4000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/min_margin_thr_0p4000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.4000       42.3      166     0.9874   0.7631     0.9398   0.6408    0.0394   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=min_margin,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=js_divergence threshold=0.01 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:58<00:00,  5.89s/it]
+  Accuracy: 0.3000  TPS: 43.5
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p0100/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p0100/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p0100/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.3000       43.5      161     0.9808   0.8133     0.9680   0.7011    0.0173   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=js_divergence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=js_divergence threshold=0.03 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:58<00:00,  5.85s/it]
+  Accuracy: 0.5000  TPS: 43.8
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p0300/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p0300/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p0300/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.5000       43.8      160     0.9710   0.7817     0.9492   0.8287    0.0246   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=js_divergence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=js_divergence threshold=0.05 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:51<00:00,  5.19s/it]
+  Accuracy: 0.5000  TPS: 49.3
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p0500/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p0500/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p0500/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.5000       49.3      142     0.9865   0.7913     0.9516   0.8857    0.0295   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=js_divergence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=js_divergence threshold=0.1 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:54<00:00,  5.49s/it]
+  Accuracy: 0.4000  TPS: 46.6
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p1000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p1000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/js_divergence_thr_0p1000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.4000       46.6      150     0.9859   0.7636     0.9418   0.9208    0.0373   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=js_divergence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=temporal_confidence threshold=0.3 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:48<00:00,  4.81s/it]
+  Accuracy: 0.5000  TPS: 53.2
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/temporal_confidence_thr_0p3000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/temporal_confidence_thr_0p3000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/temporal_confidence_thr_0p3000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.5000       53.2      131     0.9397   0.8210     0.9797   0.4657    0.0267   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=temporal_confidence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=temporal_confidence threshold=0.5 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:55<00:00,  5.58s/it]
+  Accuracy: 0.2000  TPS: 45.9
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/temporal_confidence_thr_0p5000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/temporal_confidence_thr_0p5000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/temporal_confidence_thr_0p5000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.2000       45.9      152     0.9084   0.8287     0.9719   0.3773    0.0186   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=temporal_confidence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+=== reuse=temporal_confidence threshold=0.7 ===
+
+====== Speculative PoC1 — Blockwise LLaDA2.1 Schedule (tau_r=0.1) ======
+  (Using hard auxiliary for agreement/reuse only; token updates follow the soft primary block schedule)
+Speculative (tau_r=0.1): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 10/10 [00:38<00:00,  3.85s/it]
+  Accuracy: 0.6000  TPS: 66.6
+
+Results saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/temporal_confidence_thr_0p7000/eval_results.json
+Metadata saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/temporal_confidence_thr_0p7000/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/temporal_confidence_thr_0p7000/eval_tps_vs_accuracy.png
+
+====================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheKeep    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+Speculative-AOAE              0.6000       66.6      105     0.8723   0.8527     0.9906   0.3945    0.0114   0.0000   0.0000 tau_r=0.1,tau_pi=1.0,reuse=temporal_confidence,pc=off,sched=llada21_block,remask=on
+====================================================================================================================================================================================================
+
+Reuse-signal full table written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/reuse_signal_sweep_full.json
+Reuse-signal full table written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/reuse_signal_sweep_full.csv
+Reuse-signal full table written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/reuse_signal_sweep_full.md
+Decision table written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/best_method_by_constraint.json
+Decision table written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/best_method_by_constraint.csv
+Decision table written to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/best_method_by_constraint.md
+Pareto plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/reuse_signal_pareto.png
+Cache vs accuracy plot saved to /n/holylabs/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/sweeps/poc2_reuse_signal_sweep/reuse_signal_cache_vs_acc.png

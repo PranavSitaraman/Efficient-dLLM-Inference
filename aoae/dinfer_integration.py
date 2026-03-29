@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 from .cache import DKVCacheManager
 from .models.composed_prediction import compose_prediction
+from .models.policy import call_policy
 from .agreement_signals import compute_reuse_signal
 from .kv_dynamics import SpeculativeDynamicsTracker
 from .positional_cache import (
@@ -31,6 +32,14 @@ from .positional_cache import (
 )
 
 
+def _max_prob_and_argmax(logits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Return max softmax probability and argmax token without full probs."""
+    logits_f = logits.float()
+    max_logits, max_tok = logits_f.max(dim=-1)
+    max_prob = torch.exp(max_logits - torch.logsumexp(logits_f, dim=-1))
+    return max_prob.type_as(logits), max_tok
+
+
 @dataclass
 class CacheStats:
     """Statistics for a single inference run."""
@@ -38,6 +47,9 @@ class CacheStats:
     total_invalidations: int = 0
     total_remasks: int = 0
     total_unmasks: int = 0
+    # Historical name kept for backwards compatibility with saved result schemas.
+    # Semantically this is closer to cache retention / net-keep rate than a true
+    # runtime cache-hit rate.
     cache_hit_rate: float = 0.0
     steps_used: int = 0
 
@@ -95,6 +107,8 @@ class PolicyGuidedCacheManager:
         """Return accumulated statistics."""
         total_ops = self.stats.total_commits + self.stats.total_invalidations
         if total_ops > 0:
+            # This measures how much cached state survives invalidation, not a
+            # literal "lookup hit rate" at runtime.
             self.stats.cache_hit_rate = (
                 self.stats.total_commits - self.stats.total_invalidations
             ) / max(total_ops, 1)
@@ -171,6 +185,8 @@ class SpeculativeCacheManager:
         """Return stats dict with speculative caching metrics."""
         base = self.stats
         total_ops = base.total_commits + base.total_invalidations
+        # This measures net cache retention after invalidations; it is not a
+        # literal runtime lookup-hit metric.
         cache_hit_rate = (
             (base.total_commits - base.total_invalidations) / max(total_ops, 1)
         )
@@ -335,7 +351,9 @@ def run_blockwise_speculative_inference(
             )
             safe_reuse = safe_reuse.bool()
 
-            metric_mask = active_mask.bool()
+            # Agreement / reuse metrics are only meaningful on positions that
+            # are still drafted from masked state in this blockwise scheduler.
+            metric_mask = mask_ind.bool()
             if metric_mask.any():
                 _raw_agreement_sum += float(raw_agreement[metric_mask].float().sum().item())
                 _raw_agreement_count += int(metric_mask.sum().item())
@@ -345,8 +363,7 @@ def run_blockwise_speculative_inference(
                 reuse_diag_sum[key] = reuse_diag_sum.get(key, 0.0) + float(value)
             reuse_diag_steps += 1
 
-            pri_probs = F.softmax(pri_logits, dim=-1)
-            pri_max_prob, pri_max_tok = pri_probs.max(dim=-1)
+            pri_max_prob, pri_max_tok = _max_prob_and_argmax(pri_logits)
 
             prev_tokens = blk_tokens.clone()
             next_tokens = prev_tokens.clone()
@@ -398,6 +415,61 @@ def run_blockwise_speculative_inference(
             y[:, blk_slice] = next_tokens
             next_mask_ind = next_tokens == mask_id
             verifier_active = next_mask_ind | edit_positions | ((~next_mask_ind) & ~safe_reuse)
+
+        remaining_mask = y[:, blk_slice] == mask_id
+        if remaining_mask.any():
+            prefix_ids = y[:, :blk_end]
+            prefix_blk_slice = slice(blk_start, blk_end)
+            if can_skip_primary:
+                aux_logits = dual_model.auxiliary_forward_resp(prefix_ids, prefix_blk_slice)
+                pri_prefix_logits, primary_cache = dual_model.primary_forward_with_cache(prefix_ids)
+                pri_logits = pri_prefix_logits[:, prefix_blk_slice, :]
+                _primary_steps += 1
+                _primary_full_steps += 1
+                _primary_verified_positions += B * blk_width
+                _primary_full_equiv_positions += B * blk_width
+            else:
+                dual_out = dual_model.dual_forward_resp(prefix_ids, prefix_blk_slice)
+                pri_logits = dual_out.primary_logits
+                aux_logits = dual_out.auxiliary_logits
+                primary_cache = None
+                _primary_steps += 1
+                _primary_full_steps += 1
+                _primary_verified_positions += B * blk_width
+                _primary_full_equiv_positions += B * blk_width
+
+            raw_agreement = aux_logits.argmax(dim=-1) == pri_logits.argmax(dim=-1)
+            safe_reuse, reuse_state, reuse_diag = compute_reuse_signal(
+                pri_logits, aux_logits, cfg, state=reuse_state,
+            )
+            safe_reuse = safe_reuse.bool()
+            if remaining_mask.any():
+                _raw_agreement_sum += float(raw_agreement[remaining_mask].float().sum().item())
+                _raw_agreement_count += int(remaining_mask.sum().item())
+                _safe_reuse_sum += float(safe_reuse[remaining_mask].float().sum().item())
+                _safe_reuse_count += int(remaining_mask.sum().item())
+            for key, value in reuse_diag.items():
+                reuse_diag_sum[key] = reuse_diag_sum.get(key, 0.0) + float(value)
+            reuse_diag_steps += 1
+
+            _, pri_max_tok = _max_prob_and_argmax(pri_logits)
+            completed = y[:, blk_slice].clone()
+            completed[remaining_mask] = pri_max_tok[remaining_mask]
+            y[:, blk_slice] = completed
+
+            drafted_agreement = raw_agreement[remaining_mask]
+            _draft_accepts += int(drafted_agreement.sum().item())
+            _draft_rejects += int(remaining_mask.sum().item() - drafted_agreement.sum().item())
+
+            cache_commit_positions = remaining_mask & safe_reuse
+            u_full = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
+            r_full = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
+            kappa_full = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
+            safe_reuse_full = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
+            u_full[:, rel_slice] = remaining_mask.float()
+            kappa_full[:, rel_slice] = cache_commit_positions.float()
+            safe_reuse_full[:, rel_slice] = safe_reuse.float()
+            cache_mgr.step(r_full, kappa_full, u_full, safe_reuse_full)
 
     stats = cache_mgr.get_stats()
     stats["mean_agreement"] = _raw_agreement_sum / max(_raw_agreement_count, 1)
@@ -560,11 +632,13 @@ def run_speculative_inference(
                     q_scores = prism_adapter(pri_hidden.float())
 
         if _skip_soft_mask:
-            confidence = None
+            confidence, _ = _max_prob_and_argmax(resp_logits)
             H_t_dummy = resp_logits[:, :, :1].expand(-1, -1, 1)
-            policy_out = policy(
+            policy_out = call_policy(
+                policy,
                 H_t_dummy, mask_ind, step_frac,
                 temperature=policy_temperature,
+                confidence=confidence,
                 quality_scores=q_scores,
                 agreement=safe_reuse.float(),
             )
@@ -574,9 +648,11 @@ def run_speculative_inference(
             last_action_feat = None
             if use_positional_cache:
                 age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
-            policy_out = policy(
+            policy_out = call_policy(
+                policy,
                 H_t, mask_ind, step_frac,
                 temperature=policy_temperature,
+                confidence=confidence,
                 quality_scores=q_scores,
                 agreement=safe_reuse.float(),
                 age_feature=age_feat,
@@ -641,7 +717,7 @@ def run_speculative_inference(
             no_unmasks = (u_t.sum(dim=-1) == 0) & still_masked.any(dim=-1)
             if no_unmasks.any():
                 if confidence is None:
-                    confidence = resp_logits.max(dim=-1).values
+                    confidence, _ = _max_prob_and_argmax(resp_logits)
                 fallback_conf = confidence.clone()
                 fallback_conf[~still_masked] = -1.0
                 best_pos = fallback_conf.argmax(dim=-1)
@@ -663,7 +739,7 @@ def run_speculative_inference(
                 else:
                     layer_hiddens = []
             if layer_hiddens:
-                max_prob = F.softmax(resp_logits, dim=-1).max(dim=-1).values
+                max_prob, _ = _max_prob_and_argmax(resp_logits)
                 dynamics_tracker.observe_step(
                     layer_hiddens=layer_hiddens,
                     max_prob=max_prob,
@@ -820,9 +896,11 @@ def run_policy_guided_inference(
             age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
 
         # Policy forward
-        policy_out = policy(
+        policy_out = call_policy(
+            policy,
             H_t, mask_ind, step_frac,
             temperature=policy_temperature,
+            confidence=confidence,
             quality_scores=q_scores,
             age_feature=age_feat,
             last_action_feature=last_action_feat,

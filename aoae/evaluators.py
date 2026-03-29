@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from .code_eval import evaluate_code_sample
-from .train_grpo import check_math_correctness
+from .tasks import check_math_correctness
 
 
 @dataclass

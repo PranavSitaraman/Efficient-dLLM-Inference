@@ -27,6 +27,9 @@ full = [
     "vllm",
 ]
 
+[project.scripts]
+aoae = "aoae.cli:main"
+
 [tool.setuptools.packages.find]
 include = ["aoae*"]
 

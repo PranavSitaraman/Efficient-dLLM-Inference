@@ -241,7 +241,7 @@ def _fake_reuse_result(method="argmax_match", threshold=0.0):
 
 class TestReuseSweepIntegration:
     def test_sweep_produces_outputs_and_baselines(self, monkeypatch, tmp_path):
-        import scripts.run_reuse_signal_sweep as mod
+        import aoae.paper as mod
 
         def mock_eval(cfg, **kwargs):
             return [_fake_reuse_result()]
@@ -256,11 +256,11 @@ class TestReuseSweepIntegration:
         cfg_path.write_text(yaml.safe_dump(cfg))
 
         monkeypatch.setattr(sys, "argv", [
-            "run_reuse_signal_sweep.py",
+            "reuse-sweep",
             "--config", str(cfg_path),
             "--output_root", str(tmp_path / "out"),
         ])
-        mod.main()
+        mod.reuse_signal_sweep_main()
 
         assert (tmp_path / "out" / "reuse_signal_sweep_full.json").exists()
         assert (tmp_path / "out" / "best_method_by_constraint.json").exists()
@@ -273,8 +273,37 @@ class TestReuseSweepIntegration:
         assert "argmax_match" in methods
         assert "js_divergence" in methods
 
+    def test_missing_schedule_defaults_to_blockwise_without_checkpoint(self, monkeypatch, tmp_path):
+        import aoae.paper as mod
+
+        captured_cfgs = []
+
+        def mock_eval(cfg, **kwargs):
+            captured_cfgs.append(cfg)
+            return [_fake_reuse_result()]
+
+        monkeypatch.setattr(mod, "eval_main", mock_eval)
+
+        cfg = {
+            "logging": {"run_name": "poc2_sched", "output_dir": str(tmp_path / "run")},
+            "inference": {"reuse_signal": {"grid": {"argmax_match": [0.0]}}},
+        }
+        cfg_path = tmp_path / "cfg.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg))
+
+        monkeypatch.setattr(sys, "argv", [
+            "reuse-sweep",
+            "--config", str(cfg_path),
+            "--output_root", str(tmp_path / "out"),
+        ])
+        mod.reuse_signal_sweep_main()
+
+        inf_cfg = captured_cfgs[0]["inference"]
+        assert inf_cfg["speculative_schedule"] == "llada21_block"
+        assert inf_cfg["llada21_official"]["use_block_diffusion"] is True
+
     def test_decision_table_has_constraints(self, monkeypatch, tmp_path):
-        import scripts.run_reuse_signal_sweep as mod
+        import aoae.paper as mod
 
         monkeypatch.setattr(mod, "eval_main",
                             lambda cfg, **kw: [_fake_reuse_result()])
@@ -286,11 +315,11 @@ class TestReuseSweepIntegration:
         cfg_path.write_text(yaml.safe_dump(cfg))
 
         monkeypatch.setattr(sys, "argv", [
-            "run_reuse_signal_sweep.py",
+            "reuse-sweep",
             "--config", str(cfg_path),
             "--output_root", str(tmp_path / "out"),
         ])
-        mod.main()
+        mod.reuse_signal_sweep_main()
 
         with (tmp_path / "out" / "best_method_by_constraint.json").open() as f:
             decisions = json.load(f)
@@ -298,3 +327,34 @@ class TestReuseSweepIntegration:
         assert "acc_drop<=0.01" in constraints
         assert "acc_drop<=0.02" in constraints
         assert "acc_drop<=0.05" in constraints
+
+    def test_reuse_sweep_can_enable_prediction_saving(self, monkeypatch, tmp_path):
+        import aoae.paper as mod
+
+        captured_cfgs = []
+
+        def mock_eval(cfg, **kwargs):
+            captured_cfgs.append(cfg)
+            return [_fake_reuse_result()]
+
+        monkeypatch.setattr(mod, "eval_main", mock_eval)
+
+        cfg = {
+            "logging": {"run_name": "preds", "output_dir": str(tmp_path / "run")},
+            "inference": {"reuse_signal": {"grid": {"argmax_match": [0.0]}}},
+        }
+        cfg_path = tmp_path / "cfg.yaml"
+        cfg_path.write_text(yaml.safe_dump(cfg))
+
+        monkeypatch.setattr(sys, "argv", [
+            "reuse-sweep",
+            "--config", str(cfg_path),
+            "--output_root", str(tmp_path / "out"),
+            "--save_predictions",
+            "--max_saved_predictions", "75",
+        ])
+        mod.reuse_signal_sweep_main()
+
+        ev_cfg = captured_cfgs[0]["evaluation"]
+        assert ev_cfg["save_predictions"] is True
+        assert ev_cfg["max_saved_predictions"] == 50

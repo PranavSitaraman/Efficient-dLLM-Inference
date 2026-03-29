@@ -80,7 +80,7 @@ PRISM~\cite{kim2025prism} provides model-agnostic self-correction via remasking,
 dKV-Cache~\cite{ma2025dkv} and Elastic-Cache~\cite{elastic_cache} accelerate inference by caching stable KV states, but they \emph{constrain} the decoding trajectory to suit the cache (block-based or prefix-restricted unmasking), sacrificing diffusion's any-order flexibility.
 
 We propose \textbf{Any-Order Adaptive Editing (AOAE)} to unify all three---adaptive steering, self-correction, and speculative caching---in a single framework built on a novel observation: MoE models naturally provide a dual-speed architecture.
-With standard hard top-$k$ routing, LLaDA~2.1-mini activates ${\sim}$1.4B of 16B parameters per token (fast); with temperature-controlled soft routing, all 16B parameters participate (slow but more expressive).
+With standard hard top-$k$ routing, LLaDA~2.1-mini activates ${\sim}$1.4B of 16B parameters per token (fast); with temperature-controlled widened routing, additional experts beyond the native top-$k$ can participate (slower but more expressive).
 AOAE pairs these as a \textbf{hard-routed auxiliary} and a \textbf{soft-routed primary} in a speculative diffusion loop analogous to speculative decoding in autoregressive LLMs~\cite{leviathan2023fast,chen2023accelerating}---but fundamentally richer, since all positions are simultaneously active and the primary can accept, reject, or refine any subset in parallel.
 
 % ======================================================================
@@ -190,28 +190,47 @@ AOAE extends the learned-policy framework of \Cref{sec:bg_rl} to a full speculat
 \label{sec:soft_moe}
 
 LLaDA~2.1-mini is a 16B-parameter MoE model with $E{=}128$ routed experts per layer, of which $k{=}8$ are selected per token via hard top-$k$ routing, so only ${\sim}$1.4B parameters are active per forward pass.
-AOAE instantiates two copies of the same frozen model with different routing:
+AOAE uses two routing modes of the same frozen model:
 
 \paragraph{Hard-routed auxiliary (fast).}
 Standard hard top-$k$ routing (${\sim}$1.4B active).
 Serves as the draft model: produces token predictions for all positions, whose KV states are pre-cached.
 
 \paragraph{Soft-routed primary (slow, expressive).}
-Replaces hard routing with temperature-controlled soft routing:
+Replaces hard routing with temperature-controlled tail expansion over the
+native LLaDA gate scores:
 \begin{equation}
-    w_i^{\text{soft}} = \frac{\exp(z_i / \tau_r)}{\sum_{j=1}^E \exp(z_j / \tau_r)}, \quad i = 1, \dots, E,
-    \label{eq:soft_route}
+    s_i = \sigma(z_i), \qquad
+    \mathcal{I}_{k} = \TopK_k\!\left(s_i + b_i\right), \qquad
+    \mathcal{I}_{K_{\text{soft}}} = \TopK_{K_{\text{soft}}}\!\left(s_i + b_i\right),
+    \label{eq:soft_route_selected_sets}
 \end{equation}
-where $z_i$ are router logits and $\tau_r > 0$ is the routing temperature.
-At $\tau_r \to 0$ this recovers hard routing; at $\tau_r > 0$ all experts participate.
-Both copies share frozen weights; only the routing function differs.
-The dual setup requires $2\times$ model memory but not $2\times$ compute, since the auxiliary's KV states are reused at agreement positions.
+\begin{equation}
+    \tilde{w}_i(\tau_r) =
+    \begin{cases}
+        s_i, & i \in \mathcal{I}_k,\\
+        \tau_r \, s_i, & i \in \mathcal{I}_{K_{\text{soft}}} \setminus \mathcal{I}_k,\\
+        0, & \text{otherwise,}
+    \end{cases}
+    \qquad
+    w_i^{\text{soft}} = \frac{\tilde{w}_i(\tau_r)}{\sum_j \tilde{w}_j(\tau_r)}.
+    \label{eq:soft_route_selected}
+\end{equation}
+where $z_i$ are router logits, $b_i$ is the learned expert-bias term, and
+$\tau_r > 0$ is the routing temperature. In implementation we preserve the
+original bias-aware group-limited top-$k$ selection semantics, optionally
+widening the active expert set to $K_{\text{soft}} \ge k$, and scale only the
+\emph{additional} experts outside the native hard top-$k$. At any $\tau_r$ with
+$K_{\text{soft}} = k$, this exactly recovers hard routing. As $\tau_r \to 0$,
+the added experts vanish and the primary approaches the auxiliary; as $\tau_r$
+increases toward $1$, the widened expert set participates more strongly.
+In implementation we load a single shared backbone and toggle routing in-place, so the auxiliary and primary share frozen weights exactly and differ only in the routing function.
 
 Routing temperature is the single knob controlling quality vs.\ throughput.
 At $\tau_r \to 0$, the primary matches the auxiliary: near-perfect agreement ($\bar{\alpha}_t \approx 1$), maximal cache reuse, minimal quality gain.
-At $\tau_r = 0.01$, $>$99\% of routing weight remains on the top-$k$ experts, yielding high agreement with modest quality improvement.
-At $\tau_r = 0.1$, meaningful divergence: richer predictions but agreement drops to ${\sim}$70--80\%.
-At $\tau_r = 0.5$, all experts contribute substantially; quality may improve but the policy must be highly selective about caching.
+At $\tau_r = 0.01$, $>$99\% of routing weight remains on the native top-$k$ experts, yielding high agreement with modest quality improvement.
+At $\tau_r = 0.1$, the widened tail begins to matter: richer predictions but lower agreement.
+At $\tau_r = 0.5$, additional experts contribute substantially; quality may improve but the policy must be highly selective about caching.
 
 \subsection{State: Soft-Masked Representations}
 \label{sec:state}
@@ -435,7 +454,7 @@ LLaDA~2.1-mini (16B MoE, frozen) in dual-model configuration.
 Policy: 1-layer transformer (${\sim}$500K parameters, input dimension $D{+}4$).
 PRISM adapter fine-tuned on 10K samples.
 Hyperparameters: $K{=}5$ (soft-masking), $G{=}8$ (GRPO group size), $\alpha{=}1.0$, $\beta{=}0.1$, $\epsilon{=}0.2$, $\gamma{=}0.5$ (composed prediction).
-Primary experiment: sweep $\tau_r \in \{0.001, 0.01, 0.05, 0.1, 0.2, 0.5\}$.
+Primary experiment: sweep $\tau_r \in \{0.0001, 0.001, 0.005, 0.01, 0.02, 0.05\}$.
 For the routing-only POC1 sweep, we disable remasking to isolate the routing-temperature speed--quality effect.
 All evaluations integrated into dInfer and SGLang.
 
@@ -444,7 +463,7 @@ GSM8K~\cite{cobbe2021gsm8k} and MATH~\cite{hendrycks2021math} for mathematical r
 Policy training uses 50K prompts from OpenMathInstruct-2.
 
 \paragraph{Metrics.}
-Accuracy (exact match / pass@1), throughput (tokens/sec on A100), NFEs, cache hit rate $\bar{\alpha} = \frac{1}{TL}\sum_{t,k} \alpha_t^k$, effective speedup vs.\ soft-routed-only baseline, refresh ratio $\frac{1}{T}\sum_t |\cQ_t|/L$, and boundary depth $\frac{1}{T}\sum_t \ell_t^\star$.
+Accuracy (exact match / pass@1), throughput (tokens/sec on A100), NFEs, agreement rate $\bar{\alpha} = \frac{1}{TL}\sum_{t,k} \alpha_t^k$, cache-retention / keep rate, effective speedup vs.\ soft-routed-only baseline, refresh ratio $\frac{1}{T}\sum_t |\cQ_t|/L$, and boundary depth $\frac{1}{T}\sum_t \ell_t^\star$.
 
 \paragraph{Ablations.} 
 \emph{Architecture ablations:}

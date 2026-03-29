@@ -82,6 +82,26 @@ def test_boundary_head_policy_outputs_and_actions():
     assert torch.isfinite(lp).all()
 
 
+def test_policy_can_disable_agreement_feature():
+    from aoae.models.policy import AOAEPolicy
+
+    cfg = {
+        "policy": {
+            "d_model": 32,
+            "n_layers": 1,
+            "n_heads": 4,
+            "dropout": 0.0,
+            "use_agreement_feature": False,
+        }
+    }
+    policy = AOAEPolicy(cfg, input_dim=16)
+    H = torch.randn(2, 6, 16)
+    mask = torch.randint(0, 2, (2, 6)).bool()
+    agreement = torch.ones(2, 6)
+    out = policy(H, mask, step_frac=0.5, agreement=agreement)
+    assert out["unmask_probs"].shape == (2, 6)
+
+
 def test_compute_reward_prefers_faster_completion_given_equal_correctness():
     from aoae.inference import AOAETrajectory
     from aoae.train_grpo import compute_reward
@@ -111,7 +131,7 @@ def test_compute_reward_prefers_faster_completion_given_equal_correctness():
 
 
 def test_routing_tradeoff_annotation_adds_frontier_and_deltas():
-    from scripts.run_routing_sweep import _annotate_tradeoff
+    from aoae.paper import _annotate_tradeoff
 
     rows = [
         {"routing_mode": "hard", "accuracy": "0.60", "tps": "100.0"},
@@ -126,7 +146,7 @@ def test_routing_tradeoff_annotation_adds_frontier_and_deltas():
 
 
 def test_reuse_decision_table_emits_expected_constraints():
-    from scripts.run_reuse_signal_sweep import _decision_table
+    from aoae.paper import _decision_table
 
     rows = [
         {"reuse_signal_method": "argmax_match", "reuse_signal_threshold": "0.0", "accuracy": "0.60", "tps": "100.0", "thrash_rate_given_cached": "0.10"},

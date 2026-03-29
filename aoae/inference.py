@@ -19,6 +19,7 @@ import json
 
 from .cache import DKVCacheManager
 from .models.composed_prediction import compose_prediction
+from .models.policy import call_policy
 from .positional_cache import (
     init_positional_state,
     get_policy_positional_features,
@@ -26,6 +27,14 @@ from .positional_cache import (
     update_positional_state,
     compute_next_h_access_metrics,
 )
+
+
+def _max_prob_and_argmax(logits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Return max softmax probability and argmax token without allocating full probs."""
+    logits_f = logits.float()
+    max_logits, max_tok = logits_f.max(dim=-1)
+    max_prob = torch.exp(max_logits - torch.logsumexp(logits_f, dim=-1))
+    return max_prob.type_as(logits), max_tok
 
 
 @dataclass
@@ -149,9 +158,11 @@ def aoae_inference(
             age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
 
         # --- Policy forward (with PRISM quality scores) ---
-        policy_out = policy(
+        policy_out = call_policy(
+            policy,
             H_t, mask_ind, step_frac,
             temperature=policy_temperature,
+            confidence=confidence,
             quality_scores=q_scores,
             age_feature=age_feat,
             last_action_feature=last_action_feat,
@@ -381,8 +392,7 @@ def confidence_threshold_decode(
             break
 
         logits = base_model.forward(y)[:, resp_slice, :]
-        probs = F.softmax(logits, dim=-1)
-        max_prob, max_tok = probs.max(dim=-1)  # [B, L_gen]
+        max_prob, max_tok = _max_prob_and_argmax(logits)
 
         # M2T: unmask positions above tau_mask
         unmask = mask_ind & (max_prob > tau_mask)
@@ -462,7 +472,6 @@ def block_smode_decode(
         blk_start = P + blk_idx * block_len
         blk_end = min(P + (blk_idx + 1) * block_len, P + L_gen)
         blk_slice = slice(blk_start, blk_end)
-        blk_len_actual = blk_end - blk_start
 
         for step in range(max_steps_per_block):
             blk_tokens = y[:, blk_slice]
@@ -471,15 +480,16 @@ def block_smode_decode(
             if not mask_ind.any():
                 break
 
-            # Forward pass with block-causal attention if available
+            prefix_ids = y[:, :blk_end]
+            # Only score the active prefix for this block; later masked blocks
+            # should not bloat the diffusion frontier.
             if hasattr(base_model, 'forward_block_causal'):
                 logits = base_model.forward_block_causal(
-                    y, block_length=block_len,
+                    prefix_ids, block_length=block_len,
                 )[:, blk_slice, :]
             else:
-                logits = base_model.forward(y)[:, blk_slice, :]
-            probs = F.softmax(logits, dim=-1)
-            max_prob, max_tok = probs.max(dim=-1)
+                logits = base_model.forward(prefix_ids)[:, blk_slice, :]
+            max_prob, max_tok = _max_prob_and_argmax(logits)
 
             # M2T: unmask confident positions
             unmask = mask_ind & (max_prob > tau_mask)
@@ -504,15 +514,34 @@ def block_smode_decode(
 
             y[:, blk_slice] = blk_tokens
 
+        remaining_mask = y[:, blk_slice] == mask_id
+        if remaining_mask.any():
+            prefix_ids = y[:, :blk_end]
+            if hasattr(base_model, 'forward_block_causal'):
+                final_logits = base_model.forward_block_causal(
+                    prefix_ids, block_length=block_len,
+                )[:, blk_slice, :]
+            else:
+                final_logits = base_model.forward(prefix_ids)[:, blk_slice, :]
+            _, final_tok = _max_prob_and_argmax(final_logits)
+            completed = y[:, blk_slice].clone()
+            completed[remaining_mask] = final_tok[remaining_mask]
+            y[:, blk_slice] = completed
+
         # Optional: Multiple Block Editing — revisit previous blocks
         if enable_mbe and blk_idx > 0:
             prev_start = P
             prev_end = blk_start
             prev_slice = slice(prev_start, prev_end)
 
-            logits = base_model.forward(y)[:, prev_slice, :]
-            probs = F.softmax(logits, dim=-1)
-            max_prob, max_tok = probs.max(dim=-1)
+            prefix_ids = y[:, :blk_end]
+            if hasattr(base_model, 'forward_block_causal'):
+                logits = base_model.forward_block_causal(
+                    prefix_ids, block_length=block_len,
+                )[:, prev_slice, :]
+            else:
+                logits = base_model.forward(prefix_ids)[:, prev_slice, :]
+            max_prob, max_tok = _max_prob_and_argmax(logits)
 
             prev_tokens = y[:, prev_slice].clone()
             disagree = (max_tok != prev_tokens) & (max_prob > tau_edit)

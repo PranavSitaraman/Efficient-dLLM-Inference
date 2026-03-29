@@ -494,6 +494,40 @@ class TestBaselines:
         # Should unmask at least some tokens
         assert (out[0, 4:] != MASK_ID).sum().item() > 0
 
+    def test_block_smode_uses_active_prefix_and_finishes_blocks(self):
+        from aoae.inference import block_smode_decode
+
+        class TrackingBaseModel(MockBaseModel):
+            def __init__(self):
+                super().__init__(VOCAB, DIM, MASK_ID)
+                self.seen_lengths = []
+
+            def forward_block_causal(self, input_ids, block_length=32):
+                del block_length
+                self.seen_lengths.append(int(input_ids.shape[1]))
+                logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], self.vocab_size)
+                logits[..., 0] = 1.0
+                return logits
+
+        model = TrackingBaseModel()
+        cfg = {
+            **DEFAULT_CFG,
+            "inference": {
+                **DEFAULT_CFG["inference"],
+                "gen_length": 4,
+                "block_length": 2,
+            },
+        }
+        prompt = torch.tensor([[10, 20, 30, 40]])
+        out = block_smode_decode(
+            model, prompt, cfg,
+            tau_mask=0.999, tau_edit=0.999, max_steps_per_block=1,
+        )
+
+        assert model.seen_lengths[0] == 6
+        assert max(model.seen_lengths) == 8
+        assert (out[0, 4:] != MASK_ID).all()
+
 
 # ======================================================================
 # Tests: Reward computation
@@ -517,12 +551,23 @@ class TestReward:
 
         assert extract_answer("The result is 3.14 approximately") == "3.14"
 
+    def test_extract_final_answer_with_currency_and_commas(self):
+        from aoae.train_grpo import extract_answer
+
+        assert extract_answer("Final answer: $1,250.00") == "1250.00"
+
+    def test_extract_fraction_answer(self):
+        from aoae.train_grpo import extract_answer
+
+        assert extract_answer("The answer is 1/2.") == "1/2"
+
     def test_correctness_check(self):
         from aoae.train_grpo import check_math_correctness
 
         assert check_math_correctness("\\boxed{42}", "#### 42")
         assert not check_math_correctness("\\boxed{41}", "#### 42")
         assert check_math_correctness("The answer is 3.14", "\\boxed{3.14}")
+        assert check_math_correctness("Final answer: 1/2", "#### 0.5")
 
     def test_speed_reward(self):
         from aoae.train_grpo import compute_reward
@@ -667,6 +712,15 @@ class TestSoftMoERouter:
                 return torch.nn.functional.linear(h, self.weight)
             def group_limited_topk(self, scores):
                 return scores.topk(self.top_k, dim=-1)
+            def forward(self, hidden_states):
+                logits = self.get_logits(hidden_states.view(-1, hidden_states.shape[-1]))
+                scores = torch.sigmoid(logits.float()).type_as(logits)
+                scores_for_routing = scores + self.expert_bias
+                _, topk_idx = self.group_limited_topk(scores_for_routing)
+                topk_weight = torch.gather(scores, dim=1, index=topk_idx).type_as(logits)
+                topk_weight = topk_weight / topk_weight.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                topk_weight = topk_weight * self.routed_scaling_factor
+                return topk_idx, topk_weight, logits
 
         gate = MockGate()
         soft = SoftMoERouter(gate, tau_r=0.01)
@@ -689,20 +743,264 @@ class TestSoftMoERouter:
                 self.num_experts = 4
                 self.top_k = 2
                 self.routed_scaling_factor = 1.0
-                self.weight = torch.nn.Parameter(torch.randn(4, 16))
+                self.weight = torch.nn.Parameter(
+                    torch.tensor(
+                        [
+                            [4.0, 0.0],
+                            [3.0, 0.0],
+                            [-2.0, 0.0],
+                            [-3.0, 0.0],
+                        ],
+                        dtype=torch.float32,
+                    )
+                )
                 self.register_buffer("expert_bias", torch.zeros(4))
             def get_logits(self, h):
                 return torch.nn.functional.linear(h, self.weight)
             def group_limited_topk(self, scores):
                 return scores.topk(self.top_k, dim=-1)
+            def forward(self, hidden_states):
+                logits = self.get_logits(hidden_states.view(-1, hidden_states.shape[-1]))
+                scores = torch.sigmoid(logits.float()).type_as(logits)
+                scores_for_routing = scores + self.expert_bias
+                _, topk_idx = self.group_limited_topk(scores_for_routing)
+                topk_weight = torch.gather(scores, dim=1, index=topk_idx).type_as(logits)
+                topk_weight = topk_weight / topk_weight.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                topk_weight = topk_weight * self.routed_scaling_factor
+                return topk_idx, topk_weight, logits
 
         gate = MockGate()
-        soft = SoftMoERouter(gate, tau_r=0.001)
+        soft = SoftMoERouter(gate, tau_r=0.001, soft_topk=gate.top_k)
 
-        hidden = torch.randn(1, 16)
-        _, weights, _ = soft(hidden)
-        # At very low temp, one expert should dominate
-        assert weights.max() > 0.99
+        hidden = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        hard_idx, hard_weights, _ = gate(hidden)
+        soft_idx, soft_weights, _ = soft(hidden)
+        assert set(soft_idx[0].tolist()) == set(hard_idx[0].tolist())
+        assert torch.allclose(
+            soft_weights.sum(dim=-1),
+            torch.ones(1),
+            atol=1e-5,
+        )
+
+    def test_low_temp_wide_soft_topk_keeps_mass_on_hard_experts(self):
+        from aoae.models.soft_moe import SoftMoERouter
+
+        class MockGate(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = 4
+                self.top_k = 2
+                self.routed_scaling_factor = 1.0
+                self.weight = torch.nn.Parameter(
+                    torch.tensor(
+                        [
+                            [4.0, 0.0],
+                            [3.0, 0.0],
+                            [-2.0, 0.0],
+                            [-3.0, 0.0],
+                        ],
+                        dtype=torch.float32,
+                    )
+                )
+                self.register_buffer("expert_bias", torch.zeros(4))
+
+            def get_logits(self, h):
+                return torch.nn.functional.linear(h, self.weight)
+
+            def group_limited_topk(self, scores):
+                return scores.topk(self.top_k, dim=-1)
+
+            def forward(self, hidden_states):
+                logits = self.get_logits(hidden_states.view(-1, hidden_states.shape[-1]))
+                scores = torch.sigmoid(logits.float()).type_as(logits)
+                scores_for_routing = scores + self.expert_bias
+                _, topk_idx = self.group_limited_topk(scores_for_routing)
+                topk_weight = torch.gather(scores, dim=1, index=topk_idx).type_as(logits)
+                topk_weight = topk_weight / topk_weight.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                topk_weight = topk_weight * self.routed_scaling_factor
+                return topk_idx, topk_weight, logits
+
+        gate = MockGate()
+        soft = SoftMoERouter(gate, tau_r=0.001, soft_topk=gate.num_experts)
+
+        hidden = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        hard_idx, hard_weights, _ = gate(hidden)
+        soft_idx, soft_weights, _ = soft(hidden)
+        hard_experts = set(hard_idx[0].tolist())
+        retained_mass = sum(
+            float(soft_weights[0, pos].item())
+            for pos, expert_idx in enumerate(soft_idx[0].tolist())
+            if expert_idx in hard_experts
+        )
+        assert retained_mass > 0.999
+
+        hard_weight_map = {
+            int(expert_idx): float(weight)
+            for expert_idx, weight in zip(hard_idx[0].tolist(), hard_weights[0].tolist())
+        }
+        retained = []
+        retained_expected = []
+        for pos, expert_idx in enumerate(soft_idx[0].tolist()):
+            if expert_idx in hard_experts:
+                retained.append(float(soft_weights[0, pos].item()) / retained_mass)
+                retained_expected.append(hard_weight_map[int(expert_idx)])
+        assert retained
+        assert retained_expected
+        assert torch.allclose(
+            torch.tensor(retained),
+            torch.tensor(retained_expected),
+            atol=1e-4,
+        )
+
+    def test_tau_one_matches_hard_weights_with_expert_bias(self):
+        from aoae.models.soft_moe import SoftMoERouter
+
+        class MockGate(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = 4
+                self.top_k = 2
+                self.routed_scaling_factor = 1.0
+                self.weight = torch.nn.Parameter(
+                    torch.tensor(
+                        [
+                            [1.8, 0.0],
+                            [1.6, 0.0],
+                            [1.2, 0.0],
+                            [-1.0, 0.0],
+                        ],
+                        dtype=torch.float32,
+                    )
+                )
+                self.register_buffer(
+                    "expert_bias",
+                    torch.tensor([0.0, 0.15, -0.05, 0.0], dtype=torch.float32),
+                )
+
+            def get_logits(self, h):
+                return torch.nn.functional.linear(h, self.weight)
+
+            def group_limited_topk(self, scores):
+                return scores.topk(self.top_k, dim=-1)
+
+            def forward(self, hidden_states):
+                logits = self.get_logits(hidden_states.view(-1, hidden_states.shape[-1]))
+                scores = torch.sigmoid(logits.float()).type_as(logits)
+                scores_for_routing = scores + self.expert_bias
+                _, topk_idx = self.group_limited_topk(scores_for_routing)
+                topk_weight = torch.gather(scores, dim=1, index=topk_idx).type_as(logits)
+                topk_weight = topk_weight / topk_weight.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                topk_weight = topk_weight * self.routed_scaling_factor
+                return topk_idx, topk_weight, logits
+
+        gate = MockGate()
+        soft = SoftMoERouter(gate, tau_r=1.0, soft_topk=gate.top_k)
+
+        hidden = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        hard_idx, hard_weights, _ = gate(hidden)
+        soft_idx, soft_weights, _ = soft(hidden)
+
+        assert torch.equal(soft_idx, hard_idx)
+        assert torch.allclose(soft_weights, hard_weights, atol=1e-6)
+
+    def test_soft_topk_equal_hard_topk_is_tau_invariant(self):
+        from aoae.models.soft_moe import SoftMoERouter
+
+        class MockGate(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = 4
+                self.top_k = 2
+                self.routed_scaling_factor = 1.0
+                self.weight = torch.nn.Parameter(
+                    torch.tensor(
+                        [
+                            [2.0, 0.0],
+                            [1.5, 0.0],
+                            [0.1, 0.0],
+                            [-1.0, 0.0],
+                        ],
+                        dtype=torch.float32,
+                    )
+                )
+                self.register_buffer("expert_bias", torch.zeros(4))
+
+            def get_logits(self, h):
+                return torch.nn.functional.linear(h, self.weight)
+
+            def group_limited_topk(self, scores):
+                return scores.topk(self.top_k, dim=-1)
+
+            def forward(self, hidden_states):
+                logits = self.get_logits(hidden_states.view(-1, hidden_states.shape[-1]))
+                scores = torch.sigmoid(logits.float()).type_as(logits)
+                scores_for_routing = scores + self.expert_bias
+                _, topk_idx = self.group_limited_topk(scores_for_routing)
+                topk_weight = torch.gather(scores, dim=1, index=topk_idx).type_as(logits)
+                topk_weight = topk_weight / topk_weight.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                topk_weight = topk_weight * self.routed_scaling_factor
+                return topk_idx, topk_weight, logits
+
+        gate = MockGate()
+        hidden = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        hard_idx, hard_weights, _ = gate(hidden)
+
+        for tau_r in (0.001, 0.01, 0.1, 0.5, 1.0):
+            soft = SoftMoERouter(gate, tau_r=tau_r, soft_topk=gate.top_k)
+            soft_idx, soft_weights, _ = soft(hidden)
+            assert torch.equal(soft_idx, hard_idx)
+            assert torch.allclose(soft_weights, hard_weights, atol=1e-6)
+
+    def test_low_temp_preserves_hard_selection_with_expert_bias(self):
+        from aoae.models.soft_moe import SoftMoERouter
+
+        class MockGate(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.num_experts = 4
+                self.top_k = 2
+                self.routed_scaling_factor = 1.0
+                self.weight = torch.nn.Parameter(
+                    torch.tensor(
+                        [
+                            [2.0, 0.0],
+                            [1.9, 0.0],
+                            [1.8, 0.0],
+                            [-2.0, 0.0],
+                        ],
+                        dtype=torch.float32,
+                    )
+                )
+                self.register_buffer(
+                    "expert_bias",
+                    torch.tensor([0.0, 0.20, -0.25, 0.0], dtype=torch.float32),
+                )
+
+            def get_logits(self, h):
+                return torch.nn.functional.linear(h, self.weight)
+
+            def group_limited_topk(self, scores):
+                return scores.topk(self.top_k, dim=-1)
+
+            def forward(self, hidden_states):
+                logits = self.get_logits(hidden_states.view(-1, hidden_states.shape[-1]))
+                scores = torch.sigmoid(logits.float()).type_as(logits)
+                scores_for_routing = scores + self.expert_bias
+                _, topk_idx = self.group_limited_topk(scores_for_routing)
+                topk_weight = torch.gather(scores, dim=1, index=topk_idx).type_as(logits)
+                topk_weight = topk_weight / topk_weight.sum(dim=-1, keepdim=True).clamp(min=1e-12)
+                topk_weight = topk_weight * self.routed_scaling_factor
+                return topk_idx, topk_weight, logits
+
+        gate = MockGate()
+        soft = SoftMoERouter(gate, tau_r=0.001, soft_topk=gate.top_k)
+
+        hidden = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+        hard_idx, _, _ = gate(hidden)
+        soft_idx, soft_weights, _ = soft(hidden)
+
+        assert torch.equal(soft_idx, hard_idx)
+        assert torch.allclose(soft_weights.sum(dim=-1), torch.ones(1), atol=1e-6)
 
     def test_records_last_weights_in_eval_mode(self):
         from aoae.models.soft_moe import SoftMoERouter
@@ -1009,6 +1307,35 @@ class TestSoftMoERouter:
 
         set_soft_routing(model)
         assert isinstance(model.layer1.topk, SGLangSoftTopKRouter)
+
+    def test_sglang_router_infers_sigmoid_from_correction_bias(self):
+        from aoae.models.soft_moe import SGLangSoftTopKRouter
+
+        class MockTopK(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.top_k = 2
+                self.correction_bias = torch.zeros(4)
+
+            def forward(self, hidden_states, router_logits, *args, **kwargs):
+                del hidden_states, args, kwargs
+                return router_logits.topk(self.top_k, dim=-1)
+
+        topk = MockTopK()
+        router = SGLangSoftTopKRouter(
+            topk,
+            num_experts=4,
+            tau_r=0.001,
+            soft_topk=4,
+            score_function=None,
+            top_k_override=2,
+        )
+        router(
+            torch.randn(1, 8),
+            torch.tensor([[8.0, 7.0, -6.0, -7.0]], dtype=torch.float32),
+        )
+        assert router._last_weights is not None
+        assert float(router._last_weights[0, :2].sum().item()) > 0.999
 
     def test_patch_model_supports_explicit_model_layers_fallback(self):
         from aoae.models.soft_moe import (
@@ -1326,7 +1653,8 @@ class TestDefaultPolicy:
         H = torch.randn(B, L, D)
         mask = torch.randint(0, 2, (B, L)).bool()
         agree = torch.rand(B, L)
-        out = policy(H, mask, step_frac=0.5, agreement=agree)
+        conf = torch.rand(B, L)
+        out = policy(H, mask, step_frac=0.5, confidence=conf, agreement=agree)
         assert out["unmask_probs"].shape == (B, L)
         assert out["remask_probs"].shape == (B, L)
         assert out["cache_probs"].shape == (B, L)
@@ -1339,27 +1667,25 @@ class TestDefaultPolicy:
         out = policy(H, mask, 0.5)
         assert out["remask_probs"].sum().item() == 0.0
 
-    def test_unmask_probs_scaled_by_step(self):
+    def test_unmask_probs_follow_confidence_threshold(self):
         from aoae.models.policy import DefaultPolicy
-        policy = DefaultPolicy()
+        policy = DefaultPolicy(tau_mask=0.7)
         H = torch.randn(1, 6, 32)
         mask = torch.tensor([[True, False, True, True, False, False]])
-        out = policy(H, mask, 0.5)
-        # unmask_probs should be >0 for masked, 0.0 for unmasked
-        assert out["unmask_probs"][0, 0].item() > 0
+        confidence = torch.tensor([[0.95, 0.99, 0.2, 0.8, 0.5, 0.75]])
+        out = policy(H, mask, 0.5, confidence=confidence)
+        assert out["unmask_probs"][0, 0].item() == 1.0
         assert out["unmask_probs"][0, 1].item() == 0.0
-        # At step_frac=0.5, rate = 1/(0.5*200) = 0.01
-        expected_rate = 1.0 / max(0.5 * 8, 1.0)
-        assert abs(out["unmask_probs"][0, 0].item() - expected_rate) < 1e-6
+        assert out["unmask_probs"][0, 2].item() == 0.0
+        assert out["unmask_probs"][0, 3].item() == 1.0
 
-    def test_unmask_rate_increases_as_step_frac_decreases(self):
+    def test_missing_confidence_keeps_masked_tokens_masked(self):
         from aoae.models.policy import DefaultPolicy
         policy = DefaultPolicy()
         H = torch.randn(1, 4, 32)
         mask = torch.ones(1, 4).bool()
-        out_early = policy(H, mask, step_frac=1.0)  # early: low rate
-        out_late = policy(H, mask, step_frac=0.01)   # late: high rate
-        assert out_early["unmask_probs"].max().item() < out_late["unmask_probs"].max().item()
+        out = policy(H, mask, step_frac=1.0, confidence=None)
+        assert out["unmask_probs"].sum().item() == 0.0
 
     def test_cache_probs_match_agreement(self):
         from aoae.models.policy import DefaultPolicy
@@ -1372,16 +1698,17 @@ class TestDefaultPolicy:
 
     def test_sample_actions_interface(self):
         from aoae.models.policy import DefaultPolicy
-        policy = DefaultPolicy()
+        policy = DefaultPolicy(tau_mask=0.7)
         H = torch.randn(2, 5, 32)
         mask = torch.randint(0, 2, (2, 5)).bool()
-        # Use step_frac=0.001 so unmask_rate ≈ 1.0 (most positions unmasked)
-        out = policy(H, mask, step_frac=0.001)
+        confidence = torch.ones(2, 5)
+        out = policy(H, mask, step_frac=0.001, confidence=confidence)
         actions = policy.sample_actions(out, mask)
         assert "u_t" in actions and "r_t" in actions and "kappa_t" in actions
         assert actions["r_t"].sum().item() == 0.0  # never remask
         # u_t must be 0 at unmasked positions
         assert (actions["u_t"][~mask] == 0.0).all()
+        assert torch.equal(actions["u_t"], mask.float())
 
     def test_log_prob_returns_zeros(self):
         from aoae.models.policy import DefaultPolicy
@@ -1717,6 +2044,96 @@ class TestRunBlockwiseSpeculativeInference:
         assert stats["primary_verified_positions"] == 3
         assert stats["primary_full_equiv_positions"] == 4
         assert stats["primary_skip_ratio"] == pytest.approx(0.25)
+
+    def test_blockwise_runner_force_completes_remaining_masks(self, monkeypatch):
+        from aoae.dinfer_integration import run_blockwise_speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "inference": {
+                "gen_length": 2,
+                "block_length": 2,
+                "fallback_unmask": True,
+                "disable_remask": False,
+                "reuse_signal": {"method": "argmax_match"},
+                "llada21_official": {
+                    "use_block_diffusion": True,
+                    "threshold": 0.999,
+                    "editing_threshold": 0.999,
+                    "max_post_steps": 1,
+                    "enable_mbe": False,
+                },
+            },
+        }
+
+        class DummyDualModel:
+            def __init__(self):
+                self.calls = 0
+
+            def dual_forward_resp(self, input_ids, resp_slice, need_hidden=False, need_all_hidden=False):
+                del input_ids, resp_slice, need_hidden, need_all_hidden
+                self.calls += 1
+                primary_logits = torch.tensor(
+                    [[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]],
+                    dtype=torch.float32,
+                )
+                auxiliary_logits = primary_logits.clone()
+                agreement = torch.tensor([[True, True]])
+                return types.SimpleNamespace(
+                    primary_logits=primary_logits,
+                    auxiliary_logits=auxiliary_logits,
+                    agreement=agreement,
+                    agreement_rate=1.0,
+                    primary_hidden=None,
+                    primary_hidden_states=None,
+                )
+
+        def fake_reuse_signal(resp_logits, aux_logits, cfg, state=None):
+            del resp_logits, aux_logits, cfg, state
+            return torch.ones((1, 2), dtype=torch.bool), None, {}
+
+        monkeypatch.setattr("aoae.dinfer_integration.compute_reuse_signal", fake_reuse_signal)
+
+        prompt_ids = torch.tensor([[1]], dtype=torch.long)
+        output_ids, stats = run_blockwise_speculative_inference(
+            dual_model=DummyDualModel(),
+            policy=None,
+            soft_mask_module=None,
+            prism_adapter=None,
+            prompt_ids=prompt_ids,
+            cfg=cfg,
+        )
+
+        assert (output_ids[0, 1:] != MASK_ID).all()
+        assert output_ids[0, 1:].tolist() == [0, 1]
+        assert stats["primary_steps"] == 2
+
+
+class TestHFBlockCausalBias:
+    def test_hf_path_uses_attention_bias_not_attention_mask(self):
+        from aoae.models.base_model import LLaDABaseModel
+
+        class DummyOut:
+            def __init__(self):
+                self.logits = torch.randn(1, 4, 8)
+
+        class DummyHFModel:
+            def __call__(self, input_ids, **kwargs):
+                assert "attention_bias" in kwargs
+                assert "attention_mask" not in kwargs
+                bias = kwargs["attention_bias"]
+                assert bias.shape == (1, 1, 4, 4)
+                return DummyOut()
+
+        model = object.__new__(LLaDABaseModel)
+        model._backend = "hf"
+        model.dtype = torch.float32
+        model._block_length = 2
+        model.model = DummyHFModel()
+
+        input_ids = torch.ones((1, 4), dtype=torch.long)
+        out = model.forward_block_causal(input_ids, block_length=2)
+        assert out.shape == (1, 4, 8)
 
 
 class TestDInferCacheReuse:

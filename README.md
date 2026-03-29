@@ -1,304 +1,229 @@
-# AOAE — Any-Order Adaptive Editing for Masked Diffusion LLMs
+# AOAE
 
-Reference implementation for the paper *"Any-Order Adaptive Editing (AOAE): Decoupling Denoising and Steering in Masked Diffusion LLMs"*.
+Reference implementation for Any-Order Adaptive Editing (AOAE) on masked diffusion LLMs, with a simplified repo surface centered on one package, one CLI, a small canonical config set, and three generic SLURM wrappers.
 
-AOAE pairs a **frozen** masked diffusion LLM (LLaDA) with a **lightweight auxiliary policy** (<0.01% of base parameters) that jointly decides *where* to unmask, *where* to remask, and *which* positions to commit to a dKV-Cache — trained end-to-end via GRPO. The policy uses **composed prediction** to bias token selection toward cache-aligned orderings, and supports evaluation on a **soft-routed MoE** variant of LLaDA2.1-mini for controlled throughput measurement.
+## What is in the repo
 
-## Repository Structure
-
-```
+```text
 Efficient-dLLM-Inference/
-├── configs/
-│   ├── default.yaml            # Default config (LLaDA-8B, HF backend)
-│   ├── default_large.yaml      # LLaDA2.1-flash (100B MoE, dInfer, 4× GPU TP)
-│   ├── llada21_flash.yaml      # LLaDA2.1-flash (alternate)
-│   ├── llada21_mini.yaml       # LLaDA2.1-mini (16B, 2× GPU)
-│   ├── llada21_mini_soft.yaml  # LLaDA2.1-mini soft-routed MoE (all 16B active)
-│   └── llada21_mini_hard.yaml  # LLaDA2.1-mini hard-routed MoE (baseline)
 ├── aoae/
-│   ├── __init__.py
-│   ├── models/
-│   │   ├── base_model.py       # Multi-backend LLaDA wrapper (HF/dKV/dInfer/soft_moe)
-│   │   ├── soft_mask.py        # Soft-masked state construction (Eq. 5-6)
-│   │   ├── policy.py           # 1-layer transformer, 4 Bernoulli heads (+ optional boundary head)
-│   │   ├── prism.py            # PRISM quality adapter (§2.4)
-│   │   ├── soft_moe.py         # Soft-routed MoE wrapper (§3.7)
-│   │   └── composed_prediction.py  # Cache-aligned token selection (§3.6)
-│   ├── cache.py                # Policy-controlled dKV-Cache tracking
-│   ├── dinfer_integration.py   # dInfer integration with policy-guided caching
-│   ├── inference.py            # AOAE inference loop (Algorithm 1) + baselines
-│   ├── train_grpo.py           # GRPO training with multiplicative reward (§3.5)
-│   ├── train_prism.py          # PRISM adapter training
-│   ├── evaluate.py             # GSM8K evaluation + Pareto curve generation
-│   └── plot_pareto.py          # Accuracy-vs-throughput plot generation
-├── external/                   # Cloned by setup.sh (gitignored)
-│   ├── dInfer/                 # inclusionAI/dInfer — SGLang backend for LLaDA2.X
-│   └── dKV-Cache/              # horseee/dKV-Cache — delayed KV caching
-├── slurm/                      # SLURM job scripts for Kempner H100 cluster
-│   ├── train_prism.sh
-│   ├── train_grpo.sh
-│   ├── train_mini.sh           # LLaDA2.1-mini (2× GPU)
-│   └── eval.sh
-├── tests/
-│   └── test_components.py      # Unit tests (runs with mock model, no GPU)
-├── results/
-│   └── expected_results.json   # Target numbers from paper
-├── run_train.py                # Training entry (supports torchrun for multi-GPU)
-├── run_eval.py                 # Evaluation entry
-├── setup.sh                    # Environment setup (--minimal for core only)
-├── reproduce.sh                # End-to-end reproduction (local or --slurm)
-└── requirements.txt
+│   ├── cli.py            # Canonical entrypoint: train, eval, pipeline, paper-suite, sweeps
+│   ├── paper.py          # PoC 1, PoC 2, routing sweep, ablations, paper suite
+│   ├── reporting.py      # Comparison-table and KV-summary artifact aggregation
+│   ├── checkpoints.py    # Shared checkpoint resolution helpers
+│   ├── tasks.py          # Shared prompt / answer parsing helpers
+│   ├── evaluate.py       # Evaluation loop and artifact writing
+│   ├── train_prism.py    # PRISM stage
+│   ├── train_grpo.py     # AOAE policy training
+│   └── models/           # Base model wrappers, policy, PRISM, soft routing, dual model
+├── configs/
+│   ├── default.yaml      # Main 8B dense training/eval config
+│   ├── paper.yaml        # Main paper config
+│   ├── poc1.yaml         # PoC 1 soft-routing tradeoff sweep
+│   ├── poc2.yaml         # PoC 2 reuse-signal sweep
+│   ├── llada21_hard.yaml # Hard-routing routing-sweep baseline
+│   ├── llada21_soft.yaml # Soft-routing routing-sweep config
+│   └── llada21_flash.yaml# Large MoE / dInfer config
+├── slurm/
+│   ├── train.sh          # Generic PRISM / GRPO / pipeline job
+│   ├── eval.sh           # Generic eval job
+│   └── paper.sh          # Generic paper / POC job
+├── paper/                # Paper source
+├── tests/                # Unit + integration tests
+├── reproduce.sh          # Local or SLURM orchestration wrapper
+└── setup.sh              # Environment bootstrap
 ```
 
-## Components Implemented
+Generated artifacts live in `outputs/`, `logs/`, and `results/` and are gitignored.
 
-| Paper Section | Component | File |
-|---|---|---|
-| §3.1 | Soft-masked state (Eq. 5–6) | `aoae/models/soft_mask.py` |
-| §3.2 | Unified action space (unmask/remask/cache, validity constraints) | `aoae/models/policy.py` |
-| §3.3 | AOAE inference loop (Algorithm 1) with composed prediction | `aoae/inference.py` |
-| §3.4 | Lightweight policy architecture (PRISM quality scores as input) | `aoae/models/policy.py` |
-| §3.5 | GRPO with multiplicative reward (Eq. 12–13) | `aoae/train_grpo.py` |
-| §3.6 | Composed prediction for cache-aligned token selection | `aoae/models/composed_prediction.py` |
-| §3.7 | Soft-routed MoE wrapper for controlled evaluation | `aoae/models/soft_moe.py` |
-| §2.3 | Policy-controlled dKV-Cache tracking | `aoae/cache.py` |
-| §2.4 | PRISM quality adapter | `aoae/models/prism.py` |
-| — | dInfer integration with policy-guided caching | `aoae/dinfer_integration.py` |
-| §3.8 | Baselines (Uniform, S-Mode, Q-Mode, Fast-dLLM) | `aoae/inference.py` |
-| §3.8 | Ablations (remask-only, cache-only, no composed prediction, etc.) | configurable via YAML |
+## Canonical configs
 
-## Quick Start (< 30 minutes on GSM8K)
+| Config | Purpose |
+| --- | --- |
+| `configs/default.yaml` | Main single-run training and eval path on `GSAI-ML/LLaDA-8B-Instruct` |
+| `configs/paper.yaml` | Main paper-oriented config for integrated experiments |
+| `configs/poc1.yaml` | PoC 1: soft-routing speed/quality tradeoff |
+| `configs/poc2.yaml` | PoC 2: training-free KV-reuse agreement signal study |
+| `configs/llada21_hard.yaml` | Routing sweep hard-routing reference |
+| `configs/llada21_soft.yaml` | Routing sweep soft-routing counterpart |
+| `configs/llada21_flash.yaml` | Large dInfer / MoE runtime config |
 
-### 1. Install
+## Install
 
 ```bash
-bash setup.sh            # Full install (core + dInfer + SGLang)
-# Or: bash setup.sh --minimal  # Core only (for LLaDA-8B)
+bash setup.sh
+pip install -e .
 ```
 
-### 1.5 Preflight (Environment + Runtime + Config)
+Minimal install without dInfer / large-MoE extras:
 
 ```bash
-python3 scripts/preflight.py --config configs/llada21_mini_hard.yaml --strict_moe
+bash setup.sh --minimal
+pip install -e .
 ```
 
-### 2. Quick smoke test (baselines only, no training)
+## Quick start
+
+Environment and runtime check:
 
 ```bash
-python3 run_eval.py --config configs/default.yaml --max_samples 10
+aoae preflight --config configs/default.yaml
 ```
 
-### 3. Train PRISM adapter (~10 min on 1 GPU)
+Run baseline eval only:
 
 ```bash
-python3 run_train.py --config configs/default.yaml --stage prism
+aoae eval --config configs/default.yaml --max_samples 100
 ```
 
-### 4. Train AOAE policy via GRPO
+Train end to end:
 
 ```bash
-# Single GPU
-python3 run_train.py --config configs/default.yaml --stage grpo
-
-# Multi-GPU via torchrun
-torchrun --nproc_per_node 4 run_train.py --config configs/default.yaml --stage grpo
+aoae train --config configs/default.yaml --stage prism
+aoae train --config configs/default.yaml --stage grpo
+aoae eval --config configs/default.yaml --checkpoint outputs/default/policy_final.pt
 ```
 
-### 5. Evaluate with Pareto sweep
+Run the integrated local pipeline:
 
 ```bash
-python3 run_eval.py \
-    --config configs/default.yaml \
-    --checkpoint outputs/default/policy_final.pt
+aoae pipeline --config configs/default.yaml
 ```
 
-### 6. Full reproduction
+For configs with `hardware.tp_size > 1`, `aoae` now auto-relaunches itself under `torchrun` with the same local environment defaults used by the SLURM wrappers.
+
+## Paper and POC workflows
+
+PoC 1 soft-routing tradeoff:
 
 ```bash
-# Local (single GPU)
+aoae tau-sweep --config configs/poc1.yaml --max_samples 100
+```
+
+PoC 2 reuse-signal study:
+
+```bash
+aoae reuse-sweep --config configs/poc2.yaml --max_samples 100
+```
+
+Routing-only hard vs soft comparison:
+
+```bash
+aoae routing-sweep \
+  --hard_config configs/llada21_hard.yaml \
+  --soft_config configs/llada21_soft.yaml \
+  --max_samples 100
+```
+
+Ablation matrix:
+
+```bash
+aoae ablations --config configs/paper.yaml --max_samples 100
+```
+
+Run the full paper suite:
+
+```bash
+aoae paper-suite --config configs/paper.yaml --max_samples 100
+```
+
+Aggregate saved artifacts:
+
+```bash
+aoae comparison-table
+aoae kv-summary
+```
+
+## Reproduction wrapper
+
+`reproduce.sh` is now workflow-oriented instead of hardwired to one legacy path.
+
+Local:
+
+```bash
 bash reproduce.sh
+bash reproduce.sh --workflow paper --max_samples 100
+bash reproduce.sh --workflow poc1 --max_samples 100
+bash reproduce.sh --workflow poc2 --max_samples 100
+```
 
-# SLURM cluster (auto-chains PRISM → GRPO → Eval)
+SLURM:
+
+```bash
 bash reproduce.sh --slurm
-
-# With LLaDA2.1-mini on SLURM
-bash reproduce.sh --slurm --config configs/llada21_mini.yaml
+bash reproduce.sh --slurm --workflow paper --max_samples 100
+bash reproduce.sh --slurm --workflow ablations --max_samples 100
 ```
 
-## Configuration
+Supported workflows:
 
-All hyperparameters live in YAML configs. Key settings from `configs/default.yaml`:
+| Workflow | Local command | SLURM wrapper |
+| --- | --- | --- |
+| `pipeline` | `aoae pipeline` | `slurm/train.sh` + `slurm/eval.sh` |
+| `paper` | `aoae paper-suite` | `slurm/paper.sh suite` |
+| `poc1` | `aoae tau-sweep` | `slurm/paper.sh poc1` |
+| `poc2` | `aoae reuse-sweep` | `slurm/paper.sh poc2` |
+| `routing` | `aoae routing-sweep` | `slurm/paper.sh routing` |
+| `ablations` | `aoae ablations` | `slurm/paper.sh ablations` |
 
-| Parameter | Default | Description |
-|---|---|---|
-| `base_model.name_or_path` | `GSAI-ML/LLaDA-8B-Instruct` | HuggingFace model ID |
-| `base_model.backend` | `auto` | `auto` / `hf` / `dkv` / `dinfer` / `soft_moe` |
-| `policy.d_model` | 128 | Policy hidden dim |
-| `policy.n_layers` | 1 | Policy transformer layers |
-| `soft_mask.top_k` | 5 | Top-K for soft masking |
-| `prism.threshold` | 0.5 | PRISM remask threshold δ |
-| `grpo.group_size` | 8 | GRPO group size G |
-| `grpo.alpha` | 1.0 | Speed penalty exponent |
-| `grpo.beta` | 0.1 | Cache-thrashing penalty |
-| `grpo.clip_eps` | 0.2 | PPO/GRPO clipping ε |
-| `inference.steps` | 64 | Diffusion steps T |
-| `inference.compose_gamma` | 0.5 | Composed prediction strength (§3.6) |
-| `inference.disable_remask` | `false` | Ablation switch to disable remask actions while keeping other settings fixed |
-| `inference.reuse_signal.method` | `argmax_match` | Training-free safe-to-reuse gate (`argmax_match`, `topk_overlap`, `min_confidence`, `min_margin`, `js_divergence`, `temporal_confidence`) |
-| `inference.positional_cache.enabled` | `false` | Enable next-H positional speculative caching (`q_t` access head) |
-| `inference.positional_cache.horizon` | `4` | Next-H window for access prediction metrics |
-| `inference.positional_cache.refresh_budget` | `32` | Top-B non-mandatory refresh positions per step |
-| `inference.positional_cache.candidate_policy` | `learned_topb` | Access candidate policy (`learned_topb`, `sliding_window`, `confidence_topb`) |
-| `policy.use_positional_features` | `false` | Adds age + last-access features to policy state (enable for POC2) |
-| `policy.boundary_head.enabled` | `false` | Enable optional boundary action head (layer-wise refresh-depth proxy) |
-| `policy.boundary_head.num_bins` | `8` | Number of categorical bins for boundary action |
-| `evaluation.task_type` | `math` | Evaluator selection (`math` or `code`) |
-| `evaluation.code.timeout_sec` | `3.0` | Subprocess timeout for execution-based code evaluation |
-| `evaluation.code.cpu_time_limit_sec` | `2` | CPU RLIMIT for code evaluation subprocess |
-| `evaluation.code.memory_limit_mb` | `1024` | Memory RLIMIT for code evaluation subprocess |
-| `grpo.access_reward_weight` | `0.0` | Optional dense reward coefficient for next-H speculative access F1 |
-| `analysis.track_kv_dynamics` | `false` | Enable KV-dynamics proxy logging during speculative eval |
-| `analysis.attention_proxy_top_frac` | `0.1` | Fraction of highest-confidence positions used for confident-token drift proxy |
-| `base_model.routing_temperature` | 0.01 | Soft routing τ_r (soft_moe backend only) |
-| `data.eval_dataset_config` | unset | Optional HuggingFace dataset config (if unset, `openai/gsm8k` defaults to `main`) |
+The local CLI will automatically use `torchrun` for these workflows when the selected config requires multi-process tensor parallelism.
 
-## Experiment Tracking Outputs
-
-- `run_eval.py` now writes:
-  - `outputs/<run>/eval_results.json`
-  - `outputs/<run>/eval_metadata.json`
-  - `outputs/<run>/eval_tps_vs_accuracy.png`
-  - `outputs/<run>/kv_dynamics_records.json` (if `analysis.track_kv_dynamics=true`)
-  - `outputs/<run>/kv_dynamics_summary.json` (if enabled)
-  - `outputs/<run>/kv_dynamics_layer_drift.png` (if enabled and matplotlib available)
-  - `results/experiment_manifest.jsonl` (append-only registry across runs)
-- Build a consolidated table from saved artifacts:
-  - `python3 scripts/build_comparison_table.py`
-  - Outputs: `results/comparison_table.csv` and `results/comparison_table.md`
-- Run a speculative τ_r sweep for PoC1 / PoC1B:
-  - `python3 scripts/run_tau_sweep.py --config configs/dual_mini_tau01.yaml`
-  - Outputs: `outputs/sweeps/<name>/tau_sweep_summary.{json,csv,md}`
-  - Plots: `outputs/sweeps/<name>/tau_sweep_vs_tau.png`, `outputs/sweeps/<name>/tau_sweep_pareto.png`
-- Run a routing-only hard-vs-soft sweep for PoC0 / PoC1A:
-  - `python3 scripts/run_routing_sweep.py`
-  - Outputs: `outputs/sweeps/<name>/routing_sweep_full.{json,csv,md}`
-  - Outputs: `outputs/sweeps/<name>/routing_sweep_summary.{json,csv,md}`
-  - Plots: `outputs/sweeps/<name>/routing_sweep_vs_condition.png`, `outputs/sweeps/<name>/routing_sweep_pareto.png`
-  - Note: remasking is forced off in this sweep for clean routing attribution.
-- Run POC2 reuse-signal reliability sweep:
-  - `python3 scripts/run_reuse_signal_sweep.py --config configs/dual_mini_tau01.yaml --max_samples 200`
-  - Outputs: `outputs/sweeps/<name>/reuse_signal_sweep_full.{json,csv,md}`
-  - Decision artifact: `outputs/sweeps/<name>/best_method_by_constraint.{json,csv,md}`
-- Run ablation matrix:
-  - `python3 scripts/run_ablation_matrix.py --config configs/dual_mini_tau01.yaml --max_samples 200`
-  - Outputs: `outputs/ablations/<name>/ablation_matrix_results.{json,csv,md}`
-- Aggregate KV-dynamics summaries across runs:
-  - `python3 scripts/summarize_kv_dynamics.py`
-  - Outputs: `results/kv_dynamics_table.csv` and `results/kv_dynamics_table.md`
-
-POC2-friendly eval override example (no retraining):
+## Important commands
 
 ```bash
-python3 run_eval.py \
-  --config configs/dual_mini_tau01.yaml \
-  --mode speculative \
-  --reuse_signal_method js_divergence \
-  --reuse_signal_threshold 0.05 \
-  --disable_remask \
-  --track_kv_dynamics \
-  --enable_positional_cache \
-  --positional_cache_horizon 4 \
-  --positional_cache_refresh_budget 32
+aoae train --config configs/default.yaml --stage prism
+aoae train --config configs/default.yaml --stage grpo --resume auto
+aoae eval --config configs/default.yaml --checkpoint outputs/default/policy_final.pt
+aoae pipeline --config configs/default.yaml
+
+aoae tau-sweep --config configs/poc1.yaml
+aoae reuse-sweep --config configs/poc2.yaml
+aoae routing-sweep --hard_config configs/llada21_hard.yaml --soft_config configs/llada21_soft.yaml
+aoae ablations --config configs/paper.yaml
+aoae paper-suite --config configs/paper.yaml
+aoae comparison-table
+aoae kv-summary
 ```
 
-POC1 sweep example on GSM8K:
+## Artifact layout
+
+Single eval runs write:
+
+- `outputs/<run>/eval_results.json`
+- `outputs/<run>/eval_metadata.json`
+- `outputs/<run>/eval_tps_vs_accuracy.png`
+- `outputs/<run>/eval_predictions.json` when prediction saving is enabled
+- `outputs/<run>/kv_dynamics_*.json|png` when KV tracking is enabled
+
+Paper/POC workflows additionally write sweep summaries under:
+
+- `outputs/sweeps/...`
+- `outputs/ablations/...`
+- `outputs/paper_suite/...`
+
+Aggregated tables write to:
+
+- `results/comparison_table.csv`
+- `results/comparison_table.md`
+- `results/kv_dynamics_table.csv`
+- `results/kv_dynamics_table.md`
+
+## Testing
+
+Run the full suite:
 
 ```bash
-python3 scripts/run_tau_sweep.py \
-  --config configs/dual_mini_tau01.yaml \
-  --tau_r_values 0.001,0.01,0.05,0.1,0.2,0.5 \
-  --max_samples 200
+pytest -q
 ```
 
-POC0 / PoC1A routing-only sweep example on GSM8K:
+Run a focused subset:
 
 ```bash
-python3 scripts/run_routing_sweep.py \
-  --summary_method block_smode \
-  --tau_r_values 0.001,0.01,0.05,0.1,0.2,0.5 \
-  --max_samples 200
+pytest tests/test_cli_integration.py tests/test_poc1_tau_sweep.py tests/test_poc2_reuse_signals.py -q
 ```
 
-POC2 reuse-signal reliability sweep:
+## Notes
 
-```bash
-python3 scripts/run_reuse_signal_sweep.py \
-  --config configs/dual_mini_tau01.yaml \
-  --max_samples 200
-```
-
-MATH benchmark override:
-
-```bash
-python3 scripts/run_tau_sweep.py \
-  --config configs/dual_mini_tau01.yaml \
-  --eval_dataset hendrycks/competition_math \
-  --eval_split test \
-  --tau_r_values 0.001,0.01,0.05,0.1,0.2,0.5
-```
-
-HumanEval pass@1-style override (execution-based):
-
-```bash
-python3 run_eval.py \
-  --config configs/default.yaml \
-  --task_type code \
-  --eval_dataset openai_humaneval \
-  --eval_split test \
-  --skip_baselines \
-  --code_timeout_sec 3.0 \
-  --code_cpu_time_limit_sec 2 \
-  --code_memory_limit_mb 1024
-```
-
-## Architecture & Design
-
-1. **Multi-backend base model**: Automatically selects HuggingFace (LLaDA-8B), dKV-Cache patched model (real sparse attention), dInfer/SGLang (LLaDA2.X MoE), or soft-routed MoE (all experts active) based on model name. Set `base_model.backend` to override.
-
-2. **Unmask + Remask (no T2T)**: The policy uses two primitives — unmasking and remasking — preserving the any-order property of masked diffusion models. Token-to-Token editing is replaced by pure remasking, which defers correction to the base model's well-trained denoising capability.
-
-3. **Composed prediction**: The policy's cache stability signal sharpens the base model's token distribution at confident positions, increasing KV-cache hit rates without sacrificing quality at uncertain positions (§3.6).
-
-4. **Soft-routed MoE**: For controlled evaluation, the hard top-k expert routing in LLaDA2.1-mini is replaced with temperature-controlled soft routing, activating all 16B parameters per forward pass. This isolates AOAE's throughput gains from MoE sparsity (§3.7).
-
-5. **Policy-controlled dKV-Cache**: `DKVCacheManager` provides lightweight position tracking for training rollouts (thrash counting for reward, cache invalidation on remask). `PolicyGuidedCacheManager` wraps this for dInfer-integrated evaluation with detailed cache statistics.
-
-6. **Multi-GPU training**: Supports `torchrun` with PyTorch DDP. The base model is frozen; only the tiny policy (~500K params) and soft-mask gating params are trained. Gradient sync overhead is negligible.
-
-## Supported Base Models
-
-| Model | Config | Notes |
-|-------|--------|-------|
-| `GSAI-ML/LLaDA-8B-Instruct` | `configs/default.yaml` | Single GPU, recommended for dev |
-| `inclusionAI/LLaDA2.1-mini` | `configs/llada21_mini.yaml` | 16B, 2× GPU |
-| `inclusionAI/LLaDA2.1-mini` (soft-routed) | `configs/llada21_mini_soft.yaml` | 16B all active, 2× GPU |
-| `inclusionAI/LLaDA2.1-mini` (hard-routed) | `configs/llada21_mini_hard.yaml` | 16B (~1.4B active), 2× GPU |
-| `inclusionAI/LLaDA2.1-flash` | `configs/llada21_flash.yaml` | 100B MoE, 4× GPU + dInfer |
-| `inclusionAI/LLaDA2.0-flash` | — | 100B MoE, 4× GPU + dInfer |
-| `inclusionAI/LLaDA2.0-flash-CAP` | — | 100B MoE, accelerated decoding |
-
-## External Dependencies
-
-| Repo | Purpose | License |
-|------|---------|---------|
-| [inclusionAI/dInfer](https://github.com/inclusionAI/dInfer) | SGLang inference engine for LLaDA2.X | Apache-2.0 |
-| [horseee/dKV-Cache](https://github.com/horseee/dKV-Cache) | Delayed KV caching for dLLMs | MIT |
-
-## Citation
-
-```bibtex
-@article{aoae2026,
-  title={Any-Order Adaptive Editing: Decoupling Denoising and Steering in Masked Diffusion LLMs},
-  year={2026}
-}
-```
+- Legacy `run_*.py`, sweep-specific shell wrappers, and redundant YAML variants have been consolidated or removed.
+- The supported command surface is the `aoae` CLI plus the three generic scripts in `slurm/`.
+- If you need custom sweep parameters, pass them directly to the CLI instead of creating new one-off scripts.

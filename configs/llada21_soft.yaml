@@ -1,0 +1,128 @@
+# Canonical soft-routed LLaDA2.1-mini baseline config.
+
+base_model:
+  name_or_path: "inclusionAI/LLaDA2.1-mini"
+  torch_dtype: "bfloat16"
+  mask_token_id: 156895
+  backend: "soft_moe"
+  routing_temperature: 0.01
+  soft_topk: 16
+  allow_python_fallback_ops: true
+
+soft_mask:
+  top_k: 5
+  omega_s_init: 0.8
+  omega_a_init: 1.0
+  omega_b_init: 2.0
+
+policy:
+  d_model: 128
+  n_layers: 1
+  n_heads: 4
+  dropout: 0.0
+  use_positional_features: false
+  use_age_feature: true
+  use_last_action_feature: true
+  boundary_head:
+    enabled: false
+    num_bins: 8
+
+prism:
+  hidden_dim: 256
+  threshold: 0.5
+  train_samples: 10000
+  epochs: 3
+  lr: 1.0e-3
+  batch_size: 4
+
+cache:
+  enabled: true
+
+grpo:
+  group_size: 8
+  clip_eps: 0.2
+  alpha: 1.0
+  beta: 0.1
+  access_reward_weight: 0.0
+  lr: 3.0e-4
+  weight_decay: 0.01
+  epochs: 5
+  max_steps: 50000
+  batch_size: 2
+  grad_accum_steps: 8
+  warmup_steps: 200
+  max_grad_norm: 1.0
+  policy_temperature: 1.0
+
+inference:
+  steps: 64
+  gen_length: 256
+  temperature: 0.0
+  fallback_unmask: true
+  disable_remask: false
+  positional_cache:
+    enabled: false
+    horizon: 4
+    refresh_budget: 32
+    candidate_policy: "learned_topb"
+    window_radius: 8
+    use_topb_from_probs: true
+    force_mandatory: true
+    age_cap: 64
+  reuse_signal:
+    method: "argmax_match"
+    threshold: 0.0
+    top_k: 4
+    min_overlap: 1
+    min_streak: 2
+    grid:
+      argmax_match: [0.0]
+      topk_overlap: [0.0]
+      min_confidence: [0.3, 0.5, 0.7, 0.9]
+      min_margin: [0.0, 0.1, 0.2, 0.4]
+      js_divergence: [0.01, 0.03, 0.05, 0.1]
+      temporal_confidence: [0.3, 0.5, 0.7]
+  block_length: 32
+  compose_gamma: 0.5
+
+analysis:
+  track_kv_dynamics: false
+  keep_step_traces: true
+  locality_windows: [8, 16, 32]
+  confidence_threshold: 0.9
+  attention_proxy_top_frac: 0.1
+
+data:
+  train_dataset: "nvidia/OpenMathInstruct-2"
+  train_split: "train"
+  train_max_samples: 50000
+  eval_dataset: "openai/gsm8k"
+  eval_split: "test"
+  eval_max_samples: 1319
+  max_prompt_len: 512
+  max_answer_len: 256
+
+evaluation:
+  task_type: "math"
+  baseline_methods:
+    - "llada21_speed_mode"
+    - "llada21_quality_mode"
+  code:
+    timeout_sec: 3.0
+    cpu_time_limit_sec: 2
+    memory_limit_mb: 1024
+
+logging:
+  project: "aoae"
+  run_name: "llada21_soft"
+  log_every: 50
+  eval_every: 500
+  save_every: 500
+  output_dir: "outputs/llada21_soft/"
+  use_wandb: false
+
+hardware:
+  seed: 42
+  bf16: true
+  tp_size: 1
+  deterministic: false

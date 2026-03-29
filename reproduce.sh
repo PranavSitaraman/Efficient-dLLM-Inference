@@ -1,112 +1,208 @@
 #!/bin/bash
-# ============================================================
-# AOAE — Full Reproduction Script
-#
-# Usage:
-#   Local (single GPU):   bash reproduce.sh
-#   SLURM (multi-GPU):    bash reproduce.sh --slurm
-#   Custom config:        bash reproduce.sh --config configs/llada21_mini.yaml
-#
-# Expected wall-clock:
-#   LLaDA-8B on 1x A100:          ~4-8 hours
-#   LLaDA2.1-mini on 2x H100:     ~3-6 hours
-#   LLaDA2.1-flash on 8x H100:    ~6-12 hours
-# ============================================================
-set -e
+set -euo pipefail
 
-# --- Parse arguments ---
-CONFIG="configs/default.yaml"
+# Usage:
+#   bash reproduce.sh
+#   bash reproduce.sh --workflow paper --max_samples 100
+#   bash reproduce.sh --slurm --workflow poc1 --max_samples 100
+#   bash reproduce.sh --workflow routing -- --tau_r_values 0.01,0.05,0.1
+
+WORKFLOW="pipeline"
 USE_SLURM=false
-for arg in "$@"; do
-    case $arg in
-        --slurm)      USE_SLURM=true; shift ;;
-        --config)     shift; CONFIG="$1"; shift ;;
-        --config=*)   CONFIG="${arg#*=}"; shift ;;
+CONFIG=""
+CHECKPOINT=""
+MAX_SAMPLES=""
+STRICT_MOE=false
+FORWARD_ARGS=()
+
+resolve_default_config() {
+    case "$1" in
+        pipeline)  echo "configs/default.yaml" ;;
+        paper)     echo "configs/paper.yaml" ;;
+        poc1)      echo "configs/poc1.yaml" ;;
+        poc2)      echo "configs/poc2.yaml" ;;
+        ablations) echo "configs/paper.yaml" ;;
+        routing)   echo "configs/llada21_hard.yaml" ;;
+        *)
+            echo "Unknown workflow: $1" >&2
+            exit 1
+            ;;
+    esac
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --slurm)
+            USE_SLURM=true
+            shift
+            ;;
+        --workflow)
+            WORKFLOW="$2"
+            shift 2
+            ;;
+        --workflow=*)
+            WORKFLOW="${1#*=}"
+            shift
+            ;;
+        --config)
+            CONFIG="$2"
+            shift 2
+            ;;
+        --config=*)
+            CONFIG="${1#*=}"
+            shift
+            ;;
+        --checkpoint)
+            CHECKPOINT="$2"
+            shift 2
+            ;;
+        --checkpoint=*)
+            CHECKPOINT="${1#*=}"
+            shift
+            ;;
+        --max_samples)
+            MAX_SAMPLES="$2"
+            shift 2
+            ;;
+        --max_samples=*)
+            MAX_SAMPLES="${1#*=}"
+            shift
+            ;;
+        --strict_moe)
+            STRICT_MOE=true
+            shift
+            ;;
+        --)
+            shift
+            FORWARD_ARGS=("$@")
+            break
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            echo "Use -- to forward extra CLI flags." >&2
+            exit 1
+            ;;
     esac
 done
 
-# Extract output_dir from config YAML
-OUTPUT_DIR=$(python3 -c "import yaml; cfg=yaml.safe_load(open('$CONFIG')); print(cfg['logging']['output_dir'])" 2>/dev/null || echo "outputs/default/")
+if [[ -z "$CONFIG" ]]; then
+    CONFIG="$(resolve_default_config "$WORKFLOW")"
+fi
+
+STRICT_ARGS=()
+if $STRICT_MOE; then
+    STRICT_ARGS+=(--strict_moe)
+fi
+
+COMMON_ARGS=()
+if [[ -n "$CHECKPOINT" ]]; then
+    COMMON_ARGS+=(--checkpoint "$CHECKPOINT")
+fi
+if [[ -n "$MAX_SAMPLES" ]]; then
+    COMMON_ARGS+=(--max_samples "$MAX_SAMPLES")
+fi
+COMMON_ARGS+=("${FORWARD_ARGS[@]}")
+
+PIPELINE_EVAL_ARGS=()
+if [[ -n "$MAX_SAMPLES" ]]; then
+    PIPELINE_EVAL_ARGS+=(--max_samples "$MAX_SAMPLES")
+fi
+PIPELINE_EVAL_ARGS+=("${FORWARD_ARGS[@]}")
+
+OUTPUT_DIR="$(python3 - <<PY
+import yaml
+from pathlib import Path
+cfg = yaml.safe_load(open("$CONFIG"))
+print(cfg.get("logging", {}).get("output_dir", str(Path("outputs") / Path("$CONFIG").stem)))
+PY
+)"
 
 echo "=========================================="
-echo " AOAE Reproduction Pipeline"
+echo " AOAE Reproduction Wrapper"
+echo " Workflow:   $WORKFLOW"
 echo " Config:     $CONFIG"
 echo " Output dir: $OUTPUT_DIR"
 echo " SLURM:      $USE_SLURM"
 echo "=========================================="
 
-mkdir -p logs "$OUTPUT_DIR"
+mkdir -p logs outputs results
 
-# --- Step 0: Environment check ---
 echo ""
-echo "[Step 0] Checking environment..."
+echo "[Preflight] Checking environment..."
 python3 -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}, GPUs: {torch.cuda.device_count()}')"
 python3 -c "import transformers; print(f'Transformers {transformers.__version__}')"
-python3 scripts/preflight.py --config "$CONFIG" || true
+python3 -m aoae.cli preflight --config "$CONFIG" "${STRICT_ARGS[@]}" || true
 
 if $USE_SLURM; then
-    # ==============================
-    # SLURM submission mode
-    # ==============================
-    echo ""
-    echo "[Step 1] Submitting PRISM training to SLURM..."
-    PRISM_JOB=$(sbatch --parsable slurm/train_prism.sh "$CONFIG")
-    echo "  PRISM job: $PRISM_JOB"
+    case "$WORKFLOW" in
+        pipeline)
+            echo ""
+            echo "[Submit] PRISM -> GRPO -> Eval"
+            PRISM_JOB=$(sbatch --parsable slurm/train.sh prism "$CONFIG")
+            GRPO_JOB=$(sbatch --parsable --dependency=afterok:$PRISM_JOB slurm/train.sh grpo "$CONFIG" auto)
+            EVAL_JOB=$(sbatch --parsable --dependency=afterok:$GRPO_JOB slurm/eval.sh "$CONFIG" "$CHECKPOINT" "${PIPELINE_EVAL_ARGS[@]}")
+            echo "PRISM job: $PRISM_JOB"
+            echo "GRPO job:  $GRPO_JOB"
+            echo "Eval job:  $EVAL_JOB"
+            ;;
+        paper)
+            JOB=$(sbatch --parsable slurm/paper.sh suite "$CONFIG" "${COMMON_ARGS[@]}")
+            echo "Paper-suite job: $JOB"
+            ;;
+        poc1)
+            JOB=$(sbatch --parsable slurm/paper.sh poc1 "$CONFIG" "${COMMON_ARGS[@]}")
+            echo "PoC1 job: $JOB"
+            ;;
+        poc2)
+            JOB=$(sbatch --parsable slurm/paper.sh poc2 "$CONFIG" "${COMMON_ARGS[@]}")
+            echo "PoC2 job: $JOB"
+            ;;
+        ablations)
+            JOB=$(sbatch --parsable slurm/paper.sh ablations "$CONFIG" "${COMMON_ARGS[@]}")
+            echo "Ablations job: $JOB"
+            ;;
+        routing)
+            JOB=$(sbatch --parsable slurm/paper.sh routing configs/llada21_hard.yaml configs/llada21_soft.yaml "${FORWARD_ARGS[@]}")
+            echo "Routing-sweep job: $JOB"
+            ;;
+        *)
+            echo "Unknown workflow: $WORKFLOW" >&2
+            exit 1
+            ;;
+    esac
 
     echo ""
-    echo "[Step 2] Submitting GRPO training (depends on PRISM)..."
-    GRPO_JOB=$(sbatch --parsable --dependency=afterok:$PRISM_JOB slurm/train_grpo.sh "$CONFIG")
-    echo "  GRPO job: $GRPO_JOB"
-
-    echo ""
-    echo "[Step 3] Submitting evaluation (depends on GRPO)..."
-    EVAL_JOB=$(sbatch --parsable --dependency=afterok:$GRPO_JOB slurm/eval.sh "$CONFIG")
-    echo "  Eval job: $EVAL_JOB"
-
-    echo ""
-    echo "=========================================="
-    echo " All jobs submitted!"
-    echo " Monitor: squeue -u \$USER"
-    echo " PRISM:   $PRISM_JOB"
-    echo " GRPO:    $GRPO_JOB"
-    echo " Eval:    $EVAL_JOB"
-    echo "=========================================="
-
-else
-    # ==============================
-    # Local execution mode
-    # ==============================
-
-    # --- Step 1: Train PRISM adapter ---
-    echo ""
-    echo "[Step 1] Training PRISM quality adapter (10k samples, ~10 min)..."
-    python3 run_train.py --config $CONFIG --stage prism
-    echo "  PRISM adapter saved to $OUTPUT_DIR/prism_adapter.pt"
-
-    # --- Step 2: Train AOAE policy via GRPO ---
-    echo ""
-    echo "[Step 2] Training AOAE policy via GRPO (~2-6 hours)..."
-    python3 run_train.py --config $CONFIG --stage grpo
-    echo "  Policy saved to $OUTPUT_DIR/policy_final.pt"
-
-    # --- Step 3: Evaluate on GSM8K ---
-    echo ""
-    echo "[Step 3] Evaluating on GSM8K (baselines + AOAE Pareto sweep)..."
-    python3 run_eval.py \
-        --config $CONFIG \
-        --checkpoint $OUTPUT_DIR/policy_final.pt
-
-    # --- Step 4: Plot Pareto curves ---
-    echo ""
-    echo "[Step 4] Generating Pareto curves..."
-    python3 -m aoae.plot_pareto \
-        --results $OUTPUT_DIR/eval_results.json \
-        --output $OUTPUT_DIR/pareto.png 2>/dev/null || echo "  (matplotlib not installed, skipping plot)"
-
-    echo ""
-    echo "=========================================="
-    echo " Reproduction complete!"
-    echo " Results:     $OUTPUT_DIR/eval_results.json"
-    echo " Pareto plot: $OUTPUT_DIR/pareto.png"
-    echo "=========================================="
+    echo "Submitted. Monitor with: squeue -u \$USER"
+    exit 0
 fi
+
+case "$WORKFLOW" in
+    pipeline)
+        python3 -m aoae.cli pipeline --config "$CONFIG" "${COMMON_ARGS[@]}"
+        ;;
+    paper)
+        python3 -m aoae.cli paper-suite --config "$CONFIG" "${COMMON_ARGS[@]}"
+        ;;
+    poc1)
+        python3 -m aoae.cli tau-sweep --config "$CONFIG" "${COMMON_ARGS[@]}"
+        ;;
+    poc2)
+        python3 -m aoae.cli reuse-sweep --config "$CONFIG" "${COMMON_ARGS[@]}"
+        ;;
+    ablations)
+        python3 -m aoae.cli ablations --config "$CONFIG" "${COMMON_ARGS[@]}"
+        ;;
+    routing)
+        python3 -m aoae.cli routing-sweep \
+            --hard_config configs/llada21_hard.yaml \
+            --soft_config configs/llada21_soft.yaml \
+            "${FORWARD_ARGS[@]}"
+        ;;
+    *)
+        echo "Unknown workflow: $WORKFLOW" >&2
+        exit 1
+        ;;
+esac
+
+echo ""
+echo "Workflow complete."

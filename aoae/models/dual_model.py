@@ -3,13 +3,14 @@ Dual-Model MoE Wrapper for Speculative Diffusion (paper §3.7).
 
 Wraps a SINGLE LLaDA2.1-mini (16B MoE) model and toggles its routing:
   - Hard routing (auxiliary mode): top-k experts, ~1.4B active, fast
-  - Soft routing (primary mode):  all experts, ~16B active, slow but expressive
+  - Soft routing (primary mode):  native hard top-k plus tau-controlled
+    extra experts up to K_soft, slower but more expressive
 
 The auxiliary pass produces fast draft predictions whose KV states are
 pre-cached; the primary pass verifies and refines, reusing cached KV states
 where the two routing modes agree on the same token prediction.
 
-Only ONE copy of the 16B model is loaded; routing is toggled in-place.
+Only ONE copy of the 16B MoE backbone is loaded; routing is toggled in-place.
 """
 
 import torch
@@ -70,7 +71,8 @@ class DualModelWrapper(nn.Module):
     Loads ONE LLaDA2.X MoE model via the MoE-capable backend, patches its gates with
     SoftMoERouter, then switches routing mode per forward pass:
       - auxiliary_forward(): hard routing (~1.4B active, fast)
-      - primary_forward():  soft routing (~16B active, slow)
+      - primary_forward():  hard-top-k-preserving widened routing
+        (controlled by tau_r and soft_topk)
 
     This halves GPU memory compared to loading two separate model copies.
 
@@ -116,6 +118,9 @@ class DualModelWrapper(nn.Module):
         self._model = self._model.to(device)
         return self
 
+    def close(self) -> None:
+        self._model.close()
+
     def set_tau_r(self, tau_r: float) -> None:
         """Update routing temperature on the fly (for sweeps)."""
         self.tau_r = tau_r
@@ -142,7 +147,7 @@ class DualModelWrapper(nn.Module):
 
     @torch.no_grad()
     def primary_forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
-        """Slow forward: soft-routed MoE (~16B active) → [B, L, V] logits."""
+        """Primary forward with softened / widened routing → [B, L, V] logits."""
         set_soft_routing(self._model.model)
         try:
             return self._model.forward(input_ids)
