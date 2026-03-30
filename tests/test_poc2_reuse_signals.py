@@ -263,6 +263,55 @@ def _write_fake_kv_summary(output_dir: Path) -> None:
     )
 
 
+def _write_fake_reuse_trial(
+    output_dir: Path,
+    *,
+    reuse_signal_method: str,
+    reuse_signal_threshold: float,
+    accuracy: float,
+    tps: float,
+) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "eval_metadata.json").write_text(
+        json.dumps(
+            {
+                "run_name": output_dir.name,
+                "output_dir": str(output_dir),
+                "reuse_signal_method": reuse_signal_method,
+                "reuse_signal_threshold": reuse_signal_threshold,
+                "disable_remask": False,
+            }
+        )
+    )
+    (output_dir / "eval_results.json").write_text(
+        json.dumps(
+            [
+                {
+                    "method": "Speculative-AOAE",
+                    "accuracy": accuracy,
+                    "total_samples": 10,
+                    "correct_samples": int(round(accuracy * 10)),
+                    "avg_nfe": 128.0,
+                    "avg_tokens_per_sec": tps,
+                    "avg_gen_time_sec": 1.0,
+                    "config_note": f"tau_r=0.1,tau_pi=1.0,reuse={reuse_signal_method},pc=off",
+                    "cache_hit_rate": 0.6,
+                    "cache_commits": 10,
+                    "cache_invalidations": 2,
+                    "agreement_rate": 0.8,
+                    "draft_accept_rate": 0.7,
+                    "reuse_mean_safe": 0.6,
+                    "reuse_mean_js": max(reuse_signal_threshold, 0.0),
+                    "access_next_h_f1": 0.4,
+                    "access_next_h_spec_f1": 0.35,
+                    "access_effective_budget": 0.0,
+                }
+            ]
+        )
+    )
+    _write_fake_kv_summary(output_dir)
+
+
 class TestReuseSweepIntegration:
     def test_sweep_produces_outputs_and_baselines(self, monkeypatch, tmp_path):
         import aoae.paper as mod
@@ -305,6 +354,67 @@ class TestReuseSweepIntegration:
         assert all(float(r["mean_off_by_one_drift_ratio"]) == pytest.approx(0.25) for r in rows)
         assert any(r["variant"] == "argmax_match" for r in kv_rows)
         assert all(float(r["drift_delta"]) >= 0.0 for r in kv_rows)
+
+    def test_posthoc_rebuilds_variant_outputs_from_trial_dirs(self, monkeypatch, tmp_path):
+        import aoae.paper as mod
+
+        sweep_root = tmp_path / "poc2_reuse_signal_sweep"
+        _write_fake_reuse_trial(
+            sweep_root / "no_reuse_thr_-1p0000",
+            reuse_signal_method="js_divergence",
+            reuse_signal_threshold=-1.0,
+            accuracy=0.50,
+            tps=29.0,
+        )
+        _write_fake_reuse_trial(
+            sweep_root / "oracle_reuse_thr_999p0000",
+            reuse_signal_method="js_divergence",
+            reuse_signal_threshold=999.0,
+            accuracy=0.40,
+            tps=17.2,
+        )
+        _write_fake_reuse_trial(
+            sweep_root / "argmax_match_thr_0p0000",
+            reuse_signal_method="argmax_match",
+            reuse_signal_threshold=0.0,
+            accuracy=0.50,
+            tps=19.7,
+        )
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "reuse-posthoc",
+                "--sweep_root",
+                str(sweep_root),
+            ],
+        )
+        mod.reuse_signal_posthoc_main()
+
+        full_json = sweep_root / "reuse_signal_sweep_full.json"
+        kv_json = sweep_root / "reuse_signal_kv_variant_summary.json"
+        plot_path = sweep_root / "reuse_signal_layer_drift_variants.png"
+
+        assert full_json.exists()
+        assert kv_json.exists()
+        assert plot_path.exists()
+
+        rows = json.loads(full_json.read_text())
+        kv_rows = json.loads(kv_json.read_text())
+
+        assert {row["reuse_signal_method"] for row in rows} == {
+            "no_reuse",
+            "oracle_reuse",
+            "argmax_match",
+        }
+        assert {row["variant"] for row in kv_rows} == {
+            "no_reuse",
+            "oracle_reuse",
+            "argmax_match",
+        }
+        assert all(row["kv_drift_measure"] == "exact_kv" for row in rows)
+        assert all(float(row["mean_off_by_one_drift_ratio"]) == pytest.approx(0.25) for row in rows)
 
     def test_missing_schedule_defaults_to_blockwise_without_checkpoint(self, monkeypatch, tmp_path):
         import aoae.paper as mod

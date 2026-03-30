@@ -2196,6 +2196,107 @@ class TestRunBlockwiseSpeculativeInference:
         assert output_ids[0, 1:].tolist() == [0, 1]
         assert stats["primary_steps"] == 2
 
+    def test_blockwise_runner_tracks_kv_dynamics_when_enabled(self, monkeypatch):
+        from aoae.dinfer_integration import run_blockwise_speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "analysis": {"track_kv_dynamics": True, "track_attention_deviation": False},
+            "inference": {
+                "gen_length": 2,
+                "block_length": 2,
+                "fallback_unmask": True,
+                "disable_remask": False,
+                "reuse_signal": {"method": "argmax_match"},
+                "llada21_official": {
+                    "use_block_diffusion": True,
+                    "threshold": 0.7,
+                    "editing_threshold": 0.5,
+                    "max_post_steps": 2,
+                    "enable_mbe": False,
+                },
+            },
+        }
+
+        class DummyDualModel:
+            def __init__(self):
+                self.calls = 0
+                self.diag_calls = 0
+
+            def dual_forward_resp(self, input_ids, resp_slice, need_hidden=False, need_all_hidden=False):
+                del input_ids, resp_slice, need_hidden, need_all_hidden
+                self.calls += 1
+                if self.calls == 1:
+                    primary_logits = torch.tensor(
+                        [[[8.0, 0.0, 0.0], [0.0, 0.2, 0.0]]],
+                        dtype=torch.float32,
+                    )
+                    auxiliary_logits = torch.tensor(
+                        [[[8.0, 0.0, 0.0], [0.0, 0.0, 6.0]]],
+                        dtype=torch.float32,
+                    )
+                    agreement = torch.tensor([[True, False]])
+                else:
+                    primary_logits = torch.tensor(
+                        [[[8.0, 0.0, 0.0], [0.0, 7.0, 0.0]]],
+                        dtype=torch.float32,
+                    )
+                    auxiliary_logits = torch.tensor(
+                        [[[8.0, 0.0, 0.0], [7.0, 0.0, 0.0]]],
+                        dtype=torch.float32,
+                    )
+                    agreement = torch.tensor([[True, False]])
+                return types.SimpleNamespace(
+                    primary_logits=primary_logits,
+                    auxiliary_logits=auxiliary_logits,
+                    agreement=agreement,
+                    agreement_rate=agreement.float().mean().item(),
+                    primary_hidden=None,
+                    primary_hidden_states=None,
+                )
+
+            def primary_forward_with_diagnostics(self, input_ids, output_attentions=True, output_kv=True):
+                del input_ids, output_attentions, output_kv
+                self.diag_calls += 1
+                if self.diag_calls == 1:
+                    hidden = [torch.tensor([[[0.0], [1.0], [2.0]]], dtype=torch.float32)]
+                    layer_kv = [(
+                        torch.tensor([[[[0.0], [1.0], [2.0]]]], dtype=torch.float32),
+                        torch.tensor([[[[0.0], [1.5], [2.5]]]], dtype=torch.float32),
+                    )]
+                else:
+                    hidden = [torch.tensor([[[0.0], [2.0], [4.0]]], dtype=torch.float32)]
+                    layer_kv = [(
+                        torch.tensor([[[[0.0], [2.0], [4.0]]]], dtype=torch.float32),
+                        torch.tensor([[[[0.0], [2.5], [4.5]]]], dtype=torch.float32),
+                    )]
+                logits = torch.zeros((1, 3, 3), dtype=torch.float32)
+                return logits, hidden, None, layer_kv
+
+        def fake_reuse_signal(resp_logits, aux_logits, cfg, state=None):
+            del resp_logits, aux_logits, cfg, state
+            return torch.zeros((1, 2), dtype=torch.bool), None, {}
+
+        monkeypatch.setattr("aoae.dinfer_integration.compute_reuse_signal", fake_reuse_signal)
+
+        prompt_ids = torch.tensor([[1]], dtype=torch.long)
+        output_ids, stats = run_blockwise_speculative_inference(
+            dual_model=DummyDualModel(),
+            policy=None,
+            soft_mask_module=None,
+            prism_adapter=None,
+            prompt_ids=prompt_ids,
+            cfg=cfg,
+        )
+
+        assert output_ids.shape == (1, 3)
+        assert "kv_dynamics" in stats
+        summary = stats["kv_dynamics"]["summary"]
+        assert summary["layer_drift_measure"] == "exact_kv"
+        assert summary["exact_kv_drift_steps"] == 1
+        assert "off_by_one_drift_ratio" in summary
+        assert stats["kv_dynamics"]["per_layer"]
+
 
 class TestHFBlockCausalBias:
     def test_hf_path_uses_attention_bias_when_model_requests_it(self):

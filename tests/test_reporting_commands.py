@@ -90,7 +90,12 @@ def test_kv_summary_main(tmp_path):
                 "num_records": 3,
                 "mean_agreement": 0.7,
                 "mean_access": 0.2,
+                "layer_drift_measure": "exact_kv",
+                "exact_kv_drift_steps": 3,
+                "hidden_state_proxy_steps": 0,
                 "mean_layer_drift_slope": 0.1,
+                "attention_deviation_available": True,
+                "mean_attention_deviation_slope": 0.03,
                 "mean_off_by_one_drift_ratio": 0.05,
                 "mean_confident_token_drift_ratio": 0.04,
                 "mean_thrash_rate_given_cached": 0.02,
@@ -114,3 +119,4 @@ def test_kv_summary_main(tmp_path):
     assert csv_path.exists()
     assert md_path.exists()
     assert "mean_thrash_rate_given_cached" in csv_path.read_text()
+    assert "layer_drift_measure" in csv_path.read_text()
