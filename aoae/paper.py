@@ -349,6 +349,128 @@ def _plot_reuse_pareto(rows: List[Dict[str, Any]], output_root: Path) -> None:
     print(f"Cache vs accuracy plot saved to {out_path2}")
 
 
+def _build_reuse_kv_variant_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    variant_rows = [row for row in rows if int(row.get("is_best_threshold", 0)) == 1]
+    if not variant_rows:
+        variant_rows = rows
+
+    out: List[Dict[str, Any]] = []
+    for row in variant_rows:
+        per_layer = row.get("per_layer_drift", [])
+        drift_vals = [
+            _safe_float(layer.get("mean_drift", layer.get("mean_hidden_drift", 0.0)))
+            for layer in per_layer
+        ]
+        drift_start = drift_vals[0] if drift_vals else 0.0
+        drift_end = drift_vals[-1] if drift_vals else 0.0
+        monotonic_pairs = 0.0
+        monotonic_non_decreasing = 0
+        if len(drift_vals) >= 2:
+            comparisons = [
+                drift_vals[idx + 1] >= drift_vals[idx]
+                for idx in range(len(drift_vals) - 1)
+            ]
+            monotonic_pairs = sum(float(flag) for flag in comparisons) / len(comparisons)
+            monotonic_non_decreasing = int(all(comparisons))
+
+        mean_age = row.get("mean_age_drift", {})
+        out.append(
+            {
+                "variant": str(row.get("reuse_signal_method", "")),
+                "threshold": str(row.get("reuse_signal_threshold", "")),
+                "variant_label": (
+                    f"{row.get('reuse_signal_method', '')}"
+                    f"@{_safe_float(row.get('reuse_signal_threshold', 0.0)):.3g}"
+                ),
+                "kv_drift_measure": str(row.get("kv_drift_measure", "unavailable")),
+                "layer_count": len(drift_vals),
+                "drift_start": f"{drift_start:.6f}",
+                "drift_end": f"{drift_end:.6f}",
+                "drift_delta": f"{(drift_end - drift_start):.6f}",
+                "mean_layer_drift_slope": f"{_safe_float(row.get('mean_layer_drift_slope', 0.0)):.6f}",
+                "mean_off_by_one_drift_ratio": f"{_safe_float(row.get('mean_off_by_one_drift_ratio', 0.0)):.6f}",
+                "age1_drift": f"{_safe_float(mean_age.get('age1', 0.0)):.6f}",
+                "age2p_drift": f"{_safe_float(mean_age.get('age2p', 0.0)):.6f}",
+                "monotonic_non_decreasing": monotonic_non_decreasing,
+                "monotonic_pair_fraction": f"{monotonic_pairs:.6f}",
+                "accuracy": str(row.get("accuracy", "")),
+                "tps": str(row.get("tps", "")),
+                "per_layer_drift_preview": str(row.get("per_layer_drift_preview", "")),
+                "output_dir": str(row.get("output_dir", "")),
+            }
+        )
+    return out
+
+
+def _plot_reuse_layer_drift_variants(rows: List[Dict[str, Any]], output_root: Path) -> None:
+    try:
+        import matplotlib
+
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        print(f"Layer-drift variant plot skipped (matplotlib unavailable): {exc}")
+        return
+
+    variant_rows = [row for row in rows if int(row.get("is_best_threshold", 0)) == 1]
+    if not variant_rows:
+        variant_rows = rows
+    variant_rows = [row for row in variant_rows if row.get("per_layer_drift")]
+    if not variant_rows:
+        return
+
+    variant_rows = sorted(variant_rows, key=lambda row: str(row.get("reuse_signal_method", "")))
+    cmap = plt.colormaps.get_cmap("tab10")
+    fig, ax = plt.subplots(1, 1, figsize=(8.5, 5.5))
+
+    for idx, row in enumerate(variant_rows):
+        per_layer = row.get("per_layer_drift", [])
+        xs = [int(layer.get("layer_idx", 0)) for layer in per_layer]
+        ys = [
+            _safe_float(layer.get("mean_drift", layer.get("mean_hidden_drift", 0.0)))
+            for layer in per_layer
+        ]
+        if not xs:
+            continue
+        color = cmap(idx / max(len(variant_rows) - 1, 1))
+        label = (
+            f"{row.get('reuse_signal_method', '')}"
+            f"@{_safe_float(row.get('reuse_signal_threshold', 0.0)):.3g}"
+        )
+        ax.plot(
+            xs,
+            ys,
+            "o-",
+            linewidth=2,
+            markersize=4,
+            color=color,
+            label=label,
+        )
+
+    measures = {str(row.get("kv_drift_measure", "unavailable")) for row in variant_rows}
+    if len(measures) == 1:
+        measure_label = next(iter(measures))
+    else:
+        measure_label = "mixed"
+    if measure_label == "exact_kv":
+        ylabel = "Mean KV drift"
+    elif measure_label == "hidden_state_proxy":
+        ylabel = "Mean hidden-state drift"
+    else:
+        ylabel = "Mean drift"
+
+    ax.set_xlabel("Layer index")
+    ax.set_ylabel(ylabel)
+    ax.set_title("PoC 2: Layer-wise Drift by Variant")
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=7, loc="upper left", ncols=2)
+    fig.tight_layout()
+    out_path = output_root / "reuse_signal_layer_drift_variants.png"
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    print(f"Layer-drift variant plot saved to {out_path}")
+
+
 def _plot_routing_summary(rows: List[Dict[str, Any]], output_root: Path, summary_method: str) -> None:
     try:
         import matplotlib
@@ -1263,6 +1385,7 @@ def reuse_signal_sweep_main(argv: Optional[List[str]] = None) -> None:
     full_json = output_root / "reuse_signal_sweep_full.json"
     full_csv = output_root / "reuse_signal_sweep_full.csv"
     full_md = output_root / "reuse_signal_sweep_full.md"
+    kv_variant_rows = _build_reuse_kv_variant_rows(rows)
     if is_global_rank_zero():
         full_json.write_text(json.dumps(rows, indent=2))
         write_csv(rows, full_csv)
@@ -1275,13 +1398,24 @@ def reuse_signal_sweep_main(argv: Optional[List[str]] = None) -> None:
         write_csv(decisions, decision_csv)
         write_markdown(decisions, decision_md)
 
+        kv_json = output_root / "reuse_signal_kv_variant_summary.json"
+        kv_csv = output_root / "reuse_signal_kv_variant_summary.csv"
+        kv_md = output_root / "reuse_signal_kv_variant_summary.md"
+        kv_json.write_text(json.dumps(kv_variant_rows, indent=2))
+        write_csv(kv_variant_rows, kv_csv)
+        write_markdown(kv_variant_rows, kv_md)
+
         print(f"\nReuse-signal full table written to {full_json}")
         print(f"Reuse-signal full table written to {full_csv}")
         print(f"Reuse-signal full table written to {full_md}")
         print(f"Decision table written to {decision_json}")
         print(f"Decision table written to {decision_csv}")
         print(f"Decision table written to {decision_md}")
+        print(f"KV variant summary written to {kv_json}")
+        print(f"KV variant summary written to {kv_csv}")
+        print(f"KV variant summary written to {kv_md}")
         _plot_reuse_pareto(rows, output_root)
+        _plot_reuse_layer_drift_variants(rows, output_root)
 
     _close_preloaded_runtime(shared_dual_model)
 

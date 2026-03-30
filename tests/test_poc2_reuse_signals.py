@@ -239,11 +239,36 @@ def _fake_reuse_result(method="argmax_match", threshold=0.0):
     )
 
 
+def _write_fake_kv_summary(output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "kv_dynamics_summary.json").write_text(
+        json.dumps(
+            {
+                "layer_drift_measure": "exact_kv",
+                "exact_kv_drift_steps": 3,
+                "hidden_state_proxy_steps": 0,
+                "mean_layer_drift_slope": 0.125,
+                "mean_off_by_one_drift_ratio": 0.25,
+                "mean_age_drift": {
+                    "age0": 0.8,
+                    "age1": 0.5,
+                    "age2p": 2.0,
+                },
+                "per_layer_drift": [
+                    {"layer_idx": 0, "mean_drift": 0.1},
+                    {"layer_idx": 1, "mean_drift": 0.2},
+                ],
+            }
+        )
+    )
+
+
 class TestReuseSweepIntegration:
     def test_sweep_produces_outputs_and_baselines(self, monkeypatch, tmp_path):
         import aoae.paper as mod
 
         def mock_eval(cfg, **kwargs):
+            _write_fake_kv_summary(Path(cfg["logging"]["output_dir"]))
             return [_fake_reuse_result()]
 
         monkeypatch.setattr(mod, "eval_main", mock_eval)
@@ -264,14 +289,22 @@ class TestReuseSweepIntegration:
 
         assert (tmp_path / "out" / "reuse_signal_sweep_full.json").exists()
         assert (tmp_path / "out" / "best_method_by_constraint.json").exists()
+        assert (tmp_path / "out" / "reuse_signal_kv_variant_summary.json").exists()
 
         with (tmp_path / "out" / "reuse_signal_sweep_full.json").open() as f:
             rows = json.load(f)
+        with (tmp_path / "out" / "reuse_signal_kv_variant_summary.json").open() as f:
+            kv_rows = json.load(f)
         methods = [r["reuse_signal_method"] for r in rows]
         assert "no_reuse" in methods
         assert "oracle_reuse" in methods
         assert "argmax_match" in methods
         assert "js_divergence" in methods
+        assert all(r["kv_drift_measure"] == "exact_kv" for r in rows)
+        assert all("L0:0.1000" in r["per_layer_drift_preview"] for r in rows)
+        assert all(float(r["mean_off_by_one_drift_ratio"]) == pytest.approx(0.25) for r in rows)
+        assert any(r["variant"] == "argmax_match" for r in kv_rows)
+        assert all(float(r["drift_delta"]) >= 0.0 for r in kv_rows)
 
     def test_missing_schedule_defaults_to_blockwise_without_checkpoint(self, monkeypatch, tmp_path):
         import aoae.paper as mod
