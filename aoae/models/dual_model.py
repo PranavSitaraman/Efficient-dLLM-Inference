@@ -209,11 +209,7 @@ class DualModelWrapper(nn.Module):
 
     @torch.no_grad()
     def primary_forward_with_diagnostics(
-        self,
-        input_ids: torch.LongTensor,
-        *,
-        output_attentions: bool = True,
-        output_kv: bool = True,
+        self, input_ids: torch.LongTensor,
     ) -> Tuple[
         torch.Tensor,
         List[torch.Tensor],
@@ -225,8 +221,8 @@ class DualModelWrapper(nn.Module):
         try:
             return self._model.forward_with_diagnostics(
                 input_ids,
-                output_attentions=output_attentions,
-                output_kv=output_kv,
+                output_attentions=True,
+                output_kv=True,
             )
         finally:
             set_hard_routing(self._model.model)

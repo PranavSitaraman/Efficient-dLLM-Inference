@@ -150,7 +150,6 @@ class SpeculativeDynamicsTracker:
         layers: List[torch.Tensor],
         changed: torch.Tensor,
         layer_kv: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
-        valid_mask: Optional[torch.Tensor] = None,
     ) -> str:
         drift_by_layer: Optional[List[torch.Tensor]] = None
         drift_kind = "hidden_state_proxy"
@@ -170,15 +169,10 @@ class SpeculativeDynamicsTracker:
 
         self.layer_drift_kind_counts[drift_kind] += 1
         for i, drift in enumerate(drift_by_layer):
-            drift_for_stats = drift
-            if valid_mask is not None:
-                drift_for_stats = drift[valid_mask]
-                if drift_for_stats.numel() == 0:
-                    continue
             if len(self.layer_sum) <= i:
                 self.layer_sum.append(0.0)
                 self.layer_count.append(0)
-            self.layer_sum[i] += float(drift_for_stats.mean().item())
+            self.layer_sum[i] += float(drift.mean().item())
             self.layer_count[i] += 1
 
             if self.age is not None:
@@ -186,8 +180,6 @@ class SpeculativeDynamicsTracker:
                 age1 = self.age == 1
                 age2p = self.age >= 2
                 for name, mask in (("age0", age0), ("age1", age1), ("age2p", age2p)):
-                    if valid_mask is not None:
-                        mask = mask & valid_mask
                     vals = drift[mask]
                     if vals.numel() > 0:
                         self.age_drift_sum[name] += float(vals.mean().item())
@@ -245,13 +237,12 @@ class SpeculativeDynamicsTracker:
         q_t: Optional[torch.Tensor] = None,
         layer_kv: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
         layer_attentions: Optional[List[torch.Tensor]] = None,
-        valid_mask: Optional[torch.Tensor] = None,
     ):
         """Observe one diffusion step (response-region tensors only)."""
         self._ensure_buffers(mask_ind)
         changed = (u_t.bool() | r_t.bool())
         drift_kind = self._accumulate_layer_drift(
-            layer_hiddens, changed=changed, layer_kv=layer_kv, valid_mask=valid_mask,
+            layer_hiddens, changed=changed, layer_kv=layer_kv,
         )
         self._accumulate_locality(changed)
         has_attention_deviation = self._accumulate_attention_deviation(layer_attentions)
@@ -260,12 +251,8 @@ class SpeculativeDynamicsTracker:
             # Proxy for "most-attended tokens drift less":
             # use top-confidence positions as a lightweight attention proxy.
             drift_last = torch.norm(layer_hiddens[-1] - self.prev_layers[-1], dim=-1)
-            if valid_mask is not None:
-                flat_prob = max_prob[valid_mask]
-                flat_drift = drift_last[valid_mask]
-            else:
-                flat_prob = max_prob.reshape(-1)
-                flat_drift = drift_last.reshape(-1)
+            flat_prob = max_prob.reshape(-1)
+            flat_drift = drift_last.reshape(-1)
             if flat_prob.numel() > 0:
                 frac = max(min(self.cfg.attention_proxy_top_frac, 1.0), 1e-3)
                 k = max(1, int(frac * flat_prob.numel()))
@@ -276,16 +263,8 @@ class SpeculativeDynamicsTracker:
                 self.sum_confident_drift_ratio += ratio
                 self.count_confident_drift_ratio += 1
 
-        if valid_mask is not None:
-            masked_vals = max_prob[mask_ind & valid_mask]
-            unmasked_vals = max_prob[(~mask_ind) & valid_mask]
-            agreement_vals = agreement[valid_mask]
-            access_vals = q_t[valid_mask] if q_t is not None else None
-        else:
-            masked_vals = max_prob[mask_ind]
-            unmasked_vals = max_prob[~mask_ind]
-            agreement_vals = agreement
-            access_vals = q_t if q_t is not None else None
+        masked_vals = max_prob[mask_ind]
+        unmasked_vals = max_prob[~mask_ind]
         if masked_vals.numel() > 0:
             self.sum_conf_masked += float(masked_vals.mean().item())
             self.count_conf_masked += 1
@@ -293,11 +272,10 @@ class SpeculativeDynamicsTracker:
             self.sum_conf_unmasked += float(unmasked_vals.mean().item())
             self.count_conf_unmasked += 1
 
-        if agreement_vals.numel() > 0:
-            self.sum_agreement += float(agreement_vals.float().mean().item())
-            self.count_agreement += 1
-        if access_vals is not None and access_vals.numel() > 0:
-            self.sum_access += float(access_vals.float().mean().item())
+        self.sum_agreement += float(agreement.float().mean().item())
+        self.count_agreement += 1
+        if q_t is not None:
+            self.sum_access += float(q_t.float().mean().item())
             self.count_access += 1
 
         if self.cached is not None:
