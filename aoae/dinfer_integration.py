@@ -110,6 +110,53 @@ def _primary_forward_with_blockwise_diagnostics(
         return diagnostics_fn(input_ids)
 
 
+def _observe_blockwise_kv_dynamics(
+    dynamics_tracker: SpeculativeDynamicsTracker,
+    *,
+    layer_hiddens: List[torch.Tensor],
+    max_prob: torch.Tensor,
+    mask_ind: torch.Tensor,
+    agreement: torch.Tensor,
+    u_t: torch.Tensor,
+    r_t: torch.Tensor,
+    kappa_t: torch.Tensor,
+    q_t: torch.Tensor,
+    layer_kv: Optional[List[Tuple[torch.Tensor, torch.Tensor]]],
+    valid_mask: torch.Tensor,
+) -> None:
+    """Compat wrapper for newer/older tracker.observe_step signatures."""
+    try:
+        dynamics_tracker.observe_step(
+            layer_hiddens=layer_hiddens,
+            max_prob=max_prob,
+            mask_ind=mask_ind,
+            agreement=agreement,
+            u_t=u_t,
+            r_t=r_t,
+            kappa_t=kappa_t,
+            q_t=q_t,
+            layer_kv=layer_kv,
+            layer_attentions=None,
+            valid_mask=valid_mask,
+        )
+    except TypeError as exc:
+        message = str(exc)
+        if "valid_mask" not in message:
+            raise
+        dynamics_tracker.observe_step(
+            layer_hiddens=layer_hiddens,
+            max_prob=max_prob,
+            mask_ind=mask_ind,
+            agreement=agreement,
+            u_t=u_t,
+            r_t=r_t,
+            kappa_t=kappa_t,
+            q_t=q_t,
+            layer_kv=layer_kv,
+            layer_attentions=None,
+        )
+
+
 @dataclass
 class CacheStats:
     """Statistics for a single inference run."""
@@ -510,7 +557,8 @@ def run_blockwise_speculative_inference(
                 tracked_agreement[:, rel_slice] = raw_agreement.float()
                 valid_mask = torch.zeros((B, L_gen), dtype=torch.bool, device=device)
                 valid_mask[:, :min(tracked_prefix_len, prefix_resp_len)] = True
-                dynamics_tracker.observe_step(
+                _observe_blockwise_kv_dynamics(
+                    dynamics_tracker,
                     layer_hiddens=full_layer_hiddens,
                     max_prob=tracked_max_prob,
                     mask_ind=full_mask_ind,
@@ -520,7 +568,6 @@ def run_blockwise_speculative_inference(
                     kappa_t=kappa_full,
                     q_t=torch.zeros_like(u_full),
                     layer_kv=full_layer_kv,
-                    layer_attentions=None,
                     valid_mask=valid_mask,
                 )
                 tracked_prefix_len = max(tracked_prefix_len, prefix_resp_len)
@@ -608,7 +655,8 @@ def run_blockwise_speculative_inference(
                 tracked_agreement[:, rel_slice] = raw_agreement.float()
                 valid_mask = torch.zeros((B, L_gen), dtype=torch.bool, device=device)
                 valid_mask[:, :min(tracked_prefix_len, prefix_resp_len)] = True
-                dynamics_tracker.observe_step(
+                _observe_blockwise_kv_dynamics(
+                    dynamics_tracker,
                     layer_hiddens=full_layer_hiddens,
                     max_prob=tracked_max_prob,
                     mask_ind=full_mask_ind,
@@ -618,7 +666,6 @@ def run_blockwise_speculative_inference(
                     kappa_t=kappa_full,
                     q_t=torch.zeros_like(u_full),
                     layer_kv=full_layer_kv,
-                    layer_attentions=None,
                     valid_mask=valid_mask,
                 )
                 tracked_prefix_len = max(tracked_prefix_len, prefix_resp_len)
