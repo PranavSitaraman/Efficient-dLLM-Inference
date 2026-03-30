@@ -267,6 +267,7 @@ PASSTHROUGH_COMMANDS = [
     ("tau-sweep", "Run the PoC 1 routing-temperature sweep.", "aoae.paper", "tau_sweep_main", "tau-sweep"),
     ("routing-sweep", "Run the hard-vs-soft routing comparison sweep.", "aoae.paper", "routing_sweep_main", "routing-sweep"),
     ("reuse-sweep", "Run the PoC 2 KV-reuse signal sweep.", "aoae.paper", "reuse_signal_sweep_main", "reuse-sweep"),
+    ("reuse-posthoc", "Rebuild PoC 2 KV/reuse summaries from saved sweep artifacts.", "aoae.paper", "reuse_signal_posthoc_main", "reuse-posthoc"),
     ("ablations", "Run the AOAE ablation matrix.", "aoae.paper", "ablation_matrix_main", "ablations"),
     ("paper-suite", "Run the paper-aligned end-to-end experiment suite.", "aoae.paper", "paper_suite_main", "paper-suite"),
     ("comparison-table", "Build a comparison table from eval artifacts.", "aoae.reporting", "comparison_table_main", "comparison-table"),

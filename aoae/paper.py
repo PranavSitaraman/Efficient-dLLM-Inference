@@ -23,6 +23,7 @@ import yaml
 
 from .evaluate import EvalResult, _load_eval_dataset, main as eval_main
 from .experiment_utils import (
+    SUMMARY_METHOD_ALIASES,
     load_json,
     parse_float_list,
     select_summary_row,
@@ -400,6 +401,221 @@ def _build_reuse_kv_variant_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, A
             }
         )
     return out
+
+
+def _select_summary_result_dict(
+    results: Any,
+    method: str,
+    note_contains: Optional[str] = None,
+) -> Dict[str, Any]:
+    if not isinstance(results, list):
+        raise RuntimeError(f"Expected eval_results.json to contain a list, got {type(results).__name__}.")
+    candidate_methods = SUMMARY_METHOD_ALIASES.get(method, (method,))
+    rows = [
+        row
+        for row in results
+        if isinstance(row, dict) and str(row.get("method", "")) in candidate_methods
+    ]
+    if note_contains:
+        filtered = [row for row in rows if note_contains in str(row.get("config_note", ""))]
+        if filtered:
+            rows = filtered
+    if len(rows) != 1:
+        notes = [str(row.get("config_note", "")) for row in rows]
+        methods = sorted({str(row.get("method", "")) for row in results if isinstance(row, dict)})
+        raise RuntimeError(
+            f"Expected exactly one eval row for method={method!r}, "
+            f"note_contains={note_contains!r}; got {len(rows)} rows: {notes}. "
+            f"Candidate methods tried: {list(candidate_methods)!r}. "
+            f"Available methods: {methods}"
+        )
+    return rows[0]
+
+
+def _infer_reuse_signal_label(run_dir: Path, metadata: Dict[str, Any]) -> str:
+    slug = run_dir.name
+    if slug.startswith("no_reuse"):
+        return "no_reuse"
+    if slug.startswith("oracle_reuse"):
+        return "oracle_reuse"
+    reuse_method = str(metadata.get("reuse_signal_method", "argmax_match"))
+    threshold = _safe_float(metadata.get("reuse_signal_threshold", 0.0))
+    if reuse_method == "js_divergence" and threshold < 0.0:
+        return "no_reuse"
+    if reuse_method == "js_divergence" and threshold >= 900.0:
+        return "oracle_reuse"
+    return reuse_method
+
+
+def _build_reuse_row_from_trial_artifacts(
+    run_dir: Path,
+    *,
+    summary_method: str,
+    note_contains: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    results_path = run_dir / "eval_results.json"
+    metadata_path = run_dir / "eval_metadata.json"
+    kv_summary_path = run_dir / "kv_dynamics_summary.json"
+    if not results_path.exists() or not metadata_path.exists() or not kv_summary_path.exists():
+        return None
+
+    try:
+        results_payload = load_json(results_path)
+        metadata = load_json(metadata_path)
+    except Exception as exc:
+        print(f"Skipping {run_dir}: failed to load eval artifacts ({exc})")
+        return None
+
+    if not isinstance(metadata, dict):
+        print(f"Skipping {run_dir}: eval_metadata.json is not a dict")
+        return None
+
+    try:
+        result = _select_summary_result_dict(results_payload, summary_method, note_contains)
+    except Exception as exc:
+        print(f"Skipping {run_dir}: {exc}")
+        return None
+
+    kv_summary = _read_kv_dynamics_summary(run_dir)
+    if not kv_summary:
+        return None
+
+    label_method = _infer_reuse_signal_label(run_dir, metadata)
+    threshold = _safe_float(metadata.get("reuse_signal_threshold", 0.0))
+    cache_commits = int(result.get("cache_commits", 0) or 0)
+    cache_invalidations = int(result.get("cache_invalidations", 0) or 0)
+    cache_ops = cache_commits + cache_invalidations
+
+    return {
+        "reuse_signal_method": label_method,
+        "reuse_signal_threshold": f"{threshold:.6f}",
+        "method": str(result.get("method", "")),
+        "config_note": str(result.get("config_note", "")),
+        "remask_enabled": int(not bool(metadata.get("disable_remask", False))),
+        "accuracy": f"{_safe_float(result.get('accuracy', 0.0)):.6f}",
+        "tps": f"{_safe_float(result.get('avg_tokens_per_sec', 0.0)):.3f}",
+        "avg_nfe": f"{_safe_float(result.get('avg_nfe', 0.0)):.1f}",
+        "agreement_rate": f"{_safe_float(result.get('agreement_rate', 0.0)):.6f}",
+        "cache_hit_rate": f"{_safe_float(result.get('cache_hit_rate', 0.0)):.6f}",
+        "draft_accept_rate": f"{_safe_float(result.get('draft_accept_rate', 0.0)):.6f}",
+        "mean_safe_reuse": f"{_safe_float(result.get('reuse_mean_safe', 0.0)):.6f}",
+        "mean_js_divergence": f"{_safe_float(result.get('reuse_mean_js', 0.0)):.6f}",
+        "thrash_rate_given_cached": f"{_safe_float(kv_summary.get('mean_thrash_rate_given_cached', 0.0)):.6f}",
+        "cache_invalidation_rate": f"{(cache_invalidations / max(cache_ops, 1)):.6f}",
+        "access_next_h_f1": f"{_safe_float(result.get('access_next_h_f1', 0.0)):.6f}",
+        "access_next_h_spec_f1": f"{_safe_float(result.get('access_next_h_spec_f1', 0.0)):.6f}",
+        "access_effective_budget": f"{_safe_float(result.get('access_effective_budget', 0.0)):.6f}",
+        "total_samples": int(result.get("total_samples", 0) or 0),
+        "output_dir": str(run_dir),
+        "kv_drift_measure": kv_summary.get("layer_drift_measure", "unavailable"),
+        "exact_kv_drift_steps": f"{_safe_float(kv_summary.get('exact_kv_drift_steps', 0.0)):.2f}",
+        "hidden_state_proxy_steps": f"{_safe_float(kv_summary.get('hidden_state_proxy_steps', 0.0)):.2f}",
+        "mean_layer_drift_slope": f"{_safe_float(kv_summary.get('mean_layer_drift_slope', 0.0)):.6f}",
+        "mean_off_by_one_drift_ratio": f"{_safe_float(kv_summary.get('mean_off_by_one_drift_ratio', 0.0)):.6f}",
+        "mean_age_drift": kv_summary.get("mean_age_drift", {}),
+        "per_layer_drift": kv_summary.get("per_layer_drift", []),
+        "per_layer_drift_preview": _format_layer_drift_preview(kv_summary.get("per_layer_drift", [])),
+    }
+
+
+def _annotate_reuse_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    argmax_rows = [row for row in rows if row["reuse_signal_method"] == "argmax_match"]
+    argmax_acc: Optional[float] = None
+    if len(argmax_rows) == 1:
+        argmax_acc = float(argmax_rows[0]["accuracy"])
+    elif len(argmax_rows) > 1:
+        raise RuntimeError(f"Expected at most one argmax baseline row, found {len(argmax_rows)}")
+
+    best_by_method: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        method = row["reuse_signal_method"]
+        current = best_by_method.get(method)
+        if current is None or (float(row["accuracy"]), float(row["tps"])) > (
+            float(current["accuracy"]),
+            float(current["tps"]),
+        ):
+            best_by_method[method] = row
+
+    for row in rows:
+        if argmax_acc is None:
+            row["accuracy_delta_vs_argmax"] = ""
+        else:
+            row["accuracy_delta_vs_argmax"] = f"{float(row['accuracy']) - argmax_acc:+.6f}"
+        best = best_by_method[row["reuse_signal_method"]]
+        row["is_best_threshold"] = int(
+            row["reuse_signal_threshold"] == best["reuse_signal_threshold"]
+            and row["reuse_signal_method"] == best["reuse_signal_method"]
+        )
+
+    if argmax_acc is None:
+        return []
+    return _decision_table(rows, argmax_acc=argmax_acc)
+
+
+def _write_reuse_signal_outputs(rows: List[Dict[str, Any]], output_root: Path) -> None:
+    if not rows:
+        raise RuntimeError("No reuse-signal rows available to summarize.")
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    decisions = _annotate_reuse_rows(rows)
+
+    full_json = output_root / "reuse_signal_sweep_full.json"
+    full_csv = output_root / "reuse_signal_sweep_full.csv"
+    full_md = output_root / "reuse_signal_sweep_full.md"
+    kv_variant_rows = _build_reuse_kv_variant_rows(rows)
+
+    if is_global_rank_zero():
+        full_json.write_text(json.dumps(rows, indent=2))
+        write_csv(rows, full_csv)
+        write_markdown(rows, full_md)
+
+        print(f"\nReuse-signal full table written to {full_json}")
+        print(f"Reuse-signal full table written to {full_csv}")
+        print(f"Reuse-signal full table written to {full_md}")
+
+        if decisions:
+            decision_json = output_root / "best_method_by_constraint.json"
+            decision_csv = output_root / "best_method_by_constraint.csv"
+            decision_md = output_root / "best_method_by_constraint.md"
+            decision_json.write_text(json.dumps(decisions, indent=2))
+            write_csv(decisions, decision_csv)
+            write_markdown(decisions, decision_md)
+            print(f"Decision table written to {decision_json}")
+            print(f"Decision table written to {decision_csv}")
+            print(f"Decision table written to {decision_md}")
+        else:
+            print("Decision table skipped: argmax baseline row not available in this artifact set.")
+
+        kv_json = output_root / "reuse_signal_kv_variant_summary.json"
+        kv_csv = output_root / "reuse_signal_kv_variant_summary.csv"
+        kv_md = output_root / "reuse_signal_kv_variant_summary.md"
+        kv_json.write_text(json.dumps(kv_variant_rows, indent=2))
+        write_csv(kv_variant_rows, kv_csv)
+        write_markdown(kv_variant_rows, kv_md)
+
+        print(f"KV variant summary written to {kv_json}")
+        print(f"KV variant summary written to {kv_csv}")
+        print(f"KV variant summary written to {kv_md}")
+        _plot_reuse_pareto(rows, output_root)
+        _plot_reuse_layer_drift_variants(rows, output_root)
+
+
+def _rebuild_reuse_rows_from_artifacts(
+    sweep_root: Path,
+    *,
+    summary_method: str,
+    note_contains: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for run_dir in sorted(path for path in sweep_root.iterdir() if path.is_dir()):
+        row = _build_reuse_row_from_trial_artifacts(
+            run_dir,
+            summary_method=summary_method,
+            note_contains=note_contains,
+        )
+        if row is not None:
+            rows.append(row)
+    return rows
 
 
 def _plot_reuse_layer_drift_variants(rows: List[Dict[str, Any]], output_root: Path) -> None:
@@ -1361,63 +1577,36 @@ def reuse_signal_sweep_main(argv: Optional[List[str]] = None) -> None:
             }
         )
 
-    argmax_rows = [row for row in rows if row["reuse_signal_method"] == "argmax_match"]
-    if len(argmax_rows) != 1:
-        raise RuntimeError(f"Expected exactly one argmax baseline row, found {len(argmax_rows)}")
-    argmax_acc = float(argmax_rows[0]["accuracy"])
-
-    best_by_method: Dict[str, Dict[str, Any]] = {}
-    for row in rows:
-        row["accuracy_delta_vs_argmax"] = f"{float(row['accuracy']) - argmax_acc:+.6f}"
-        method = row["reuse_signal_method"]
-        current = best_by_method.get(method)
-        if current is None or (float(row["accuracy"]), float(row["tps"])) > (float(current["accuracy"]), float(current["tps"])):
-            best_by_method[method] = row
-    for row in rows:
-        best = best_by_method[row["reuse_signal_method"]]
-        row["is_best_threshold"] = int(
-            row["reuse_signal_threshold"] == best["reuse_signal_threshold"]
-            and row["reuse_signal_method"] == best["reuse_signal_method"]
-        )
-
-    decisions = _decision_table(rows, argmax_acc=argmax_acc)
-
-    full_json = output_root / "reuse_signal_sweep_full.json"
-    full_csv = output_root / "reuse_signal_sweep_full.csv"
-    full_md = output_root / "reuse_signal_sweep_full.md"
-    kv_variant_rows = _build_reuse_kv_variant_rows(rows)
-    if is_global_rank_zero():
-        full_json.write_text(json.dumps(rows, indent=2))
-        write_csv(rows, full_csv)
-        write_markdown(rows, full_md)
-
-        decision_json = output_root / "best_method_by_constraint.json"
-        decision_csv = output_root / "best_method_by_constraint.csv"
-        decision_md = output_root / "best_method_by_constraint.md"
-        decision_json.write_text(json.dumps(decisions, indent=2))
-        write_csv(decisions, decision_csv)
-        write_markdown(decisions, decision_md)
-
-        kv_json = output_root / "reuse_signal_kv_variant_summary.json"
-        kv_csv = output_root / "reuse_signal_kv_variant_summary.csv"
-        kv_md = output_root / "reuse_signal_kv_variant_summary.md"
-        kv_json.write_text(json.dumps(kv_variant_rows, indent=2))
-        write_csv(kv_variant_rows, kv_csv)
-        write_markdown(kv_variant_rows, kv_md)
-
-        print(f"\nReuse-signal full table written to {full_json}")
-        print(f"Reuse-signal full table written to {full_csv}")
-        print(f"Reuse-signal full table written to {full_md}")
-        print(f"Decision table written to {decision_json}")
-        print(f"Decision table written to {decision_csv}")
-        print(f"Decision table written to {decision_md}")
-        print(f"KV variant summary written to {kv_json}")
-        print(f"KV variant summary written to {kv_csv}")
-        print(f"KV variant summary written to {kv_md}")
-        _plot_reuse_pareto(rows, output_root)
-        _plot_reuse_layer_drift_variants(rows, output_root)
+    _write_reuse_signal_outputs(rows, output_root)
 
     _close_preloaded_runtime(shared_dual_model)
+
+
+def reuse_signal_posthoc_main(argv: Optional[List[str]] = None) -> None:
+    parser = argparse.ArgumentParser(description="Rebuild PoC 2 reuse/KV summaries from saved sweep artifacts.")
+    parser.add_argument("--sweep_root", required=True, help="Path to an existing reuse-sweep output directory.")
+    parser.add_argument("--output_root", default=None, help="Directory to write reconstructed tables/plots. Defaults to --sweep_root.")
+    parser.add_argument("--summary_method", default="Speculative-AOAE")
+    parser.add_argument("--summary_note_contains", default=None)
+    args = parser.parse_args(argv)
+
+    sweep_root = Path(args.sweep_root)
+    if not sweep_root.exists():
+        raise FileNotFoundError(f"Sweep root not found: {sweep_root}")
+    output_root = Path(args.output_root) if args.output_root else sweep_root
+
+    rows = _rebuild_reuse_rows_from_artifacts(
+        sweep_root,
+        summary_method=args.summary_method,
+        note_contains=args.summary_note_contains,
+    )
+    if not rows:
+        raise RuntimeError(
+            f"No completed reuse-sweep trials with KV artifacts were found under {sweep_root}."
+        )
+
+    print(f"Rebuilding PoC 2 reuse/KV summaries from {len(rows)} completed trial(s)...")
+    _write_reuse_signal_outputs(rows, output_root)
 
 
 def ablation_matrix_main(argv: Optional[List[str]] = None) -> None:
