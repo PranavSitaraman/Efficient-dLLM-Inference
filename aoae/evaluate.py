@@ -873,6 +873,15 @@ def _aggregate_kv_dynamics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         vals = [float(s.get(name, 0.0)) for s in summaries if name in s]
         return float(np.mean(vals)) if vals else 0.0
 
+    def _majority_label(name: str, default: str = "unknown") -> str:
+        counts: Dict[str, int] = {}
+        for s in summaries:
+            label = str(s.get(name, default))
+            counts[label] = counts.get(label, 0) + 1
+        if not counts:
+            return default
+        return max(counts.items(), key=lambda kv: kv[1])[0]
+
     # Locality metrics (windowed hit ratios) and age-bucket drifts.
     locality_vals: Dict[str, List[float]] = {}
     age_vals: Dict[str, List[float]] = {}
@@ -887,11 +896,30 @@ def _aggregate_kv_dynamics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     for r in records:
         for row in r.get("kv_dynamics", {}).get("per_layer", []):
             idx = int(row.get("layer_idx", 0))
-            val = float(row.get("mean_hidden_drift", 0.0))
+            val = float(row.get("mean_drift", row.get("mean_hidden_drift", 0.0)))
             layer_map.setdefault(idx, []).append(val)
     per_layer = [
-        {"layer_idx": idx, "mean_hidden_drift": float(np.mean(vals))}
+        {
+            "layer_idx": idx,
+            "mean_drift": float(np.mean(vals)),
+            "mean_hidden_drift": float(np.mean(vals)),
+        }
         for idx, vals in sorted(layer_map.items())
+    ]
+
+    attn_map: Dict[int, List[float]] = {}
+    for r in records:
+        for row in r.get("kv_dynamics", {}).get("per_layer_attention_deviation", []):
+            idx = int(row.get("layer_idx", 0))
+            val = float(row.get("mean_attention_deviation", 0.0))
+            attn_map.setdefault(idx, []).append(val)
+    per_layer_attention_deviation = [
+        {
+            "layer_idx": idx,
+            "mean_attention_deviation": float(np.mean(vals)),
+            "deviation_measure": "mean_l2_delta",
+        }
+        for idx, vals in sorted(attn_map.items())
     ]
 
     return {
@@ -900,6 +928,9 @@ def _aggregate_kv_dynamics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "mean_access": _mean("mean_access"),
         "mean_confidence_masked": _mean("mean_confidence_masked"),
         "mean_confidence_unmasked": _mean("mean_confidence_unmasked"),
+        "layer_drift_measure": _majority_label("layer_drift_measure", default="hidden_state_proxy"),
+        "exact_kv_drift_steps": _mean("exact_kv_drift_steps"),
+        "hidden_state_proxy_steps": _mean("hidden_state_proxy_steps"),
         "mean_layer_drift_slope": _mean("layer_drift_slope"),
         "mean_off_by_one_drift_ratio": _mean("off_by_one_drift_ratio"),
         "mean_confident_token_drift_ratio": _mean("confident_token_drift_ratio"),
@@ -911,6 +942,14 @@ def _aggregate_kv_dynamics(records: List[Dict[str, Any]]) -> Dict[str, Any]:
             k: float(np.mean(vs)) for k, vs in sorted(age_vals.items())
         },
         "per_layer_drift": per_layer,
+        "attention_deviation_available": any(
+            bool(s.get("attention_deviation_available", False)) for s in summaries
+        ),
+        "attention_deviation_measure": _majority_label(
+            "attention_deviation_measure", default="unavailable",
+        ),
+        "mean_attention_deviation_slope": _mean("attention_deviation_slope"),
+        "per_layer_attention_deviation": per_layer_attention_deviation,
     }
 
 
@@ -940,18 +979,42 @@ def _save_kv_dynamics_artifacts(records: List[Dict[str, Any]], output_dir: str) 
     per_layer = summary.get("per_layer_drift", [])
     if per_layer:
         x = [int(r["layer_idx"]) for r in per_layer]
-        y = [float(r["mean_hidden_drift"]) for r in per_layer]
+        y = [float(r.get("mean_drift", r.get("mean_hidden_drift", 0.0))) for r in per_layer]
         fig, ax = plt.subplots(1, 1, figsize=(7, 4))
         ax.plot(x, y, "o-", linewidth=2)
         ax.set_xlabel("Layer index")
-        ax.set_ylabel("Mean hidden drift")
-        ax.set_title("Layer-wise Drift (KV proxy)")
+        drift_measure = str(summary.get("layer_drift_measure", "hidden_state_proxy"))
+        if drift_measure == "exact_kv":
+            ax.set_ylabel("Mean KV drift")
+            ax.set_title("Layer-wise KV Drift")
+        elif drift_measure == "mixed":
+            ax.set_ylabel("Mean drift")
+            ax.set_title("Layer-wise Drift (Mixed KV/Proxy)")
+        else:
+            ax.set_ylabel("Mean hidden-state drift")
+            ax.set_title("Layer-wise Drift (Hidden-State Proxy)")
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         layer_plot = os.path.join(output_dir, "kv_dynamics_layer_drift.png")
         fig.savefig(layer_plot, dpi=150)
         plt.close(fig)
         print(f"KV dynamics plot saved to {layer_plot}")
+
+    per_layer_attn = summary.get("per_layer_attention_deviation", [])
+    if per_layer_attn:
+        x = [int(r["layer_idx"]) for r in per_layer_attn]
+        y = [float(r["mean_attention_deviation"]) for r in per_layer_attn]
+        fig, ax = plt.subplots(1, 1, figsize=(7, 4))
+        ax.plot(x, y, "o-", linewidth=2, color="#c65d00")
+        ax.set_xlabel("Layer index")
+        ax.set_ylabel("Mean attention deviation")
+        ax.set_title("Layer-wise Attention Deviation")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        attn_plot = os.path.join(output_dir, "kv_dynamics_attention_deviation.png")
+        fig.savefig(attn_plot, dpi=150)
+        plt.close(fig)
+        print(f"Attention deviation plot saved to {attn_plot}")
 
 
 def _save_eval_plots(all_results: List[EvalResult], output_dir: str) -> None:

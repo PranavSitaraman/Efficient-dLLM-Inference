@@ -22,7 +22,7 @@ import os
 import sys
 import torch
 import torch.nn as nn
-from typing import Tuple, Optional
+from typing import Any, List, Optional, Tuple
 from transformers import AutoTokenizer
 from ..runtime_checks import ensure_vllm_moe_runtime, is_global_rank_zero
 
@@ -801,6 +801,8 @@ class LLaDABaseModel(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         *,
         output_hidden_states: bool = False,
+        output_attentions: bool = False,
+        use_cache: bool = False,
         backbone=None,
     ):
         """HF/remote-code forward using 4D block masks as attention_bias."""
@@ -810,6 +812,10 @@ class LLaDABaseModel(nn.Module):
             kwargs["attention_bias"] = attention_mask
         if output_hidden_states:
             kwargs["output_hidden_states"] = True
+        if output_attentions:
+            kwargs["output_attentions"] = True
+        if use_cache:
+            kwargs["use_cache"] = True
         return model(input_ids, **kwargs)
 
     # ------------------------------------------------------------------
@@ -954,6 +960,22 @@ class LLaDABaseModel(nn.Module):
         self, input_ids: torch.LongTensor,
     ) -> Tuple[torch.Tensor, list]:
         """Forward pass → (logits [B,L,V], hidden_states [num_layers][B,L,D])."""
+        logits, hidden_states, _, _ = self.forward_with_diagnostics(
+            input_ids,
+            output_attentions=False,
+            output_kv=False,
+        )
+        return logits, hidden_states
+
+    @torch.no_grad()
+    def forward_with_diagnostics(
+        self,
+        input_ids: torch.LongTensor,
+        *,
+        output_attentions: bool = False,
+        output_kv: bool = False,
+    ) -> Tuple[torch.Tensor, List[torch.Tensor], Optional[List[torch.Tensor]], Optional[List[Tuple[torch.Tensor, torch.Tensor]]]]:
+        """Forward pass with optional hidden-state, attention, and KV diagnostics."""
         if input_ids.device != self.device:
             input_ids = input_ids.to(self.device)
         batch_size, seq_len = input_ids.shape
@@ -961,14 +983,23 @@ class LLaDABaseModel(nn.Module):
             batch_size, seq_len, input_ids.device, block_length=self._block_length,
         )
         if self._backend in ("dinfer", "soft_moe"):
-            return self._forward_with_all_hidden_dinfer(input_ids, attention_mask=attention_mask)
+            outputs = self._forward_outputs_with_fallback(
+                backend="dinfer",
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_attentions=output_attentions,
+                output_kv=output_kv,
+            )
+            return self._extract_diagnostics(outputs, source="dinfer")
 
-        outputs = self._forward_hf_outputs(
-            input_ids,
+        outputs = self._forward_outputs_with_fallback(
+            backend="hf",
+            input_ids=input_ids,
             attention_mask=attention_mask,
-            output_hidden_states=True,
+            output_attentions=output_attentions,
+            output_kv=output_kv,
         )
-        return self._extract_logits_and_hidden_states(outputs, source="hf")
+        return self._extract_diagnostics(outputs, source="hf")
 
     @torch.no_grad()
     def forward_hidden_only(self, input_ids: torch.LongTensor) -> torch.Tensor:
@@ -1010,6 +1041,12 @@ class LLaDABaseModel(nn.Module):
     def _extract_logits_and_hidden_states(
         self, outputs, source: str = "hf",
     ) -> Tuple[torch.Tensor, list]:
+        logits, hidden_states, _, _ = self._extract_diagnostics(outputs, source=source)
+        return logits, hidden_states
+
+    def _extract_diagnostics(
+        self, outputs, source: str = "hf",
+    ) -> Tuple[torch.Tensor, List[torch.Tensor], Optional[List[torch.Tensor]], Optional[List[Tuple[torch.Tensor, torch.Tensor]]]]:
         if hasattr(outputs, "logits"):
             logits = outputs.logits
         elif isinstance(outputs, (tuple, list)):
@@ -1035,7 +1072,86 @@ class LLaDABaseModel(nn.Module):
         if not hidden_states:
             raise RuntimeError(f"{source} model did not return hidden states.")
 
-        return logits, hidden_states
+        attentions = None
+        if hasattr(outputs, "attentions") and outputs.attentions is not None:
+            if isinstance(outputs.attentions, torch.Tensor):
+                attentions = [outputs.attentions]
+            else:
+                attentions = list(outputs.attentions)
+
+        layer_kv = self._extract_layer_kv(outputs)
+        return logits, hidden_states, attentions, layer_kv
+
+    def _extract_layer_kv(
+        self, outputs: Any,
+    ) -> Optional[List[Tuple[torch.Tensor, torch.Tensor]]]:
+        past_key_values = getattr(outputs, "past_key_values", None)
+        if past_key_values is None:
+            return None
+
+        try:
+            if hasattr(past_key_values, "to_legacy_cache"):
+                past_key_values = past_key_values.to_legacy_cache()
+        except Exception:
+            return None
+
+        if not isinstance(past_key_values, (list, tuple)):
+            return None
+
+        layers: List[Tuple[torch.Tensor, torch.Tensor]] = []
+        for layer in past_key_values:
+            if not isinstance(layer, (list, tuple)) or len(layer) < 2:
+                return None
+            key, value = layer[0], layer[1]
+            if not isinstance(key, torch.Tensor) or not isinstance(value, torch.Tensor):
+                return None
+            layers.append((key, value))
+        return layers or None
+
+    def _forward_outputs_with_fallback(
+        self,
+        *,
+        backend: str,
+        input_ids: torch.LongTensor,
+        attention_mask: Optional[torch.Tensor],
+        output_attentions: bool,
+        output_kv: bool,
+    ):
+        kwargs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "output_hidden_states": True,
+        }
+        if output_attentions:
+            kwargs["output_attentions"] = True
+        if output_kv:
+            kwargs["use_cache"] = True
+
+        try:
+            if backend == "hf":
+                return self._forward_hf_outputs(**kwargs)
+            return self._forward_dinfer_outputs(**kwargs)
+        except TypeError:
+            if not (output_attentions or output_kv):
+                raise
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            unsupported = (
+                "unexpected keyword" in message
+                or "output_attentions" in message
+                or "use_cache" in message
+            )
+            if not unsupported:
+                raise
+
+        fallback_kwargs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "output_hidden_states": True,
+        }
+        if backend == "hf":
+            return self._forward_hf_outputs(**fallback_kwargs)
+        return self._forward_dinfer_outputs(**fallback_kwargs)
 
     def _forward_with_all_hidden_dinfer(
         self, input_ids: torch.LongTensor,

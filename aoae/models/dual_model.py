@@ -37,6 +37,8 @@ class DualModelOutput:
     agreement_rate: float             # scalar: mean agreement across batch
     primary_hidden: Optional[torch.Tensor] = None  # [B, L, D] if requested
     primary_hidden_states: Optional[List[torch.Tensor]] = None  # [N][B, L, D]
+    primary_attentions: Optional[List[torch.Tensor]] = None
+    primary_layer_kv: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
 
 
 def _select_dual_base_backend(cfg: dict) -> str:
@@ -205,6 +207,30 @@ class DualModelWrapper(nn.Module):
         finally:
             set_hard_routing(self._model.model)
 
+    @torch.no_grad()
+    def primary_forward_with_diagnostics(
+        self,
+        input_ids: torch.LongTensor,
+        *,
+        output_attentions: bool = True,
+        output_kv: bool = True,
+    ) -> Tuple[
+        torch.Tensor,
+        List[torch.Tensor],
+        Optional[List[torch.Tensor]],
+        Optional[List[Tuple[torch.Tensor, torch.Tensor]]],
+    ]:
+        """Soft-routed forward with optional attention/KV diagnostics."""
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_with_diagnostics(
+                input_ids,
+                output_attentions=output_attentions,
+                output_kv=output_kv,
+            )
+        finally:
+            set_hard_routing(self._model.model)
+
     # ------------------------------------------------------------------
     @torch.no_grad()
     def dual_forward(
@@ -227,15 +253,19 @@ class DualModelWrapper(nn.Module):
 
         # Phase 1: Primary verification (soft routing, slow)
         if need_all_hidden:
-            pri_logits, pri_hidden_states = self.primary_forward_with_all_hidden(input_ids)
+            pri_logits, pri_hidden_states, pri_attentions, pri_layer_kv = self.primary_forward_with_diagnostics(input_ids)
             pri_hidden = pri_hidden_states[-1]
         elif need_hidden:
             pri_logits, pri_hidden = self.primary_forward_with_hidden(input_ids)
             pri_hidden_states = None
+            pri_attentions = None
+            pri_layer_kv = None
         else:
             pri_logits = self.primary_forward(input_ids)
             pri_hidden = None
             pri_hidden_states = None
+            pri_attentions = None
+            pri_layer_kv = None
 
         # Compute agreement: positions where argmax tokens match
         aux_tokens = aux_logits.argmax(dim=-1)  # [B, L]
@@ -250,6 +280,8 @@ class DualModelWrapper(nn.Module):
             agreement_rate=agreement_rate,
             primary_hidden=pri_hidden,
             primary_hidden_states=pri_hidden_states,
+            primary_attentions=pri_attentions,
+            primary_layer_kv=pri_layer_kv,
         )
 
     # ------------------------------------------------------------------
@@ -279,6 +311,30 @@ class DualModelWrapper(nn.Module):
             out.primary_hidden = out.primary_hidden[:, resp_slice, :]
         if out.primary_hidden_states is not None:
             out.primary_hidden_states = [h[:, resp_slice, :] for h in out.primary_hidden_states]
+        if out.primary_attentions is not None:
+            sliced_attn = []
+            for attn in out.primary_attentions:
+                if attn.ndim == 4:
+                    sliced_attn.append(attn[:, :, resp_slice, :])
+                elif attn.ndim == 3:
+                    sliced_attn.append(attn[:, resp_slice, :])
+                else:
+                    sliced_attn.append(attn)
+            out.primary_attentions = sliced_attn
+        if out.primary_layer_kv is not None:
+            sliced_kv = []
+            for key, value in out.primary_layer_kv:
+                if key.ndim == 4:
+                    sliced_key = key[:, :, resp_slice, :]
+                    sliced_value = value[:, :, resp_slice, :]
+                elif key.ndim == 3:
+                    sliced_key = key[:, resp_slice, :]
+                    sliced_value = value[:, resp_slice, :]
+                else:
+                    sliced_key = key
+                    sliced_value = value
+                sliced_kv.append((sliced_key, sliced_value))
+            out.primary_layer_kv = sliced_kv
         return out
 
 

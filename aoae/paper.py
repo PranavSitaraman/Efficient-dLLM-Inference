@@ -175,6 +175,59 @@ def _read_thrash_rate(output_dir: Path) -> float:
         return 0.0
 
 
+def _read_kv_dynamics_summary(output_dir: Path) -> Dict[str, Any]:
+    path = output_dir / "kv_dynamics_summary.json"
+    if not path.exists():
+        return {}
+    try:
+        data = load_json(path)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _format_layer_drift_preview(
+    per_layer: List[Dict[str, Any]],
+    *,
+    limit: int = 6,
+) -> str:
+    if not per_layer:
+        return "unavailable"
+
+    chunks: List[str] = []
+    for row in per_layer[:limit]:
+        layer_idx = int(row.get("layer_idx", 0))
+        mean_drift = _safe_float(
+            row.get("mean_drift", row.get("mean_hidden_drift", 0.0))
+        )
+        chunks.append(f"L{layer_idx}:{mean_drift:.4f}")
+    if len(per_layer) > limit:
+        chunks.append("...")
+    return ", ".join(chunks)
+
+
+def _print_kv_dynamics_trial_summary(output_dir: Path, summary: Dict[str, Any]) -> None:
+    if not is_global_rank_zero():
+        return
+    if not summary:
+        print(f"KV dynamics summary missing for {output_dir}")
+        return
+
+    mean_age_drift = summary.get("mean_age_drift", {})
+    print(
+        "KV dynamics: "
+        f"measure={summary.get('layer_drift_measure', 'hidden_state_proxy')} "
+        f"slope={_safe_float(summary.get('mean_layer_drift_slope', 0.0)):.4f} "
+        f"off_by_one={_safe_float(summary.get('mean_off_by_one_drift_ratio', 0.0)):.4f} "
+        f"age1={_safe_float(mean_age_drift.get('age1', 0.0)):.4f} "
+        f"age2p={_safe_float(mean_age_drift.get('age2p', 0.0)):.4f}"
+    )
+    print(
+        "Layer-wise drift: "
+        f"{_format_layer_drift_preview(summary.get('per_layer_drift', []))}"
+    )
+
+
 def _plot_tau_sweep(rows: List[Dict[str, Any]], output_root: Path) -> None:
     try:
         import matplotlib
@@ -1147,6 +1200,8 @@ def reuse_signal_sweep_main(argv: Optional[List[str]] = None) -> None:
             note_contains = f"tau_pi={args.policy_temperature}"
         result = select_summary_row(results, args.summary_method, note_contains)
         thrash_rate = _read_thrash_rate(run_dir)
+        kv_summary = _read_kv_dynamics_summary(run_dir)
+        _print_kv_dynamics_trial_summary(run_dir, kv_summary)
         cache_ops = result.cache_commits + result.cache_invalidations
         cache_invalidation_rate = result.cache_invalidations / max(cache_ops, 1)
         rows.append(
@@ -1171,6 +1226,16 @@ def reuse_signal_sweep_main(argv: Optional[List[str]] = None) -> None:
                 "access_effective_budget": f"{result.access_effective_budget:.6f}",
                 "total_samples": result.total_samples,
                 "output_dir": str(run_dir),
+                "kv_drift_measure": kv_summary.get("layer_drift_measure", "unavailable"),
+                "exact_kv_drift_steps": f"{_safe_float(kv_summary.get('exact_kv_drift_steps', 0.0)):.2f}",
+                "hidden_state_proxy_steps": f"{_safe_float(kv_summary.get('hidden_state_proxy_steps', 0.0)):.2f}",
+                "mean_layer_drift_slope": f"{_safe_float(kv_summary.get('mean_layer_drift_slope', 0.0)):.6f}",
+                "mean_off_by_one_drift_ratio": f"{_safe_float(kv_summary.get('mean_off_by_one_drift_ratio', 0.0)):.6f}",
+                "mean_age_drift": kv_summary.get("mean_age_drift", {}),
+                "per_layer_drift": kv_summary.get("per_layer_drift", []),
+                "per_layer_drift_preview": _format_layer_drift_preview(
+                    kv_summary.get("per_layer_drift", [])
+                ),
             }
         )
 

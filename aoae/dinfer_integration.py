@@ -40,6 +40,76 @@ def _max_prob_and_argmax(logits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tens
     return max_prob.type_as(logits), max_tok
 
 
+def _pad_response_hidden_states(
+    hidden_states: List[torch.Tensor],
+    *,
+    prompt_len: int,
+    response_len: int,
+    total_response_len: int,
+) -> List[torch.Tensor]:
+    padded: List[torch.Tensor] = []
+    for layer in hidden_states:
+        resp = layer[:, prompt_len:prompt_len + response_len, :]
+        full = layer.new_zeros((layer.shape[0], total_response_len, layer.shape[-1]))
+        full[:, :response_len, :] = resp
+        padded.append(full)
+    return padded
+
+
+def _pad_response_layer_kv(
+    layer_kv: Optional[List[Tuple[torch.Tensor, torch.Tensor]]],
+    *,
+    prompt_len: int,
+    response_len: int,
+    total_response_len: int,
+) -> Optional[List[Tuple[torch.Tensor, torch.Tensor]]]:
+    if layer_kv is None:
+        return None
+
+    padded: List[Tuple[torch.Tensor, torch.Tensor]] = []
+    for key, value in layer_kv:
+        if key.ndim == 4:
+            resp_key = key[:, :, prompt_len:prompt_len + response_len, :]
+            resp_value = value[:, :, prompt_len:prompt_len + response_len, :]
+            full_key = key.new_zeros((key.shape[0], key.shape[1], total_response_len, key.shape[-1]))
+            full_value = value.new_zeros((value.shape[0], value.shape[1], total_response_len, value.shape[-1]))
+            full_key[:, :, :response_len, :] = resp_key
+            full_value[:, :, :response_len, :] = resp_value
+        elif key.ndim == 3:
+            resp_key = key[:, prompt_len:prompt_len + response_len, :]
+            resp_value = value[:, prompt_len:prompt_len + response_len, :]
+            full_key = key.new_zeros((key.shape[0], total_response_len, key.shape[-1]))
+            full_value = value.new_zeros((value.shape[0], total_response_len, value.shape[-1]))
+            full_key[:, :response_len, :] = resp_key
+            full_value[:, :response_len, :] = resp_value
+        else:
+            full_key = key
+            full_value = value
+        padded.append((full_key, full_value))
+    return padded
+
+
+def _primary_forward_with_blockwise_diagnostics(
+    dual_model,
+    input_ids: torch.LongTensor,
+):
+    """Call primary diagnostics compatibly across older/newer wrappers."""
+    diagnostics_fn = getattr(dual_model, "primary_forward_with_diagnostics", None)
+    if diagnostics_fn is None:
+        raise AttributeError("dual_model is missing primary_forward_with_diagnostics")
+    try:
+        return diagnostics_fn(
+            input_ids,
+            output_attentions=False,
+            output_kv=True,
+        )
+    except TypeError as exc:
+        message = str(exc)
+        if "output_attentions" not in message and "output_kv" not in message:
+            raise
+        return diagnostics_fn(input_ids)
+
+
 @dataclass
 class CacheStats:
     """Statistics for a single inference run."""
@@ -258,6 +328,7 @@ def run_blockwise_speculative_inference(
     mask_id = int(cfg["base_model"]["mask_token_id"])
     use_fallback = bool(ic.get("fallback_unmask", True))
     disable_remask = bool(ic.get("disable_remask", False))
+    track_kv_dynamics = bool(cfg.get("analysis", {}).get("track_kv_dynamics", False))
 
     B, P = prompt_ids.shape
     device = prompt_ids.device
@@ -272,6 +343,7 @@ def run_blockwise_speculative_inference(
     )
 
     cache_mgr = SpeculativeCacheManager(B, L_gen, device)
+    dynamics_tracker = SpeculativeDynamicsTracker(cfg) if track_kv_dynamics else None
     can_skip_primary = (
         hasattr(dual_model, "primary_forward_with_cache")
         and getattr(getattr(dual_model, "_model", None), "_dinfer_runtime", None) == "vllm"
@@ -290,6 +362,9 @@ def run_blockwise_speculative_inference(
     _safe_reuse_count = 0
     _draft_accepts = 0
     _draft_rejects = 0
+    tracked_prefix_len = 0
+    tracked_max_prob = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
+    tracked_agreement = torch.zeros((B, L_gen), dtype=torch.float32, device=device)
 
     for blk_idx in range(n_blocks):
         blk_start = P + blk_idx * block_len
@@ -410,6 +485,45 @@ def run_blockwise_speculative_inference(
             r_full[:, rel_slice] = edit_positions.float()
             kappa_full[:, rel_slice] = cache_commit_positions.float()
             safe_reuse_full[:, rel_slice] = safe_reuse.float()
+
+            if dynamics_tracker is not None:
+                diag_logits, diag_hidden_states, _, diag_layer_kv = _primary_forward_with_blockwise_diagnostics(
+                    dual_model,
+                    prefix_ids,
+                )
+                del diag_logits
+                prefix_resp_len = blk_end - P
+                full_layer_hiddens = _pad_response_hidden_states(
+                    diag_hidden_states,
+                    prompt_len=P,
+                    response_len=prefix_resp_len,
+                    total_response_len=L_gen,
+                )
+                full_layer_kv = _pad_response_layer_kv(
+                    diag_layer_kv,
+                    prompt_len=P,
+                    response_len=prefix_resp_len,
+                    total_response_len=L_gen,
+                )
+                full_mask_ind = y[:, P:P + L_gen] == mask_id
+                tracked_max_prob[:, rel_slice] = pri_max_prob.float()
+                tracked_agreement[:, rel_slice] = raw_agreement.float()
+                valid_mask = torch.zeros((B, L_gen), dtype=torch.bool, device=device)
+                valid_mask[:, :min(tracked_prefix_len, prefix_resp_len)] = True
+                dynamics_tracker.observe_step(
+                    layer_hiddens=full_layer_hiddens,
+                    max_prob=tracked_max_prob,
+                    mask_ind=full_mask_ind,
+                    agreement=tracked_agreement,
+                    u_t=u_full,
+                    r_t=r_full,
+                    kappa_t=kappa_full,
+                    q_t=torch.zeros_like(u_full),
+                    layer_kv=full_layer_kv,
+                    layer_attentions=None,
+                    valid_mask=valid_mask,
+                )
+                tracked_prefix_len = max(tracked_prefix_len, prefix_resp_len)
             cache_mgr.step(r_full, kappa_full, u_full, safe_reuse_full)
 
             y[:, blk_slice] = next_tokens
@@ -469,6 +583,45 @@ def run_blockwise_speculative_inference(
             u_full[:, rel_slice] = remaining_mask.float()
             kappa_full[:, rel_slice] = cache_commit_positions.float()
             safe_reuse_full[:, rel_slice] = safe_reuse.float()
+
+            if dynamics_tracker is not None:
+                diag_logits, diag_hidden_states, _, diag_layer_kv = _primary_forward_with_blockwise_diagnostics(
+                    dual_model,
+                    prefix_ids,
+                )
+                del diag_logits
+                prefix_resp_len = blk_end - P
+                full_layer_hiddens = _pad_response_hidden_states(
+                    diag_hidden_states,
+                    prompt_len=P,
+                    response_len=prefix_resp_len,
+                    total_response_len=L_gen,
+                )
+                full_layer_kv = _pad_response_layer_kv(
+                    diag_layer_kv,
+                    prompt_len=P,
+                    response_len=prefix_resp_len,
+                    total_response_len=L_gen,
+                )
+                full_mask_ind = y[:, P:P + L_gen] == mask_id
+                tracked_max_prob[:, rel_slice] = _max_prob_and_argmax(pri_logits)[0].float()
+                tracked_agreement[:, rel_slice] = raw_agreement.float()
+                valid_mask = torch.zeros((B, L_gen), dtype=torch.bool, device=device)
+                valid_mask[:, :min(tracked_prefix_len, prefix_resp_len)] = True
+                dynamics_tracker.observe_step(
+                    layer_hiddens=full_layer_hiddens,
+                    max_prob=tracked_max_prob,
+                    mask_ind=full_mask_ind,
+                    agreement=tracked_agreement,
+                    u_t=u_full,
+                    r_t=r_full,
+                    kappa_t=kappa_full,
+                    q_t=torch.zeros_like(u_full),
+                    layer_kv=full_layer_kv,
+                    layer_attentions=None,
+                    valid_mask=valid_mask,
+                )
+                tracked_prefix_len = max(tracked_prefix_len, prefix_resp_len)
             cache_mgr.step(r_full, kappa_full, u_full, safe_reuse_full)
 
     stats = cache_mgr.get_stats()
@@ -494,6 +647,8 @@ def run_blockwise_speculative_inference(
     stats.update(compute_next_h_access_metrics([], [], None, 1))
     stats["mean_boundary_depth"] = 0.0
     stats["boundary_distribution"] = "{}"
+    if dynamics_tracker is not None:
+        stats["kv_dynamics"] = dynamics_tracker.summarize()
     return y, stats
 
 
@@ -753,6 +908,8 @@ def run_speculative_inference(
                         if cfg.get("inference", {}).get("positional_cache", {}).get("enabled", False)
                         else torch.zeros_like(q_exec)
                     ),
+                    layer_kv=dual_out.primary_layer_kv,
+                    layer_attentions=dual_out.primary_attentions,
                 )
 
         # Phase 3: Agreement-gated cache commit
