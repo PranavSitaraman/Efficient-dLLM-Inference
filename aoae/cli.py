@@ -65,9 +65,15 @@ def _required_world_size(argv_list: List[str]) -> int:
     if command in {"test", "preflight", "comparison-table", "kv-summary"}:
         return 1
 
-    if command in {"train", "eval", "pipeline"}:
+    if command in {"train", "eval"}:
         config_path = _extract_flag_value(args, "--config", "configs/default.yaml")
         return _config_tp_size(config_path)
+
+    if command == "pipeline":
+        # The pipeline acts as a single-process coordinator and delegates
+        # train/eval stages through the canonical subcommands below. Those
+        # child subcommands own any required torchrun relaunch.
+        return 1
 
     if command in {"tau-sweep", "reuse-sweep", "ablations", "paper-suite"}:
         default_config = {
@@ -377,11 +383,20 @@ def run_pipeline_command(args: argparse.Namespace):
         report = run_preflight(args.config, strict_moe=args.strict_moe)
         print(json.dumps(report, indent=2))
 
+    def _run_nested_cli(argv: List[str]):
+        rc = main(argv)
+        if isinstance(rc, int) and rc != 0:
+            raise SystemExit(rc)
+        return rc
+
     if not args.skip_prism:
-        run_train_command(argparse.Namespace(config=args.config, stage="prism", resume=None))
+        _run_nested_cli(["train", "--config", args.config, "--stage", "prism"])
 
     if not args.skip_grpo:
-        run_train_command(argparse.Namespace(config=args.config, stage="grpo", resume=args.resume))
+        nested_grpo = ["train", "--config", args.config, "--stage", "grpo"]
+        if args.resume is not None:
+            nested_grpo.extend(["--resume", args.resume])
+        _run_nested_cli(nested_grpo)
 
     if args.skip_eval:
         return None
@@ -420,7 +435,22 @@ def run_pipeline_command(args: argparse.Namespace):
         run_name=None,
         output_dir=None,
     )
-    return run_eval_command(eval_args)
+    nested_eval = [
+        "eval",
+        "--config",
+        args.config,
+        "--mode",
+        args.mode,
+    ]
+    if checkpoint is not None:
+        nested_eval.extend(["--checkpoint", checkpoint])
+    if args.max_samples is not None:
+        nested_eval.extend(["--max_samples", str(args.max_samples)])
+    if args.policy_temperatures is not None:
+        nested_eval.extend(["--policy_temperatures", args.policy_temperatures])
+    if args.skip_baselines:
+        nested_eval.append("--skip_baselines")
+    return _run_nested_cli(nested_eval)
 
 
 def run_test_command(args: argparse.Namespace) -> int:

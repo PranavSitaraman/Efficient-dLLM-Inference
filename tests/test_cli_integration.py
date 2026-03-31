@@ -197,6 +197,35 @@ def test_cli_auto_torchrun_for_multi_gpu_config(monkeypatch, tmp_path):
     assert env["NCCL_SOCKET_FAMILY"] == "AF_INET"
 
 
+def test_cli_pipeline_does_not_auto_torchrun_for_multi_gpu_config(monkeypatch, tmp_path):
+    cfg = {"hardware": {"tp_size": 2}}
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+
+    calls = []
+
+    def fake_call(cmd, env=None):
+        calls.append((cmd, env))
+        return 0
+
+    monkeypatch.setattr(subprocess, "call", fake_call)
+
+    rc = main(
+        [
+            "pipeline",
+            "--config",
+            str(cfg_path),
+            "--skip_preflight",
+            "--skip_prism",
+            "--skip_grpo",
+            "--skip_eval",
+        ]
+    )
+
+    assert rc is None
+    assert calls == []
+
+
 def test_cli_skips_auto_torchrun_inside_distributed_env(monkeypatch, tmp_path):
     cfg = {"hardware": {"tp_size": 2}}
     cfg_path = tmp_path / "cfg.yaml"
@@ -218,3 +247,63 @@ def test_cli_skips_auto_torchrun_inside_distributed_env(monkeypatch, tmp_path):
 
     main(["tau-sweep", "--config", str(cfg_path)])
     assert calls == [["tau-sweep", "--config", str(cfg_path)]]
+
+
+def test_cli_pipeline_delegates_to_canonical_subcommands(monkeypatch, tmp_path):
+    import aoae.cli as mod
+
+    cfg = {
+        "hardware": {"tp_size": 1},
+        "logging": {"output_dir": str(tmp_path / "out")},
+    }
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+
+    calls = []
+
+    def fake_run_preflight(config_path, strict_moe=False):
+        calls.append(("preflight", config_path, strict_moe))
+        return {"ok": True}
+
+    def fake_main(argv=None):
+        calls.append(tuple(argv))
+        return 0
+
+    monkeypatch.setattr(mod, "run_preflight", fake_run_preflight)
+    monkeypatch.setattr(mod, "resolve_policy_checkpoint", lambda checkpoint, output_dir: checkpoint or f"{output_dir}/policy_final.pt")
+    monkeypatch.setattr(mod, "main", fake_main)
+
+    mod.run_pipeline_command(
+        SimpleNamespace(
+            config=str(cfg_path),
+            resume="auto",
+            checkpoint=None,
+            max_samples=7,
+            mode="speculative",
+            policy_temperatures="0.8,1.0",
+            skip_preflight=False,
+            skip_prism=False,
+            skip_grpo=False,
+            skip_eval=False,
+            skip_baselines=True,
+            strict_moe=True,
+        )
+    )
+
+    assert calls[0] == ("preflight", str(cfg_path), True)
+    assert calls[1] == ("train", "--config", str(cfg_path), "--stage", "prism")
+    assert calls[2] == ("train", "--config", str(cfg_path), "--stage", "grpo", "--resume", "auto")
+    assert calls[3] == (
+        "eval",
+        "--config",
+        str(cfg_path),
+        "--mode",
+        "speculative",
+        "--checkpoint",
+        f"{tmp_path / 'out'}/policy_final.pt",
+        "--max_samples",
+        "7",
+        "--policy_temperatures",
+        "0.8,1.0",
+        "--skip_baselines",
+    )
