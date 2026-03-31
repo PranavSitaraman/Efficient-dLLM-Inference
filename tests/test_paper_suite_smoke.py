@@ -34,14 +34,19 @@ def test_paper_suite_invokes_all_stages(monkeypatch, tmp_path):
     progs = [prog for prog, _argv in calls]
     assert progs == [
         "tau-sweep",
+        "routing-sweep",
         "reuse-sweep",
         "ablations",
         "comparison-table",
+        "kv-summary",
     ]
 
     reuse_call = next(argv for prog, argv in calls if prog == "reuse-sweep")
     tau_call = next(argv for prog, argv in calls if prog == "tau-sweep")
+    routing_call = next(argv for prog, argv in calls if prog == "routing-sweep")
     assert "--disable_remask" in reuse_call
     assert "--save_predictions" in tau_call
     assert "--max_saved_predictions" in tau_call
+    assert "--hard_config" in routing_call
+    assert "--soft_config" in routing_call
     assert (tmp_path / "suite" / "paper_suite_summary.json").exists()

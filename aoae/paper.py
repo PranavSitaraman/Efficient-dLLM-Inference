@@ -1419,15 +1419,19 @@ def paper_suite_main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--poc1_config", default=None, help="Optional config override for the routing-temperature sweep.")
     parser.add_argument("--poc2_config", default=None, help="Optional config override for the reuse-signal sweep.")
     parser.add_argument("--ablation_config", default=None, help="Optional config override for the ablation matrix.")
+    parser.add_argument("--hard_config", default="configs/llada21_hard.yaml", help="Hard-routing config used for the routing sweep.")
+    parser.add_argument("--soft_config", default="configs/llada21_soft.yaml", help="Soft-routing config used for the routing sweep.")
     parser.add_argument("--checkpoint", default=None, help="Optional policy checkpoint passed to all stages.")
     parser.add_argument("--max_samples", type=int, default=None, help="Optional evaluation cap applied to all stages.")
     parser.add_argument("--output_root", default=None, help="Suite output root. Defaults under outputs/paper_suite/.")
     parser.add_argument("--tau_r_values", default="0.0001,0.001,0.005,0.01,0.02,0.05", help="Paper sweep for PoC 1.")
     parser.add_argument("--policy_temperature", type=float, default=1.0, help="Policy temperature used for sweep summaries.")
     parser.add_argument("--skip_poc1", action="store_true", help="Skip the soft-routing tradeoff sweep.")
+    parser.add_argument("--skip_routing", action="store_true", help="Skip the hard-vs-soft routing sweep.")
     parser.add_argument("--skip_poc2", action="store_true", help="Skip the reuse-signal sweep.")
     parser.add_argument("--skip_ablations", action="store_true", help="Skip the ablation matrix.")
     parser.add_argument("--skip_table", action="store_true", help="Skip aggregated comparison-table generation.")
+    parser.add_argument("--skip_kv_summary", action="store_true", help="Skip aggregated KV-dynamics summary generation.")
     parser.add_argument("--poc1_enable_remask", action="store_true", help="Keep remasking enabled during PoC 1. Default is disabled to isolate routing.")
     parser.add_argument("--poc2_disable_remask", action="store_true", help="Disable remasking during PoC 2 for cleaner reuse-signal accounting.")
     parser.add_argument("--save_predictions", action="store_true", help="Save bounded prediction artifacts for suite evaluation stages.")
@@ -1467,6 +1471,31 @@ def paper_suite_main(argv: Optional[List[str]] = None) -> None:
             poc1_argv.extend(["--max_saved_predictions", str(args.max_saved_predictions)])
         _invoke_main(tau_sweep_main, "tau-sweep", poc1_argv)
         record_stage("poc1", args.poc1_config or "configs/poc1.yaml", poc1_root, {"tau_r_values": args.tau_r_values})
+
+    if not args.skip_routing:
+        routing_root = output_root / "routing"
+        routing_root.mkdir(parents=True, exist_ok=True)
+        routing_argv = [
+            "--hard_config", args.hard_config,
+            "--soft_config", args.soft_config,
+            "--tau_r_values", args.tau_r_values,
+            "--output_root", str(routing_root),
+        ]
+        if args.checkpoint:
+            routing_argv.extend(["--checkpoint", args.checkpoint])
+        if args.max_samples is not None:
+            routing_argv.extend(["--max_samples", str(args.max_samples)])
+        if args.save_predictions:
+            routing_argv.append("--save_predictions")
+        if args.max_saved_predictions is not None:
+            routing_argv.extend(["--max_saved_predictions", str(args.max_saved_predictions)])
+        _invoke_main(routing_sweep_main, "routing-sweep", routing_argv)
+        record_stage(
+            "routing",
+            f"{args.hard_config}::{args.soft_config}",
+            routing_root,
+            {"tau_r_values": args.tau_r_values},
+        )
 
     if not args.skip_poc2:
         poc2_root = output_root / "poc2"
@@ -1519,6 +1548,19 @@ def paper_suite_main(argv: Optional[List[str]] = None) -> None:
         ]
         _invoke_main(comparison_table_main, "comparison-table", table_argv)
         record_stage("comparison_table", args.config, output_root, {"csv": str(csv_path), "md": str(md_path)})
+
+    if not args.skip_kv_summary:
+        from .reporting import kv_summary_main
+
+        csv_path = output_root / "paper_kv_summary.csv"
+        md_path = output_root / "paper_kv_summary.md"
+        kv_argv = [
+            "--glob", str(output_root / "**" / "kv_dynamics_summary.json"),
+            "--csv", str(csv_path),
+            "--md", str(md_path),
+        ]
+        _invoke_main(kv_summary_main, "kv-summary", kv_argv)
+        record_stage("kv_summary", args.config, output_root, {"csv": str(csv_path), "md": str(md_path)})
 
     summary_path = output_root / "paper_suite_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))

@@ -57,6 +57,14 @@ class PRISMAdapter(nn.Module):
         Returns:
             quality_scores: [B, L] in (0, 1).
         """
+        expected_dim = self.net[0].in_features
+        actual_dim = int(hidden_states.shape[-1])
+        if actual_dim != expected_dim:
+            raise RuntimeError(
+                "PRISMAdapter received hidden states with the wrong width: "
+                f"expected last dim {expected_dim}, got {actual_dim}. "
+                "Check the base-model hidden-state extraction path."
+            )
         return torch.sigmoid(self.net(hidden_states).squeeze(-1))
 
     def should_remask(self, quality_scores: torch.Tensor) -> torch.BoolTensor:

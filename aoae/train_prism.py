@@ -10,6 +10,7 @@ Usage:
 """
 
 import os
+import json
 import copy
 import yaml
 import torch
@@ -19,6 +20,7 @@ from datasets import load_dataset
 
 from .models.base_model import LLaDABaseModel
 from .models.prism import PRISMAdapter, create_prism_training_data, train_prism_adapter
+from .runtime_checks import collect_runtime_info
 
 
 def _setup_distributed():
@@ -74,53 +76,77 @@ def main(cfg: dict):
             print(f"Overriding backend from '{cfg_prism['base_model']['backend']}' to 'hf' for PRISM training")
         cfg_prism["base_model"]["backend"] = "hf"
     
-    if rank == 0:
-        print("Loading base model...")
-    base_model = LLaDABaseModel(cfg_prism)
-    base_model = base_model.to(device)
-    tokenizer = base_model.tokenizer
-    mask_id = cfg["base_model"]["mask_token_id"]
+    base_model = None
+    training_data = []
+    try:
+        if rank == 0:
+            print("Loading base model...")
+        base_model = LLaDABaseModel(cfg_prism)
+        base_model = base_model.to(device)
+        tokenizer = base_model.tokenizer
+        mask_id = cfg["base_model"]["mask_token_id"]
 
-    # --- Load training data ---
-    if rank == 0:
-        print("Loading training data for PRISM...")
-    ds = load_dataset(dc["train_dataset"], split=dc["train_split"])
+        # --- Load training data ---
+        if rank == 0:
+            print("Loading training data for PRISM...")
+        ds = load_dataset(dc["train_dataset"], split=dc["train_split"])
 
-    if rank == 0:
-        print(f"Creating {pc['train_samples']} corrupted/clean pairs...")
-    training_data = create_prism_training_data(
-        tokenizer=tokenizer,
-        dataset=ds,
-        mask_token_id=mask_id,
-        max_samples=pc["train_samples"],
-        max_length=dc["max_prompt_len"] + dc["max_answer_len"],
-    )
-    if rank == 0:
-        print(f"  Created {len(training_data)} training pairs.")
+        if rank == 0:
+            print(f"Creating {pc['train_samples']} corrupted/clean pairs...")
+        training_data = create_prism_training_data(
+            tokenizer=tokenizer,
+            dataset=ds,
+            mask_token_id=mask_id,
+            max_samples=pc["train_samples"],
+            max_length=dc["max_prompt_len"] + dc["max_answer_len"],
+        )
+        if rank == 0:
+            print(f"  Created {len(training_data)} training pairs.")
 
-    # --- Initialize and train adapter ---
-    embed_dim = base_model.hidden_dim
-    adapter = PRISMAdapter(cfg, hidden_dim=embed_dim)
+        # --- Initialize and train adapter ---
+        embed_dim = base_model.hidden_dim
+        adapter = PRISMAdapter(cfg, hidden_dim=embed_dim)
 
-    if rank == 0:
-        print("Training PRISM adapter...")
-    adapter = train_prism_adapter(
-        adapter=adapter,
-        base_model=base_model,
-        training_data=training_data,
-        cfg=cfg,
-        device=device,
-    )
+        if rank == 0:
+            print("Training PRISM adapter...")
+        adapter = train_prism_adapter(
+            adapter=adapter,
+            base_model=base_model,
+            training_data=training_data,
+            cfg=cfg,
+            device=device,
+        )
 
-    # --- Save ---
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
+        # --- Save ---
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
 
-    if rank == 0:
-        os.makedirs(lc["output_dir"], exist_ok=True)
-        save_path = os.path.join(lc["output_dir"], "prism_adapter.pt")
-        torch.save(adapter.state_dict(), save_path)
-        print(f"PRISM adapter saved to {save_path}")
+        if rank == 0:
+            os.makedirs(lc["output_dir"], exist_ok=True)
+            save_path = os.path.join(lc["output_dir"], "prism_adapter.pt")
+            torch.save(adapter.state_dict(), save_path)
+            metadata_path = os.path.join(lc["output_dir"], "prism_training_metadata.json")
+            with open(metadata_path, "w") as f:
+                json.dump(
+                    {
+                        "stage": "prism",
+                        "output_dir": lc["output_dir"],
+                        "artifact_path": save_path,
+                        "train_dataset": dc["train_dataset"],
+                        "train_split": dc["train_split"],
+                        "requested_train_samples": int(pc["train_samples"]),
+                        "materialized_train_pairs": int(len(training_data)),
+                        "seed": int(cfg["hardware"]["seed"]),
+                        "runtime": collect_runtime_info(),
+                    },
+                    f,
+                    indent=2,
+                )
+            print(f"PRISM adapter saved to {save_path}")
+            print(f"PRISM metadata saved to {metadata_path}")
+    finally:
+        if base_model is not None:
+            base_model.close()
 
 
 if __name__ == "__main__":

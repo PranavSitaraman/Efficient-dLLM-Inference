@@ -1,0 +1,103 @@
+{
+  "num_records": 100,
+  "mean_agreement": 0.43656494140625,
+  "mean_access": 0.0,
+  "mean_confidence_masked": 0.06321533366630319,
+  "mean_confidence_unmasked": 0.06939428031504635,
+  "mean_layer_drift_slope": 10.311054504374983,
+  "mean_off_by_one_drift_ratio": 1.1539945896972776,
+  "mean_confident_token_drift_ratio": 1.0940725806451612,
+  "mean_thrash_rate_given_cached": 0.0,
+  "mean_locality": {
+    "w16_hit_ratio": 0.61177734375,
+    "w32_hit_ratio": 0.8284765625,
+    "w8_hit_ratio": 0.3819140625
+  },
+  "mean_age_drift": {
+    "age0": 92.13902885584677,
+    "age1": 71.1136301574707,
+    "age2p": 62.23732726236979
+  },
+  "per_layer_drift": [
+    {
+      "layer_idx": 0,
+      "mean_hidden_drift": 0.13800836378528225
+    },
+    {
+      "layer_idx": 1,
+      "mean_hidden_drift": 0.5287540952620968
+    },
+    {
+      "layer_idx": 2,
+      "mean_hidden_drift": 0.9458014112903226
+    },
+    {
+      "layer_idx": 3,
+      "mean_hidden_drift": 1.6543151461693548
+    },
+    {
+      "layer_idx": 4,
+      "mean_hidden_drift": 3.651335685483872
+    },
+    {
+      "layer_idx": 5,
+      "mean_hidden_drift": 11.430037802419356
+    },
+    {
+      "layer_idx": 6,
+      "mean_hidden_drift": 14.649959677419353
+    },
+    {
+      "layer_idx": 7,
+      "mean_hidden_drift": 18.046542338709678
+    },
+    {
+      "layer_idx": 8,
+      "mean_hidden_drift": 20.203124999999996
+    },
+    {
+      "layer_idx": 9,
+      "mean_hidden_drift": 25.531935483870967
+    },
+    {
+      "layer_idx": 10,
+      "mean_hidden_drift": 34.961008064516136
+    },
+    {
+      "layer_idx": 11,
+      "mean_hidden_drift": 49.367943548387096
+    },
+    {
+      "layer_idx": 12,
+      "mean_hidden_drift": 68.18439516129033
+    },
+    {
+      "layer_idx": 13,
+      "mean_hidden_drift": 81.51443548387098
+    },
+    {
+      "layer_idx": 14,
+      "mean_hidden_drift": 116.46548387096776
+    },
+    {
+      "layer_idx": 15,
+      "mean_hidden_drift": 130.9817741935484
+    },
+    {
+      "layer_idx": 16,
+      "mean_hidden_drift": 160.8658870967742
+    },
+    {
+      "layer_idx": 17,
+      "mean_hidden_drift": 225.07870967741937
+    },
+    {
+      "layer_idx": 18,
+      "mean_hidden_drift": 248.62758064516126
+    },
+    {
+      "layer_idx": 19,
+      "mean_hidden_drift": 47.646451612903235
+    }
+  ]
+}

@@ -29,3 +29,11 @@ def test_poc1_config_matches_routing_only_paper_setup():
     assert cfg["base_model"]["soft_topk"] == 16
     assert cfg["inference"]["speculative_schedule"] == "llada21_block"
     assert cfg["inference"]["disable_remask"] is True
+
+
+def test_paper_config_enables_full_aoae_stack():
+    cfg = _load_yaml("configs/paper.yaml")
+
+    assert cfg["base_model"]["backend"] == "dual"
+    assert cfg["grpo"]["enabled"] is True
+    assert cfg["inference"]["positional_cache"]["enabled"] is True

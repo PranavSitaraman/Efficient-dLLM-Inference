@@ -1,0 +1,23 @@
+[
+  {
+    "constraint": "acc_drop<=0.01",
+    "best_tps_method": "temporal_confidence@0.700000",
+    "best_tps": "66.619",
+    "lowest_thrash_method": "no_reuse@-1.000000",
+    "lowest_thrash": "0.000000"
+  },
+  {
+    "constraint": "acc_drop<=0.02",
+    "best_tps_method": "temporal_confidence@0.700000",
+    "best_tps": "66.619",
+    "lowest_thrash_method": "no_reuse@-1.000000",
+    "lowest_thrash": "0.000000"
+  },
+  {
+    "constraint": "acc_drop<=0.05",
+    "best_tps_method": "temporal_confidence@0.700000",
+    "best_tps": "66.619",
+    "lowest_thrash_method": "no_reuse@-1.000000",
+    "lowest_thrash": "0.000000"
+  }
+]

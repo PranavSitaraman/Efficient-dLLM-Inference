@@ -39,7 +39,7 @@ cache:
   enabled: true
 
 grpo:
-  enabled: false
+  enabled: true
   group_size: 2
   clip_eps: 0.2
   alpha: 1.0
@@ -64,7 +64,7 @@ inference:
   primary_every_n: 6
   primary_agree_threshold: 0.85
   positional_cache:
-    enabled: false
+    enabled: true
     horizon: 4
     refresh_budget: 32
     candidate_policy: "learned_topb"

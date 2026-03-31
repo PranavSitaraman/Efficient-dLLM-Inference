@@ -339,7 +339,7 @@ class LLaDABaseModel(nn.Module):
 
         self._embedding_weight = self._resolve_embedding_weight()
         self.vocab_size = self._embedding_weight.shape[0]
-        self.hidden_dim = self._embedding_weight.shape[1]
+        self.hidden_dim = self._resolve_representation_dim()
         self._closed = False
 
     def to(self, *args, **kwargs):
@@ -647,6 +647,22 @@ class LLaDABaseModel(nn.Module):
             f"Model type: {type(self.model).__name__}. "
             "Ensure the model exposes get_input_embeddings() or contains an nn.Embedding."
         )
+
+    def _resolve_representation_dim(self) -> int:
+        """Return the width of token hidden states used by downstream adapters."""
+        for obj in (
+            getattr(self, "model", None),
+            getattr(getattr(self, "model", None), "model", None),
+            getattr(getattr(self, "model", None), "base_model", None),
+        ):
+            config = getattr(obj, "config", None)
+            if config is None:
+                continue
+            for attr in ("hidden_size", "d_model", "n_embd", "model_dim"):
+                value = getattr(config, attr, None)
+                if isinstance(value, int) and value > 0:
+                    return value
+        return int(self._embedding_weight.shape[1])
 
     # ------------------------------------------------------------------
     @property
@@ -1027,16 +1043,112 @@ class LLaDABaseModel(nn.Module):
             # Fallback for other HF architectures that don't expose .model
             return self.forward_with_hidden(input_ids)[1]
 
-        outputs = self._forward_hf_outputs(
+        outputs = self._forward_hf_hidden_outputs(
             input_ids,
             attention_mask=attention_mask,
             backbone=backbone,
         )
-        if hasattr(outputs, "last_hidden_state"):
-            return outputs.last_hidden_state
+        return self._extract_hidden_only_tensor(
+            outputs,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            source="hf_backbone",
+        )
+
+    def _forward_hf_hidden_outputs(
+        self,
+        input_ids: torch.LongTensor,
+        attention_mask: Optional[torch.Tensor],
+        *,
+        backbone=None,
+    ):
+        """HF backbone forward with best-effort hidden-state support."""
+        try:
+            return self._forward_hf_outputs(
+                input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+                backbone=backbone,
+            )
+        except TypeError:
+            return self._forward_hf_outputs(
+                input_ids,
+                attention_mask=attention_mask,
+                backbone=backbone,
+            )
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            unsupported = (
+                "unexpected keyword" in message
+                or "output_hidden_states" in message
+            )
+            if not unsupported:
+                raise
+            return self._forward_hf_outputs(
+                input_ids,
+                attention_mask=attention_mask,
+                backbone=backbone,
+            )
+
+    def _extract_hidden_only_tensor(
+        self,
+        outputs: Any,
+        *,
+        batch_size: int,
+        seq_len: int,
+        source: str,
+    ) -> torch.Tensor:
+        """Extract [B, L, D] hidden states from heterogeneous HF-style outputs."""
+
+        def _is_seq_tensor(value: Any) -> bool:
+            return (
+                isinstance(value, torch.Tensor)
+                and value.ndim == 3
+                and value.shape[0] == batch_size
+                and value.shape[1] == seq_len
+            )
+
+        expected_dim = int(getattr(self, "hidden_dim", 0) or self._embedding_weight.shape[1])
+        vocab_size = int(getattr(self, "vocab_size", 0) or self._embedding_weight.shape[0])
+
+        last_hidden = getattr(outputs, "last_hidden_state", None)
+        if _is_seq_tensor(last_hidden):
+            return last_hidden
+
+        hidden_states = getattr(outputs, "hidden_states", None)
+        if hidden_states is not None:
+            if isinstance(hidden_states, torch.Tensor):
+                if _is_seq_tensor(hidden_states):
+                    return hidden_states
+            else:
+                candidates = [tensor for tensor in hidden_states if _is_seq_tensor(tensor)]
+                for tensor in reversed(candidates):
+                    if tensor.shape[-1] == expected_dim:
+                        return tensor
+                if candidates:
+                    return candidates[-1]
+
+        tuple_candidates = []
         if isinstance(outputs, (tuple, list)):
-            return outputs[0]
-        raise RuntimeError(f"Unexpected backbone output type: {type(outputs)}")
+            tuple_candidates = [tensor for tensor in outputs if _is_seq_tensor(tensor)]
+
+        for tensor in tuple_candidates:
+            if tensor.shape[-1] == expected_dim:
+                return tensor
+
+        non_vocab = [tensor for tensor in tuple_candidates if tensor.shape[-1] != vocab_size]
+        if len(non_vocab) == 1:
+            return non_vocab[0]
+        if non_vocab:
+            return min(non_vocab, key=lambda tensor: abs(int(tensor.shape[-1]) - expected_dim))
+
+        if tuple_candidates:
+            return tuple_candidates[0]
+
+        raise RuntimeError(
+            f"{source} model did not return usable hidden states with shape [B, L, D]. "
+            f"Expected batch={batch_size}, seq_len={seq_len}, hidden_dim={expected_dim}."
+        )
 
     def _extract_logits_and_hidden_states(
         self, outputs, source: str = "hf",

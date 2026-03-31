@@ -41,7 +41,7 @@ Generated artifacts live in `outputs/`, `logs/`, and `results/` and are gitignor
 | Config | Purpose |
 | --- | --- |
 | `configs/default.yaml` | Main single-run training and eval path on `GSAI-ML/LLaDA-8B-Instruct` |
-| `configs/paper.yaml` | Main paper-oriented config for integrated experiments |
+| `configs/paper.yaml` | Main paper-oriented speculative AOAE config for integrated experiments and end-to-end training |
 | `configs/poc1.yaml` | PoC 1: soft-routing speed/quality tradeoff |
 | `configs/poc2.yaml` | PoC 2: training-free KV-reuse agreement signal study |
 | `configs/llada21_hard.yaml` | Routing sweep hard-routing reference |
@@ -127,6 +127,9 @@ Run the full paper suite:
 aoae paper-suite --config configs/paper.yaml --max_samples 100
 ```
 
+The paper suite runs the routing sweep, PoC 1, PoC 2, the ablation matrix, and
+aggregated reporting artifacts in one workflow.
+
 Aggregate saved artifacts:
 
 ```bash
@@ -176,6 +179,7 @@ aoae train --config configs/default.yaml --stage grpo --resume auto
 aoae eval --config configs/default.yaml --checkpoint outputs/default/policy_final.pt
 aoae pipeline --config configs/default.yaml
 
+aoae pipeline --config configs/paper.yaml --mode speculative
 aoae tau-sweep --config configs/poc1.yaml
 aoae reuse-sweep --config configs/poc2.yaml
 aoae routing-sweep --hard_config configs/llada21_hard.yaml --soft_config configs/llada21_soft.yaml

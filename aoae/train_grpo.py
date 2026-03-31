@@ -13,13 +13,11 @@ Key design choices:
 """
 
 import os
+import json
 import math
-import time
-import yaml
 import random
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.optim import AdamW
 # LambdaLR imported at usage site below (to keep scheduler logic together)
 from tqdm import tqdm
@@ -30,6 +28,7 @@ from .checkpoints import find_latest_checkpoint, load_state_dict_flexible
 from .inference import aoae_inference, AOAETrajectory
 from .speculative_inference import speculative_inference, SpeculativeTrajectory
 from .tasks import check_math_correctness, extract_answer, extract_prompt_and_reference
+from .runtime_checks import collect_runtime_info
 
 
 # ======================================================================
@@ -195,6 +194,27 @@ def compute_grpo_loss(
     return -total_loss / max(G, 1)
 
 
+def normalize_group_advantages(
+    rewards: torch.Tensor,
+    *,
+    normalize_std: bool = False,
+) -> torch.Tensor:
+    """Center rewards within the rollout group, with optional std scaling.
+
+    The paper objective uses ``A^g = R^g - mean(R)``. Standard-deviation
+    normalization is kept as an opt-in compatibility flag for experiments that
+    want the older behavior.
+    """
+    advantages = rewards - rewards.mean()
+    if not normalize_std:
+        return advantages
+
+    std = rewards.std(unbiased=False)
+    if torch.isfinite(std) and std > 1e-8:
+        advantages = advantages / std
+    return advantages
+
+
 # ======================================================================
 # Rollout collection
 # ======================================================================
@@ -285,12 +305,11 @@ def collect_rollout_group(
         trajectories.append(traj_data)
         rewards.append(reward.item())
 
-    # --- Compute advantages: A^g = (R^g - mean(R)) / std(R) ---
     rewards_t = torch.tensor(rewards, dtype=torch.float32)
-    advantages = rewards_t - rewards_t.mean()
-    std = rewards_t.std()
-    if std > 1e-8:
-        advantages = advantages / std
+    advantages = normalize_group_advantages(
+        rewards_t,
+        normalize_std=bool(gc.get("normalize_advantage_std", False)),
+    )
 
     return trajectories, rewards_t, advantages
 
@@ -349,239 +368,275 @@ def train(cfg: dict, resume_from: Optional[str] = None):
     dual_model = None
     base_model = None
 
-    if use_dual:
-        from .models.dual_model import DualModelWrapper
+    prism = None
+    policy = None
+    soft_mask = None
+    try:
+        if use_dual:
+            from .models.dual_model import DualModelWrapper
+            if is_main:
+                print("Loading dual model (hard aux + soft primary, single-copy)...\n")
+            dual_model = DualModelWrapper(cfg)
+            dual_model = dual_model.to(device)
+            tokenizer = dual_model.tokenizer
+            mask_id = cfg["base_model"]["mask_token_id"]
+            embed_w = dual_model.get_embedding_weight()
+            embed_dim = embed_w.shape[1]
+        else:
+            # Single-model mode — override backend to HF if vLLM unavailable
+            cfg_grpo = cfg.copy()
+            if cfg_grpo["base_model"]["backend"] in ("soft_moe", "dinfer"):
+                try:
+                    _ = torch.ops._moe_C.moe_align_block_size
+                except AttributeError:
+                    if is_main:
+                        print(
+                            f"[WARN] vLLM MoE kernels unavailable; overriding backend "
+                            f"'{cfg_grpo['base_model']['backend']}' → 'hf' for GRPO training.\n"
+                        )
+                    cfg_grpo["base_model"] = dict(cfg_grpo["base_model"])
+                    cfg_grpo["base_model"]["backend"] = "hf"
+
+            if is_main:
+                print("Loading base model...\n")
+            base_model = LLaDABaseModel(cfg_grpo)
+            base_model = base_model.to(device)
+            tokenizer = base_model.tokenizer
+            mask_id = cfg["base_model"]["mask_token_id"]
+            embed_w = base_model.get_embedding_weight()
+            embed_dim = embed_w.shape[1]
+
+        # --- Initialize modules ---
+        soft_mask = SoftMaskedState(cfg, embed_w).to(device)
+        soft_mask.set_mask_embedding(mask_id)
+
+        policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
+        n_params = sum(p.numel() for p in policy.parameters())
         if is_main:
-            print("Loading dual model (hard aux + soft primary, single-copy)...\n")
-        dual_model = DualModelWrapper(cfg)
-        dual_model = dual_model.to(device)
-        tokenizer = dual_model.tokenizer
-        mask_id = cfg["base_model"]["mask_token_id"]
-        embed_w = dual_model.get_embedding_weight()
-        embed_dim = embed_w.shape[1]
-    else:
-        # Single-model mode — override backend to HF if vLLM unavailable
-        cfg_grpo = cfg.copy()
-        if cfg_grpo["base_model"]["backend"] in ("soft_moe", "dinfer"):
-            try:
-                _ = torch.ops._moe_C.moe_align_block_size
-            except AttributeError:
-                if is_main:
-                    print(
-                        f"[WARN] vLLM MoE kernels unavailable; overriding backend "
-                        f"'{cfg_grpo['base_model']['backend']}' → 'hf' for GRPO training.\n"
-                    )
-                cfg_grpo["base_model"] = dict(cfg_grpo["base_model"])
-                cfg_grpo["base_model"]["backend"] = "hf"
+            print(f"Policy parameters: {n_params:,} ({n_params / 1e6:.2f}M)")
 
-        if is_main:
-            print("Loading base model...\n")
-        base_model = LLaDABaseModel(cfg_grpo)
-        base_model = base_model.to(device)
-        tokenizer = base_model.tokenizer
-        mask_id = cfg["base_model"]["mask_token_id"]
-        embed_w = base_model.get_embedding_weight()
-        embed_dim = embed_w.shape[1]
-
-    # --- Initialize modules ---
-
-    soft_mask = SoftMaskedState(cfg, embed_w).to(device)
-    soft_mask.set_mask_embedding(mask_id)
-
-    policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
-    n_params = sum(p.numel() for p in policy.parameters())
-    if is_main:
-        print(f"Policy parameters: {n_params:,} ({n_params / 1e6:.2f}M)")
-
-    # Wrap policy in DDP for multi-GPU gradient sync
-    if is_distributed:
-        from torch.nn.parallel import DistributedDataParallel as DDP
-        policy = DDP(policy, device_ids=[local_rank])
-        # soft_mask has learnable gating params too
-        soft_mask = DDP(soft_mask, device_ids=[local_rank])
-
-    # PRISM adapter (optional — load if checkpoint exists, else skip)
-    prism_path = os.path.join(lc["output_dir"], "prism_adapter.pt")
-    if os.path.exists(prism_path):
-        if is_main:
-            print(f"Loading PRISM adapter from {prism_path}")
-        prism = PRISMAdapter(cfg, embed_dim).to(device)
-        prism.load_state_dict(torch.load(prism_path, map_location=device))
-        prism.eval()
-    else:
-        if is_main:
-            print("No PRISM adapter found — policy will not receive quality scores.")
-        prism = None
-
-    # --- Optimizer (over all trainable params including DDP wrappers) ---
-    trainable_params = list(policy.parameters()) + list(soft_mask.parameters())
-    optimizer = AdamW(
-        trainable_params,
-        lr=gc["lr"],
-        weight_decay=gc["weight_decay"],
-    )
-    # Linear warmup + cosine decay schedule
-    from torch.optim.lr_scheduler import LambdaLR
-    def _lr_lambda(step):
-        if step < gc["warmup_steps"]:
-            return step / max(gc["warmup_steps"], 1)
-        progress = (step - gc["warmup_steps"]) / max(gc["max_steps"] - gc["warmup_steps"], 1)
-        return 0.5 * (1.0 + math.cos(math.pi * progress))
-    scheduler = LambdaLR(optimizer, _lr_lambda)
-
-    # --- Load training data ---
-    if is_main:
-        print("Loading training data...")
-    train_ds = load_dataset(
-        dc["train_dataset"], split=dc["train_split"]
-    )
-    if dc["train_max_samples"]:
-        train_ds = train_ds.select(range(min(dc["train_max_samples"], len(train_ds))))
-
-    # --- Training loop ---
-    os.makedirs(lc["output_dir"], exist_ok=True)
-    global_step = 0
-    accum_step = 0
-    start_epoch = 0
-    grad_accum = gc["grad_accum_steps"]
-    best_reward = -float("inf")
-
-    # --- Resume from checkpoint ---
-    if resume_from == "auto":
-        resume_from = find_latest_checkpoint(lc["output_dir"])
-        if resume_from and is_main:
-            print(f"Auto-detected checkpoint: {resume_from}")
-
-    if resume_from and os.path.isfile(resume_from):
-        if is_main:
-            print(f"Resuming from checkpoint: {resume_from}")
-        ckpt = torch.load(resume_from, map_location=device)
-
-        # Restore model weights
-        pol_inner = policy.module if hasattr(policy, 'module') else policy
-        load_state_dict_flexible(pol_inner, ckpt["policy"], "policy")
-        sm_inner = soft_mask.module if hasattr(soft_mask, 'module') else soft_mask
-        load_state_dict_flexible(sm_inner, ckpt["soft_mask"], "soft_mask")
-
-        # Restore optimizer
-        if "optimizer" in ckpt:
-            optimizer.load_state_dict(ckpt["optimizer"])
-
-        # Restore scheduler
-        if "scheduler" in ckpt:
-            scheduler.load_state_dict(ckpt["scheduler"])
-
-        # Restore counters
-        if "step" in ckpt:
-            global_step = ckpt["step"]
-        if "accum_step" in ckpt:
-            accum_step = ckpt["accum_step"]
-        if "epoch" in ckpt:
-            start_epoch = ckpt["epoch"]
-
-        if is_main:
-            print(f"  Resumed at global_step={global_step}, epoch={start_epoch}, "
-                  f"accum_step={accum_step}")
-        del ckpt
-    elif resume_from:
-        raise FileNotFoundError(
-            f"Checkpoint not found: {resume_from}. "
-            f"Use --resume auto to auto-detect, or pass a valid path."
-        )
-
-    for epoch in range(start_epoch, gc["epochs"]):
-        if is_main:
-            print(f"\n=== Epoch {epoch + 1}/{gc['epochs']} ===")
-        epoch_rewards = []
-        valid_samples_this_epoch = 0
-
-        indices = list(range(len(train_ds)))
-        random.shuffle(indices)
-
-        # Shard data across ranks for distributed training
+        # Wrap policy in DDP for multi-GPU gradient sync
         if is_distributed:
-            indices = indices[rank::world_size]
+            from torch.nn.parallel import DistributedDataParallel as DDP
+            policy = DDP(policy, device_ids=[local_rank])
+            # soft_mask has learnable gating params too
+            soft_mask = DDP(soft_mask, device_ids=[local_rank])
 
-        pbar = tqdm(range(0, len(indices), gc["batch_size"]), desc="Training", disable=not is_main)
-        for i in pbar:
-            batch_indices = indices[i : i + gc["batch_size"]]
+        # PRISM adapter (optional — load if checkpoint exists, else skip)
+        prism_path = os.path.join(lc["output_dir"], "prism_adapter.pt")
+        if os.path.exists(prism_path):
+            if is_main:
+                print(f"Loading PRISM adapter from {prism_path}")
+            prism = PRISMAdapter(cfg, embed_dim).to(device)
+            prism.load_state_dict(torch.load(prism_path, map_location=device))
+            prism.eval()
+        else:
+            if is_main:
+                print("No PRISM adapter found — policy will not receive quality scores.")
+            prism = None
 
-            for idx in batch_indices:
-                sample = train_ds[idx]
+        # --- Optimizer (over all trainable params including DDP wrappers) ---
+        trainable_params = list(policy.parameters()) + list(soft_mask.parameters())
+        optimizer = AdamW(
+            trainable_params,
+            lr=gc["lr"],
+            weight_decay=gc["weight_decay"],
+        )
+        # Linear warmup + cosine decay schedule
+        from torch.optim.lr_scheduler import LambdaLR
 
-                # Prepare prompt
-                question, reference = extract_prompt_and_reference(sample)
-                if not question or not reference:
-                    continue
-                valid_samples_this_epoch += 1
+        def _lr_lambda(step):
+            if step < gc["warmup_steps"]:
+                return step / max(gc["warmup_steps"], 1)
+            progress = (step - gc["warmup_steps"]) / max(gc["max_steps"] - gc["warmup_steps"], 1)
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
 
-                messages = [{"role": "user", "content": question}]
-                prompt_text = tokenizer.apply_chat_template(
-                    messages, tokenize=False, add_generation_prompt=True
+        scheduler = LambdaLR(optimizer, _lr_lambda)
+
+        # --- Load training data ---
+        if is_main:
+            print("Loading training data...")
+        train_ds = load_dataset(
+            dc["train_dataset"], split=dc["train_split"]
+        )
+        if dc["train_max_samples"]:
+            train_ds = train_ds.select(range(min(dc["train_max_samples"], len(train_ds))))
+
+        # --- Training loop ---
+        os.makedirs(lc["output_dir"], exist_ok=True)
+        global_step = 0
+        accum_step = 0
+        start_epoch = 0
+        grad_accum = gc["grad_accum_steps"]
+        best_reward = -float("inf")
+        best_path = os.path.join(lc["output_dir"], "policy_best.pt")
+
+        # --- Resume from checkpoint ---
+        if resume_from == "auto":
+            resume_from = find_latest_checkpoint(lc["output_dir"])
+            if resume_from and is_main:
+                print(f"Auto-detected checkpoint: {resume_from}")
+
+        if resume_from and os.path.isfile(resume_from):
+            if is_main:
+                print(f"Resuming from checkpoint: {resume_from}")
+            ckpt = torch.load(resume_from, map_location=device)
+
+            # Restore model weights
+            pol_inner = policy.module if hasattr(policy, 'module') else policy
+            load_state_dict_flexible(pol_inner, ckpt["policy"], "policy")
+            sm_inner = soft_mask.module if hasattr(soft_mask, 'module') else soft_mask
+            load_state_dict_flexible(sm_inner, ckpt["soft_mask"], "soft_mask")
+
+            # Restore optimizer
+            if "optimizer" in ckpt:
+                optimizer.load_state_dict(ckpt["optimizer"])
+
+            # Restore scheduler
+            if "scheduler" in ckpt:
+                scheduler.load_state_dict(ckpt["scheduler"])
+
+            # Restore counters
+            if "step" in ckpt:
+                global_step = ckpt["step"]
+            if "accum_step" in ckpt:
+                accum_step = ckpt["accum_step"]
+            if "epoch" in ckpt:
+                start_epoch = ckpt["epoch"]
+
+            if is_main:
+                print(f"  Resumed at global_step={global_step}, epoch={start_epoch}, "
+                      f"accum_step={accum_step}")
+            del ckpt
+        elif resume_from:
+            raise FileNotFoundError(
+                f"Checkpoint not found: {resume_from}. "
+                f"Use --resume auto to auto-detect, or pass a valid path."
+            )
+
+        for epoch in range(start_epoch, gc["epochs"]):
+            if is_main:
+                print(f"\n=== Epoch {epoch + 1}/{gc['epochs']} ===")
+            epoch_rewards = []
+            valid_samples_this_epoch = 0
+
+            indices = list(range(len(train_ds)))
+            random.shuffle(indices)
+
+            # Shard data across ranks for distributed training
+            if is_distributed:
+                indices = indices[rank::world_size]
+
+            pbar = tqdm(range(0, len(indices), gc["batch_size"]), desc="Training", disable=not is_main)
+            for i in pbar:
+                batch_indices = indices[i : i + gc["batch_size"]]
+
+                for idx in batch_indices:
+                    sample = train_ds[idx]
+
+                    # Prepare prompt
+                    question, reference = extract_prompt_and_reference(sample)
+                    if not question or not reference:
+                        continue
+                    valid_samples_this_epoch += 1
+
+                    messages = [{"role": "user", "content": question}]
+                    prompt_text = tokenizer.apply_chat_template(
+                        messages, tokenize=False, add_generation_prompt=True
+                    )
+                    prompt_ids = tokenizer.encode(
+                        prompt_text,
+                        add_special_tokens=False,
+                        max_length=dc["max_prompt_len"],
+                        truncation=True,
+                        return_tensors="pt",
+                    ).to(device)
+                    if prompt_ids.dim() == 1:
+                        prompt_ids = prompt_ids.unsqueeze(0)
+
+                    # Collect G rollouts
+                    trajectories, rewards, advantages = collect_rollout_group(
+                        base_model=base_model,
+                        policy=policy,
+                        soft_mask_module=soft_mask,
+                        prism_adapter=prism,
+                        prompt_ids=prompt_ids,
+                        reference_answers=[reference],
+                        cfg=cfg,
+                        tokenizer=tokenizer,
+                        dual_model=dual_model,
+                    )
+
+                    epoch_rewards.append(rewards.mean().item())
+
+                    # Clipped GRPO surrogate with importance sampling
+                    # Pass DDP-wrapped modules so .backward() syncs gradients
+                    grpo_loss = compute_grpo_loss(
+                        policy=policy,
+                        soft_mask_module=soft_mask,
+                        trajectories=trajectories,
+                        advantages=advantages.to(device),
+                        clip_eps=gc["clip_eps"],
+                    )
+                    # Scale loss for gradient accumulation
+                    scaled_loss = grpo_loss / (len(batch_indices) * grad_accum)
+                    scaled_loss.backward()
+
+                accum_step += 1
+
+                # --- Optimizer step after grad_accum mini-batches ---
+                if accum_step % grad_accum == 0:
+                    nn.utils.clip_grad_norm_(trainable_params, gc["max_grad_norm"])
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                    global_step += 1
+
+                    # --- Logging ---
+                    if global_step % lc["log_every"] == 0 and is_main:
+                        recent = epoch_rewards[-lc["log_every"]:] if epoch_rewards else [0]
+                        avg_r = np.mean(recent)
+                        std_r = np.std(recent) if len(recent) > 1 else 0.0
+                        frac_pos = np.mean([1.0 if r > 0 else 0.0 for r in recent])
+                        print(f"  step={global_step}  avg_reward={avg_r:.4f}  "
+                              f"std_reward={std_r:.4f}  frac_positive={frac_pos:.2f}  "
+                              f"lr={scheduler.get_last_lr()[0]:.2e}")
+
+                    # --- Save checkpoint (rank 0 only) ---
+                    if global_step % lc["save_every"] == 0 and is_main:
+                        pol_sd = policy.module.state_dict() if hasattr(policy, 'module') else policy.state_dict()
+                        sm_sd = soft_mask.module.state_dict() if hasattr(soft_mask, 'module') else soft_mask.state_dict()
+                        ckpt_path = os.path.join(lc["output_dir"], f"policy_step{global_step}.pt")
+                        torch.save({
+                            "policy": pol_sd,
+                            "soft_mask": sm_sd,
+                            "optimizer": optimizer.state_dict(),
+                            "scheduler": scheduler.state_dict(),
+                            "step": global_step,
+                            "accum_step": accum_step,
+                            "epoch": epoch,
+                        }, ckpt_path)
+                        print(f"  Saved checkpoint: {ckpt_path}")
+
+                    if global_step >= gc["max_steps"]:
+                        break
+
+            if valid_samples_this_epoch == 0:
+                sample0 = train_ds[0] if len(train_ds) > 0 else {}
+                sample_keys = sorted(list(sample0.keys())) if isinstance(sample0, dict) else []
+                sample_preview = str(sample0)[:500]
+                raise RuntimeError(
+                    "No valid (prompt, reference) samples were found for this epoch. "
+                    f"Dataset schema does not match expected fields. "
+                    f"Sample keys={sample_keys}. Sample preview={sample_preview}"
                 )
-                prompt_ids = tokenizer.encode(
-                    prompt_text,
-                    add_special_tokens=False,
-                    max_length=dc["max_prompt_len"],
-                    truncation=True,
-                    return_tensors="pt",
-                ).to(device)
-                if prompt_ids.dim() == 1:
-                    prompt_ids = prompt_ids.unsqueeze(0)
 
-                # Collect G rollouts
-                trajectories, rewards, advantages = collect_rollout_group(
-                    base_model=base_model,
-                    policy=policy,
-                    soft_mask_module=soft_mask,
-                    prism_adapter=prism,
-                    prompt_ids=prompt_ids,
-                    reference_answers=[reference],
-                    cfg=cfg,
-                    tokenizer=tokenizer,
-                    dual_model=dual_model,
-                )
-
-                epoch_rewards.append(rewards.mean().item())
-
-                # Clipped GRPO surrogate with importance sampling
-                # Pass DDP-wrapped modules so .backward() syncs gradients
-                grpo_loss = compute_grpo_loss(
-                    policy=policy,
-                    soft_mask_module=soft_mask,
-                    trajectories=trajectories,
-                    advantages=advantages.to(device),
-                    clip_eps=gc["clip_eps"],
-                )
-                # Scale loss for gradient accumulation
-                scaled_loss = grpo_loss / (len(batch_indices) * grad_accum)
-                scaled_loss.backward()
-
-            accum_step += 1
-
-            # --- Optimizer step after grad_accum mini-batches ---
-            if accum_step % grad_accum == 0:
-                nn.utils.clip_grad_norm_(trainable_params, gc["max_grad_norm"])
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
-                global_step += 1
-
-                # --- Logging ---
-                if global_step % lc["log_every"] == 0 and is_main:
-                    recent = epoch_rewards[-lc["log_every"]:] if epoch_rewards else [0]
-                    avg_r = np.mean(recent)
-                    std_r = np.std(recent) if len(recent) > 1 else 0.0
-                    frac_pos = np.mean([1.0 if r > 0 else 0.0 for r in recent])
-                    print(f"  step={global_step}  avg_reward={avg_r:.4f}  "
-                          f"std_reward={std_r:.4f}  frac_positive={frac_pos:.2f}  "
-                          f"lr={scheduler.get_last_lr()[0]:.2e}")
-
-                # --- Save checkpoint (rank 0 only) ---
-                if global_step % lc["save_every"] == 0 and is_main:
+            if is_main and epoch_rewards:
+                epoch_mean_reward = float(np.mean(epoch_rewards))
+                if epoch_mean_reward > best_reward:
+                    best_reward = epoch_mean_reward
                     pol_sd = policy.module.state_dict() if hasattr(policy, 'module') else policy.state_dict()
                     sm_sd = soft_mask.module.state_dict() if hasattr(soft_mask, 'module') else soft_mask.state_dict()
-                    ckpt_path = os.path.join(lc["output_dir"], f"policy_step{global_step}.pt")
                     torch.save({
                         "policy": pol_sd,
                         "soft_mask": sm_sd,
@@ -590,32 +645,53 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         "step": global_step,
                         "accum_step": accum_step,
                         "epoch": epoch,
-                    }, ckpt_path)
-                    print(f"  Saved checkpoint: {ckpt_path}")
+                        "best_reward": best_reward,
+                    }, best_path)
+                    print(f"  Saved best checkpoint: {best_path} (epoch_mean_reward={best_reward:.4f})")
 
-                if global_step >= gc["max_steps"]:
-                    break
+            if global_step >= gc["max_steps"]:
+                break
 
-        if global_step >= gc["max_steps"]:
-            break
-
-        if valid_samples_this_epoch == 0:
-            sample0 = train_ds[0] if len(train_ds) > 0 else {}
-            sample_keys = sorted(list(sample0.keys())) if isinstance(sample0, dict) else []
-            sample_preview = str(sample0)[:500]
-            raise RuntimeError(
-                "No valid (prompt, reference) samples were found for this epoch. "
-                f"Dataset schema does not match expected fields. "
-                f"Sample keys={sample_keys}. Sample preview={sample_preview}"
-            )
-
-    # --- Save final model (rank 0 only) ---
-    if is_main:
-        pol_sd = policy.module.state_dict() if hasattr(policy, 'module') else policy.state_dict()
-        sm_sd = soft_mask.module.state_dict() if hasattr(soft_mask, 'module') else soft_mask.state_dict()
-        final_path = os.path.join(lc["output_dir"], "policy_final.pt")
-        torch.save({
-            "policy": pol_sd,
-            "soft_mask": sm_sd,
-        }, final_path)
-        print(f"\nTraining complete. Final model saved to {final_path}")
+        # --- Save final model (rank 0 only) ---
+        if is_main:
+            pol_sd = policy.module.state_dict() if hasattr(policy, 'module') else policy.state_dict()
+            sm_sd = soft_mask.module.state_dict() if hasattr(soft_mask, 'module') else soft_mask.state_dict()
+            final_path = os.path.join(lc["output_dir"], "policy_final.pt")
+            torch.save({
+                "policy": pol_sd,
+                "soft_mask": sm_sd,
+            }, final_path)
+            metadata_path = os.path.join(lc["output_dir"], "grpo_training_metadata.json")
+            with open(metadata_path, "w") as f:
+                json.dump(
+                    {
+                        "stage": "grpo",
+                        "output_dir": lc["output_dir"],
+                        "backend": cfg["base_model"].get("backend", ""),
+                        "used_dual_model": bool(use_dual),
+                        "train_dataset": dc["train_dataset"],
+                        "train_split": dc["train_split"],
+                        "train_max_samples": dc.get("train_max_samples"),
+                        "epochs": int(gc["epochs"]),
+                        "max_steps": int(gc["max_steps"]),
+                        "completed_steps": int(global_step),
+                        "grad_accum_steps": int(gc["grad_accum_steps"]),
+                        "group_size": int(gc["group_size"]),
+                        "normalize_advantage_std": bool(gc.get("normalize_advantage_std", False)),
+                        "best_reward": None if best_reward == -float("inf") else float(best_reward),
+                        "best_checkpoint": best_path if os.path.exists(best_path) else None,
+                        "final_checkpoint": final_path,
+                        "resume_from": resume_from,
+                        "seed": int(cfg["hardware"]["seed"]),
+                        "runtime": collect_runtime_info(),
+                    },
+                    f,
+                    indent=2,
+                )
+            print(f"\nTraining complete. Final model saved to {final_path}")
+            print(f"GRPO metadata saved to {metadata_path}")
+    finally:
+        if dual_model is not None:
+            dual_model.close()
+        if base_model is not None:
+            base_model.close()
