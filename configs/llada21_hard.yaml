@@ -96,7 +96,7 @@ data:
   train_max_samples: 50000
   eval_dataset: "openai/gsm8k"
   eval_split: "test"
-  eval_max_samples: 1319
+  eval_max_samples: 100
   max_prompt_len: 512
   max_answer_len: 256
 

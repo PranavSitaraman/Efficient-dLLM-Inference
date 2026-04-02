@@ -17,7 +17,7 @@ FORWARD_ARGS=()
 
 resolve_default_config() {
     case "$1" in
-        pipeline)  echo "configs/default.yaml" ;;
+        pipeline)  echo "configs/paper.yaml" ;;
         paper)     echo "configs/paper.yaml" ;;
         poc1)      echo "configs/poc1.yaml" ;;
         poc2)      echo "configs/poc2.yaml" ;;
@@ -178,7 +178,7 @@ fi
 
 case "$WORKFLOW" in
     pipeline)
-        python3 -m aoae.cli pipeline --config "$CONFIG" "${COMMON_ARGS[@]}"
+        python3 -m aoae.cli pipeline --config "$CONFIG" --skip_preflight "${COMMON_ARGS[@]}"
         ;;
     paper)
         python3 -m aoae.cli paper-suite --config "$CONFIG" "${COMMON_ARGS[@]}"

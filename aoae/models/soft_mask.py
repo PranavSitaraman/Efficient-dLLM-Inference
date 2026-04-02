@@ -1,11 +1,9 @@
 """
-Soft-Masked State Construction (Eq. softmask + gating from paper §3.1).
+Soft-Masked State Construction (Eq. softmask + gating from paper section 3.1).
 
-Converts base-model logits into per-position feature vectors h_t^k that
-blend the mask embedding with top-K predicted token embeddings, gated by
-a confidence-scaled sigmoid of negative entropy.
-
-Reference: Hersche et al. "Soft-Masked Diffusion Language Models" (2025).
+Converts base-model logits into per-position feature vectors that blend the
+mask embedding with top-K predicted token embeddings, gated by a
+confidence-scaled sigmoid of negative entropy.
 """
 
 import torch
@@ -15,70 +13,45 @@ from typing import Tuple
 
 
 class SoftMaskedState(nn.Module):
-    """
-    Builds the soft-masked state s_t = (H_t, m_t, t) from base-model outputs.
-
-    Learnable parameters: omega = (omega_s, omega_a, omega_b) for the gating
-    function lambda(p_t^k).
-    """
+    """Build the soft-masked state from base-model outputs."""
 
     def __init__(self, cfg, embedding_weight: torch.Tensor):
-        """
-        Args:
-            cfg: full config dict.
-            embedding_weight: [V, D] token embedding matrix from base model.
-        """
         super().__init__()
         sm = cfg["soft_mask"]
         self.top_k = sm["top_k"]
 
-        # Gating parameters (Eq. gating): lambda = omega_s * sigmoid(omega_a * (-H - omega_b))
         self.omega_s = nn.Parameter(torch.tensor(sm["omega_s_init"], dtype=torch.float32))
         self.omega_a = nn.Parameter(torch.tensor(sm["omega_a_init"], dtype=torch.float32))
         self.omega_b = nn.Parameter(torch.tensor(sm["omega_b_init"], dtype=torch.float32))
 
-        # Store embedding weight as buffer (frozen, from base model)
-        self.register_buffer("embedding_weight", embedding_weight.float())
+        # The embedding matrix belongs to the frozen base model. Keep it as a
+        # non-persistent buffer so AOAE checkpoints do not serialize gigabytes
+        # of static embeddings on every save.
+        self.register_buffer("embedding_weight", embedding_weight.float(), persistent=False)
         self.embed_dim = embedding_weight.shape[1]
 
         self.register_buffer("mask_embed", torch.zeros(1, embedding_weight.shape[1]))
         self._mask_embed_set = False
 
-    # ------------------------------------------------------------------
     def forward(
         self,
         logits: torch.Tensor,
         mask_indicator: torch.BoolTensor,
         step_frac: float,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Construct the soft-masked state.
-
-        Args:
-            logits:         [B, L, V] base-model logits.
-            mask_indicator: [B, L]    True where y_t^k == [M].
-            step_frac:      scalar    t / T ∈ [0, 1].
-
-        Returns:
-            H_t:        [B, L, D]   soft-masked embeddings.
-            confidence: [B, L]      max-prob per position (for policy input).
-            entropy:    [B, L]      per-position entropy (for diagnostics).
-        """
-        B, L, V = logits.shape
+        del mask_indicator, step_frac
+        bsz, seq_len, vocab_size = logits.shape
 
         logits_f = logits.float()
-        log_probs = F.log_softmax(logits_f, dim=-1)                 # [B, L, V]
-        probs = log_probs.exp()                                     # [B, L, V]
-        confidence = probs.max(dim=-1).values                       # [B, L]
-        entropy = -(probs * log_probs).sum(dim=-1)                  # [B, L]
+        log_probs = F.log_softmax(logits_f, dim=-1)
+        probs = log_probs.exp()
+        confidence = probs.max(dim=-1).values
+        entropy = -(probs * log_probs).sum(dim=-1)
 
-        topk_probs, topk_ids = probs.topk(self.top_k, dim=-1)      # [B, L, K]
+        topk_probs, topk_ids = probs.topk(self.top_k, dim=-1)
         topk_probs_norm = topk_probs / topk_probs.sum(dim=-1, keepdim=True).clamp(min=1e-8)
 
-        # --- Token embeddings for top-K predictions ---
-        # [B, L, K, D]
         topk_embeds = F.embedding(topk_ids, self.embedding_weight)
-        # Weighted sum: [B, L, D]
         weighted_embeds = (topk_probs_norm.unsqueeze(-1) * topk_embeds).sum(dim=2)
 
         if not self._mask_embed_set:
@@ -86,26 +59,18 @@ class SoftMaskedState(nn.Module):
                 "SoftMaskedState.set_mask_embedding() was never called. "
                 "Call it once after constructing the base model."
             )
-        mask_embed = self.mask_embed  # [1, D]
+        mask_embed = self.mask_embed
 
-        # --- Gating function lambda (Eq. gating) ---
-        # lambda(p_t^k) = omega_s * sigmoid(omega_a * (-H(p_t^k) - omega_b))
         lam = self.omega_s * torch.sigmoid(
             self.omega_a * (-entropy - self.omega_b)
-        )  # [B, L]
+        )
 
-        # --- Soft-masked embedding (Eq. softmask) ---
-        # h_t^k = lambda * E_mask + (1 - lambda) * weighted_embeds
-        lam_exp = lam.unsqueeze(-1)  # [B, L, 1]
-        H_t = lam_exp * mask_embed + (1.0 - lam_exp) * weighted_embeds  # [B, L, D]
+        lam_exp = lam.unsqueeze(-1)
+        h_t = lam_exp * mask_embed + (1.0 - lam_exp) * weighted_embeds
+        assert h_t.shape[:2] == (bsz, seq_len)
+        assert logits.shape[-1] == vocab_size
+        return h_t, confidence, entropy
 
-        return H_t, confidence, entropy
-
-    # ------------------------------------------------------------------
     def set_mask_embedding(self, mask_token_id: int):
-        """
-        Copy the mask token's embedding into the dedicated buffer.
-        Call this once after loading the base model.
-        """
         self.mask_embed.copy_(self.embedding_weight[mask_token_id].unsqueeze(0))
         self._mask_embed_set = True

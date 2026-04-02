@@ -51,20 +51,24 @@ cache:
 
 # ---- GRPO training ------------------------------------------
 grpo:
-  group_size: 8                # G trajectories per prompt (paper §3.7)
+  group_size: 4                # Reproduction budget: batched rollouts per prompt
   clip_eps: 0.2                # epsilon for clipping (paper §3.5)
   alpha: 1.0                   # speed bonus weight (paper §3.5)
   beta: 0.1                    # cache-thrashing penalty weight (paper §3.5)
   access_reward_weight: 0.0    # optional dense reward from next-H speculative access F1
+  unresolved_penalty_weight: 0.25  # keep no-progress / still-masked rollouts negative during training
+  min_checkpoint_reward: 0.0   # pipeline will refuse to reuse checkpoints that never achieved non-negative mean reward
   lr: 3.0e-4
   weight_decay: 0.01
-  epochs: 5
-  max_steps: 50000
+  epochs: 2
+  max_steps: 512               # Reproduction-friendly cap: fits in a single 4h run
   batch_size: 4                # prompts per batch
-  grad_accum_steps: 4
-  warmup_steps: 200
+  grad_accum_steps: 1
+  warmup_steps: 25
   max_grad_norm: 1.0
   policy_temperature: 1.0      # tau_pi during training (1.0 = untempered)
+  rollout_steps: 16            # Faster training-time horizon; eval still uses inference.steps
+  rollout_gen_length: 128      # Faster training-time decode budget; eval remains 256
 
 # ---- Diffusion inference ------------------------------------
 inference:
@@ -110,10 +114,10 @@ analysis:
 data:
   train_dataset: "nvidia/OpenMathInstruct-2"
   train_split: "train"
-  train_max_samples: 50000
+  train_max_samples: 1024      # Reproduction-friendly training subset
   eval_dataset: "openai/gsm8k"
   eval_split: "test"
-  eval_max_samples: 1319       # full GSM8K test set
+  eval_max_samples: 100
   max_prompt_len: 512
   max_answer_len: 256
 
@@ -129,9 +133,9 @@ evaluation:
 logging:
   project: "aoae"
   run_name: "default"
-  log_every: 50
+  log_every: 10
   eval_every: 500
-  save_every: 500
+  save_every: 25
   output_dir: "outputs/default/"
   use_wandb: false
 

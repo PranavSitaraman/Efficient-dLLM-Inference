@@ -18,6 +18,7 @@ All backends fail hard on missing dependencies (no silent fallbacks).
 """
 
 import gc
+import inspect
 import os
 import sys
 import torch
@@ -825,7 +826,7 @@ class LLaDABaseModel(nn.Module):
         model = self.model if backbone is None else backbone
         kwargs = {}
         if attention_mask is not None:
-            kwargs["attention_bias"] = attention_mask
+            kwargs.update(self._resolve_hf_attention_kwargs(model, attention_mask))
         if output_hidden_states:
             kwargs["output_hidden_states"] = True
         if output_attentions:
@@ -833,6 +834,72 @@ class LLaDABaseModel(nn.Module):
         if use_cache:
             kwargs["use_cache"] = True
         return model(input_ids, **kwargs)
+
+    def _resolve_hf_attention_kwargs(
+        self,
+        model: Any,
+        attention_mask: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Pass the block mask under the keyword the current HF backend expects.
+
+        Older remote-code LLaDA variants consumed ``attention_bias`` while newer
+        releases expect ``attention_mask`` and directly dereference it. Resolve
+        the best keyword from the callable signature and fall back to supplying
+        both when the target is too dynamic to inspect safely.
+        """
+        style = self._infer_hf_attention_style(model)
+        if style == "attention_mask":
+            return {"attention_mask": attention_mask}
+        if style == "attention_bias":
+            return {"attention_bias": attention_mask}
+        return {
+            "attention_mask": attention_mask,
+            "attention_bias": attention_mask,
+        }
+
+    def _infer_hf_attention_style(self, model: Any) -> str:
+        cache = getattr(self, "_hf_attention_style_cache", None)
+        if cache is None:
+            cache = {}
+            self._hf_attention_style_cache = cache
+
+        cache_key = id(model)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        target = getattr(model, "forward", None)
+        if not callable(target):
+            target = getattr(model, "__call__", None)
+
+        style = "both"
+        try:
+            signature = inspect.signature(target)
+        except (TypeError, ValueError):
+            signature = None
+
+        if signature is not None:
+            params = signature.parameters
+            has_var_kwargs = any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in params.values()
+            )
+            has_attention_mask = "attention_mask" in params
+            has_attention_bias = "attention_bias" in params
+
+            if has_attention_mask and has_attention_bias:
+                style = "both"
+            elif has_attention_mask:
+                style = "attention_mask"
+            elif has_attention_bias:
+                style = "attention_bias"
+            elif has_var_kwargs:
+                style = "both"
+            else:
+                style = "attention_mask"
+
+        cache[cache_key] = style
+        return style
 
     # ------------------------------------------------------------------
     @torch.no_grad()

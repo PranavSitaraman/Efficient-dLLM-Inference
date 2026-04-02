@@ -16,6 +16,8 @@ import os
 import json
 import math
 import random
+import copy
+import tempfile
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -24,7 +26,12 @@ from tqdm import tqdm
 import numpy as np
 from typing import Optional, List, Dict, Tuple, Any
 
-from .checkpoints import find_latest_checkpoint, load_state_dict_flexible
+from .checkpoints import (
+    GRPO_TRAIN_CONTRACT_VERSION,
+    build_grpo_config_fingerprint,
+    find_latest_checkpoint,
+    load_state_dict_flexible,
+)
 from .inference import aoae_inference, AOAETrajectory
 from .speculative_inference import speculative_inference, SpeculativeTrajectory
 from .tasks import check_math_correctness, extract_answer, extract_prompt_and_reference
@@ -47,6 +54,7 @@ def compute_reward(
     Compute multiplicative reward (Eq. reward):
 
       R = r(y*, y_hat) * (T_hat/T)^alpha - beta * sum Thrash(t)
+          - lambda_unresolved * unresolved_fraction
 
     Here T_hat is completion in the paper's reverse-time convention
     (larger is faster). Internally we track used forward steps, then map
@@ -66,6 +74,7 @@ def compute_reward(
     gc = cfg["grpo"]
     alpha = gc["alpha"]
     beta = gc["beta"]
+    unresolved_penalty_weight = float(gc.get("unresolved_penalty_weight", 0.0))
     B = generated_tokens.shape[0]
     device = generated_tokens.device
 
@@ -98,6 +107,15 @@ def compute_reward(
 
     # --- Reward ---
     reward = correctness * speed_factor - beta * total_thrash
+
+    # Penalize trajectories that terminate with unresolved masks. This keeps
+    # "do nothing / let masks linger" from becoming a neutral zero-reward mode.
+    if unresolved_penalty_weight > 0.0:
+        final_tokens = getattr(trajectory, "final_tokens", None)
+        if final_tokens is not None:
+            mask_id = int(cfg["base_model"]["mask_token_id"])
+            unresolved_fraction = (final_tokens.to(device) == mask_id).float().mean(dim=-1)
+            reward = reward - unresolved_penalty_weight * unresolved_fraction
 
     # Optional dense signal for next-H positional access quality.
     access_w = float(gc.get("access_reward_weight", 0.0))
@@ -215,6 +233,64 @@ def normalize_group_advantages(
     return advantages
 
 
+def build_rollout_cfg(cfg: dict) -> dict:
+    """Return the training-time rollout config with optional GRPO overrides."""
+    rollout_cfg = copy.deepcopy(cfg)
+    inference_cfg = rollout_cfg.setdefault("inference", {})
+    grpo_cfg = rollout_cfg.get("grpo", {})
+
+    rollout_steps = grpo_cfg.get("rollout_steps")
+    if rollout_steps is not None:
+        inference_cfg["steps"] = int(rollout_steps)
+
+    rollout_gen_length = grpo_cfg.get("rollout_gen_length")
+    if rollout_gen_length is not None:
+        inference_cfg["gen_length"] = int(rollout_gen_length)
+
+    return rollout_cfg
+
+
+def split_group_trajectory(trajectory: Any, group_size: int) -> List[Dict[str, Any]]:
+    """Split a batched AOAE/speculative trajectory into per-sample GRPO views."""
+    trajectories: List[Dict[str, Any]] = []
+
+    def _slice_tensor(value: Optional[torch.Tensor], index: int):
+        if value is None:
+            return None
+        return value[index:index + 1].detach().clone()
+
+    for g in range(group_size):
+        traj_data = {
+            "actions_list": [
+                {key: _slice_tensor(value, g) for key, value in step.items()}
+                for step in trajectory.actions
+            ],
+            "old_log_probs": [_slice_tensor(lp, g) for lp in trajectory.log_probs],
+            "H_t_list": [_slice_tensor(h_t, g) for h_t in trajectory.H_t_list],
+            "mask_ind_list": [_slice_tensor(mask_ind, g) for mask_ind in trajectory.mask_ind_list],
+            "quality_scores_list": [
+                _slice_tensor(q_scores, g) for q_scores in trajectory.quality_scores_list
+            ],
+            "age_feature_list": [
+                _slice_tensor(age_feat, g) for age_feat in getattr(trajectory, "age_feature_list", [])
+            ],
+            "last_action_feature_list": [
+                _slice_tensor(last_action_feat, g)
+                for last_action_feat in getattr(trajectory, "last_action_feature_list", [])
+            ],
+            "step_fracs": list(trajectory.step_fracs),
+            "access_metrics": dict(getattr(trajectory, "access_metrics", {})),
+        }
+        agreement_list = getattr(trajectory, "agreement_list", None)
+        if agreement_list:
+            traj_data["agreement_list"] = [
+                _slice_tensor(agreement, g) for agreement in agreement_list
+            ]
+        trajectories.append(traj_data)
+
+    return trajectories
+
+
 # ======================================================================
 # Rollout collection
 # ======================================================================
@@ -230,6 +306,7 @@ def collect_rollout_group(
     cfg: dict,
     tokenizer,
     dual_model=None,
+    rollout_cfg: Optional[dict] = None,
 ) -> Tuple[List[Dict], torch.Tensor, torch.Tensor]:
     """
     Collect G rollout trajectories for a single prompt batch.
@@ -245,67 +322,52 @@ def collect_rollout_group(
         advantages:    [G] group-mean normalized advantages.
     """
     gc = cfg["grpo"]
+    rollout_cfg = rollout_cfg if rollout_cfg is not None else build_rollout_cfg(cfg)
     G = gc["group_size"]
-    T = cfg["inference"]["steps"]
-    mask_id = cfg["base_model"]["mask_token_id"]
+    T = rollout_cfg["inference"]["steps"]
 
     B = prompt_ids.shape[0]
     assert B == 1, "Collect rollouts one prompt at a time, then group."
-
-    trajectories = []
-    rewards = []
     use_speculative = (dual_model is not None)
+    repeated_prompt_ids = prompt_ids.repeat(G, 1)
+    repeated_references = [reference_answers[0] for _ in range(G)]
 
-    for g in range(G):
-        if use_speculative:
-            output_ids, trajectory = speculative_inference(
-                dual_model=dual_model,
-                policy=policy,
-                soft_mask_module=soft_mask_module,
-                prism_adapter=prism_adapter,
-                prompt_ids=prompt_ids,
-                cfg=cfg,
-                record_trajectory=True,
-                policy_temperature=gc["policy_temperature"],
-            )
-        else:
-            output_ids, trajectory = aoae_inference(
-                base_model=base_model,
-                policy=policy,
-                soft_mask_module=soft_mask_module,
-                prism_adapter=prism_adapter,
-                prompt_ids=prompt_ids,
-                cfg=cfg,
-                record_trajectory=True,
-                policy_temperature=gc["policy_temperature"],
-            )
-
-        # Compute reward
-        gen_tokens = output_ids[:, prompt_ids.shape[1]:]
-        reward = compute_reward(
-            gen_tokens, reference_answers, tokenizer, trajectory, cfg, T
+    if use_speculative:
+        output_ids, trajectory = speculative_inference(
+            dual_model=dual_model,
+            policy=policy,
+            soft_mask_module=soft_mask_module,
+            prism_adapter=prism_adapter,
+            prompt_ids=repeated_prompt_ids,
+            cfg=rollout_cfg,
+            record_trajectory=True,
+            policy_temperature=gc["policy_temperature"],
+        )
+    else:
+        output_ids, trajectory = aoae_inference(
+            base_model=base_model,
+            policy=policy,
+            soft_mask_module=soft_mask_module,
+            prism_adapter=prism_adapter,
+            prompt_ids=repeated_prompt_ids,
+            cfg=rollout_cfg,
+            record_trajectory=True,
+            policy_temperature=gc["policy_temperature"],
         )
 
-        # Store trajectory data for GRPO recomputation
-        traj_data = {
-            "actions_list": trajectory.actions,
-            "old_log_probs": [lp.clone() for lp in trajectory.log_probs],
-            "H_t_list": trajectory.H_t_list,
-            "mask_ind_list": trajectory.mask_ind_list,
-            "quality_scores_list": trajectory.quality_scores_list,
-            "age_feature_list": getattr(trajectory, "age_feature_list", []),
-            "last_action_feature_list": getattr(trajectory, "last_action_feature_list", []),
-            "step_fracs": trajectory.step_fracs,
-            "reward": reward.item(),
-            "access_metrics": getattr(trajectory, "access_metrics", {}),
-        }
-        # Store agreement for speculative trajectories
-        if use_speculative and hasattr(trajectory, "agreement_list"):
-            traj_data["agreement_list"] = trajectory.agreement_list
-        trajectories.append(traj_data)
-        rewards.append(reward.item())
+    gen_tokens = output_ids[:, prompt_ids.shape[1]:]
+    rewards_t = compute_reward(
+        gen_tokens,
+        repeated_references,
+        tokenizer,
+        trajectory,
+        rollout_cfg,
+        T,
+    ).detach().cpu()
+    trajectories = split_group_trajectory(trajectory, G)
+    for g, traj_data in enumerate(trajectories):
+        traj_data["reward"] = float(rewards_t[g].item())
 
-    rewards_t = torch.tensor(rewards, dtype=torch.float32)
     advantages = normalize_group_advantages(
         rewards_t,
         normalize_std=bool(gc.get("normalize_advantage_std", False)),
@@ -371,6 +433,44 @@ def train(cfg: dict, resume_from: Optional[str] = None):
     prism = None
     policy = None
     soft_mask = None
+    optimizer = None
+    scheduler = None
+    global_step = 0
+    accum_step = 0
+    start_epoch = 0
+    best_reward = -float("inf")
+    current_epoch = 0
+
+    def _save_checkpoint(path: str, *, epoch_idx: int, step_value: int, accum_value: int, best_value=None):
+        if policy is None or soft_mask is None or optimizer is None or scheduler is None:
+            return
+        pol_sd = policy.module.state_dict() if hasattr(policy, 'module') else policy.state_dict()
+        sm_sd = soft_mask.module.state_dict() if hasattr(soft_mask, 'module') else soft_mask.state_dict()
+        payload = {
+            "policy": pol_sd,
+            "soft_mask": sm_sd,
+            "optimizer": optimizer.state_dict(),
+            "scheduler": scheduler.state_dict(),
+            "step": step_value,
+            "accum_step": accum_value,
+            "epoch": epoch_idx,
+        }
+        if best_value is not None:
+            payload["best_reward"] = best_value
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix=os.path.basename(path) + ".",
+            suffix=".tmp",
+            dir=os.path.dirname(path) or ".",
+        )
+        os.close(fd)
+        try:
+            torch.save(payload, tmp_path)
+            os.replace(tmp_path, path)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
     try:
         if use_dual:
             from .models.dual_model import DualModelWrapper
@@ -461,14 +561,20 @@ def train(cfg: dict, resume_from: Optional[str] = None):
         )
         if dc["train_max_samples"]:
             train_ds = train_ds.select(range(min(dc["train_max_samples"], len(train_ds))))
+        rollout_cfg = build_rollout_cfg(cfg)
+        if is_main:
+            prompt_budget = len(train_ds) * gc["epochs"]
+            print(
+                f"GRPO rollout budget: group_size={gc['group_size']}  "
+                f"steps={rollout_cfg['inference']['steps']}  "
+                f"gen_length={rollout_cfg['inference']['gen_length']}  "
+                f"max_steps={gc['max_steps']}  "
+                f"prompt_budget≈{prompt_budget}"
+            )
 
         # --- Training loop ---
         os.makedirs(lc["output_dir"], exist_ok=True)
-        global_step = 0
-        accum_step = 0
-        start_epoch = 0
         grad_accum = gc["grad_accum_steps"]
-        best_reward = -float("inf")
         best_path = os.path.join(lc["output_dir"], "policy_best.pt")
 
         # --- Resume from checkpoint ---
@@ -515,6 +621,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
             )
 
         for epoch in range(start_epoch, gc["epochs"]):
+            current_epoch = epoch
             if is_main:
                 print(f"\n=== Epoch {epoch + 1}/{gc['epochs']} ===")
             epoch_rewards = []
@@ -565,6 +672,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         cfg=cfg,
                         tokenizer=tokenizer,
                         dual_model=dual_model,
+                        rollout_cfg=rollout_cfg,
                     )
 
                     epoch_rewards.append(rewards.mean().item())
@@ -603,19 +711,14 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                               f"lr={scheduler.get_last_lr()[0]:.2e}")
 
                     # --- Save checkpoint (rank 0 only) ---
-                    if global_step % lc["save_every"] == 0 and is_main:
-                        pol_sd = policy.module.state_dict() if hasattr(policy, 'module') else policy.state_dict()
-                        sm_sd = soft_mask.module.state_dict() if hasattr(soft_mask, 'module') else soft_mask.state_dict()
-                        ckpt_path = os.path.join(lc["output_dir"], f"policy_step{global_step}.pt")
-                        torch.save({
-                            "policy": pol_sd,
-                            "soft_mask": sm_sd,
-                            "optimizer": optimizer.state_dict(),
-                            "scheduler": scheduler.state_dict(),
-                            "step": global_step,
-                            "accum_step": accum_step,
-                            "epoch": epoch,
-                        }, ckpt_path)
+                    if is_main and (global_step == 1 or global_step % lc["save_every"] == 0):
+                        ckpt_path = os.path.join(lc["output_dir"], "policy_latest.pt")
+                        _save_checkpoint(
+                            ckpt_path,
+                            epoch_idx=epoch,
+                            step_value=global_step,
+                            accum_value=accum_step,
+                        )
                         print(f"  Saved checkpoint: {ckpt_path}")
 
                     if global_step >= gc["max_steps"]:
@@ -635,18 +738,13 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                 epoch_mean_reward = float(np.mean(epoch_rewards))
                 if epoch_mean_reward > best_reward:
                     best_reward = epoch_mean_reward
-                    pol_sd = policy.module.state_dict() if hasattr(policy, 'module') else policy.state_dict()
-                    sm_sd = soft_mask.module.state_dict() if hasattr(soft_mask, 'module') else soft_mask.state_dict()
-                    torch.save({
-                        "policy": pol_sd,
-                        "soft_mask": sm_sd,
-                        "optimizer": optimizer.state_dict(),
-                        "scheduler": scheduler.state_dict(),
-                        "step": global_step,
-                        "accum_step": accum_step,
-                        "epoch": epoch,
-                        "best_reward": best_reward,
-                    }, best_path)
+                    _save_checkpoint(
+                        best_path,
+                        epoch_idx=epoch,
+                        step_value=global_step,
+                        accum_value=accum_step,
+                        best_value=best_reward,
+                    )
                     print(f"  Saved best checkpoint: {best_path} (epoch_mean_reward={best_reward:.4f})")
 
             if global_step >= gc["max_steps"]:
@@ -677,12 +775,16 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         "completed_steps": int(global_step),
                         "grad_accum_steps": int(gc["grad_accum_steps"]),
                         "group_size": int(gc["group_size"]),
+                        "rollout_steps": int(rollout_cfg["inference"]["steps"]),
+                        "rollout_gen_length": int(rollout_cfg["inference"]["gen_length"]),
                         "normalize_advantage_std": bool(gc.get("normalize_advantage_std", False)),
                         "best_reward": None if best_reward == -float("inf") else float(best_reward),
                         "best_checkpoint": best_path if os.path.exists(best_path) else None,
                         "final_checkpoint": final_path,
                         "resume_from": resume_from,
                         "seed": int(cfg["hardware"]["seed"]),
+                        "train_contract_version": int(GRPO_TRAIN_CONTRACT_VERSION),
+                        "config_fingerprint": build_grpo_config_fingerprint(cfg),
                         "runtime": collect_runtime_info(),
                     },
                     f,
@@ -690,6 +792,18 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                 )
             print(f"\nTraining complete. Final model saved to {final_path}")
             print(f"GRPO metadata saved to {metadata_path}")
+    except KeyboardInterrupt:
+        if is_main and policy is not None and soft_mask is not None:
+            interrupt_path = os.path.join(lc["output_dir"], "policy_interrupt.pt")
+            _save_checkpoint(
+                interrupt_path,
+                epoch_idx=current_epoch,
+                step_value=global_step,
+                accum_value=accum_step,
+                best_value=None if best_reward == -float("inf") else best_reward,
+            )
+            print(f"\nTraining interrupted. Recovery checkpoint saved to {interrupt_path}")
+        raise
     finally:
         if dual_model is not None:
             dual_model.close()

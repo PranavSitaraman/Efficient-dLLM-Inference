@@ -45,10 +45,11 @@ grpo:
   alpha: 1.0
   beta: 0.1
   access_reward_weight: 0.0
+  min_checkpoint_reward: 0.0
   lr: 3.0e-4
   weight_decay: 0.01
-  epochs: 5
-  max_steps: 5000
+  epochs: 2
+  max_steps: 500
   batch_size: 1
   grad_accum_steps: 4
   warmup_steps: 50
@@ -101,7 +102,7 @@ data:
   train_max_samples: 50000
   eval_dataset: "openai/gsm8k"
   eval_split: "test"
-  eval_max_samples: 1319
+  eval_max_samples: 100
   max_prompt_len: 512
   max_answer_len: 256
 

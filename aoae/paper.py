@@ -83,7 +83,7 @@ def _resolve_checkpoint(explicit: Optional[str], base_output_dir: str) -> Option
         return None
 
     out_dir = Path(base_output_dir)
-    for name in ("policy_best.pt", "policy_final.pt"):
+    for name in ("policy_best.pt", "policy_final.pt", "policy_latest.pt"):
         candidate = out_dir / name
         if candidate.exists():
             return str(candidate)

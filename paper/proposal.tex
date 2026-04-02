@@ -1,0 +1,228 @@
+\documentclass[10pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[margin=0.5in]{geometry}
+\usepackage{amsmath, amssymb, amsfonts, amsthm, bm}
+\usepackage{mathtools}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage[colorlinks=true,citecolor=blue,linkcolor=blue]{hyperref}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage[capitalize,noabbrev]{cleveref}
+\usepackage{setspace}
+
+% Commands
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\KL}{\mathrm{KL}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\cM}{\mathcal{M}}
+\newcommand{\cK}{\mathcal{K}}
+\newcommand{\cU}{\mathcal{U}}
+\newcommand{\cD}{\mathcal{D}}
+\newcommand{\cV}{\mathcal{V}}
+\newcommand{\cS}{\mathcal{S}}
+\newcommand{\cA}{\mathcal{A}}
+\newcommand{\cQ}{\mathcal{Q}}
+\newcommand{\cL}{\mathcal{L}}
+\newcommand{\cJ}{\mathcal{J}}
+\newcommand{\btheta}{\bm{\theta}}
+\newcommand{\bphi}{\bm{\phi}}
+\newcommand{\bx}{\mathbf{x}}
+\newcommand{\by}{\mathbf{y}}
+\newcommand{\bu}{\mathbf{u}}
+\newcommand{\bh}{\mathbf{h}}
+\newcommand{\bH}{\mathbf{H}}
+\newcommand{\bfm}{\mathbf{m}}
+\newcommand{\bp}{\mathbf{p}}
+\newcommand{\ind}{\mathbb{I}}
+\newcommand{\mask}{\ensuremath{\mathtt{[M]}}}
+
+\setlength{\parskip}{5pt}
+\setlength{\parindent}{0pt}
+\setstretch{0.95}
+\renewcommand{\refname}{}
+
+\title{\vspace{-1.5em}\textbf{Speculative Inference for Masked Diffusion Language Models}\vspace{-1em}}
+\author{Pranav Sitaraman (pranavsi@mit.edu) and Gavin Ye (gavinye@mit.edu)}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+\vspace{-1.3em}
+
+\textbf{Abstract.} Masked diffusion language models (dLLMs) generate text by iteratively unmasking tokens in parallel, but current inference relies on static confidence thresholds and fixed block schedules that leave the paradigm's any-order properties largely untapped. We propose \textbf{Any-Order Adaptive Editing (AOAE)}, a speculative dual-model framework that exploits the natural dual-speed structure of Mixture-of-Experts (MoE) MDLMs. A fast hard-routed auxiliary (${\sim}$1.4B active parameters) drafts token predictions whose KV states are pre-cached, while a slow soft-routed primary (all 16B parameters) verifies and refines: reusing cached states where the two agree and recomputing only where they disagree. In addition, we use a lightweight steering policy that jointly decides where to unmask, where to remask for self-correction, and which positions to commit to cache, trained end-to-end via GRPO.
+
+\textbf{Motivation.} We are interested in the any-order properties of masked diffusion language models that autoregressive models lack. The any-order property of masked diffusion language models refers to the fact that they do not commit to a single token ordering at inference, but can iteratively reveal positions in an adaptive and arbitrary order. However, frontier dLLMs currently adopt inference strategies like fixed confidence thresholds or rigid block schedules that fail to exploit this flexibility, with significant speed and quality gains still possible. Our proposed {Any-Order Adaptive Editing} (AOAE) framework unifies three capabilities that have so far been studied only in isolation: (i) learned adaptive unmasking, (ii) self-correction via remasking, and (iii) speculative KV-caching.
+
+Three primary findings motivate this work. First, learned unmasking policies trained via reinforcement learning outperform heuristic samplers on diffusion LLMs but address only where to unmask, not self-correction or caching~\cite{jazbec2025learning}. Second, PRISM~\cite{kim2025prism} demonstrates that remasking low-quality tokens and regenerating them improves output quality but relies on a fixed threshold rather than a learned policy. Third, diffusion-aware KV-caching methods such as dKV-Cache and Elastic-Cache achieve substantial speedups but constrain the decoding trajectory to suit the cache, sacrificing the any-order property~\cite{ma2025dkv,elastic_cache}. Taken together, these suggest that the missing piece is not another isolated heuristic, but a unified inference-time controller that can decide when to reveal tokens, when to revise them, and when reuse is safe.
+
+This project is also motivated by the structure of modern MoE diffusion models themselves. In LLaDA~2.1-mini, hard routing gives us a much cheaper draft model, while soft routing gives us a more expressive but slower verifier~\cite{llada21}. That makes speculative inference a natural idea.
+% if we can turn the hard-routed model into a useful auxiliary and let the soft-routed model verify where needed, then we can potentially improve  throughput without giving up the quality that current fixed decoding baselines achieve.
+
+\textbf{Initial Ideas / Proposed Research.} The core idea is to pair a fast hard-routed auxiliary model with a slow soft-routed primary, both instantiated from the same frozen Mixture-of-Experts dLLM, in a speculative diffusion loop where the auxiliary drafts tokens and pre-caches KV states, the primary verifies and refines, and a policy decides per-position unmask, remask, and cache actions. In other words, we want to treat diffusion decoding as a control problem rather than as a fixed schedule. The auxiliary should be trusted when it is cheap and consistent with the primary, overridden when the primary clearly disagrees, and complemented by remasking when neither model appears reliable.
+
+Our initial plan of attack follows the trajectory we laid out in the preproposal and have already started implementing in the repository:
+\begin{enumerate}[leftmargin=*,topsep=2pt,itemsep=2pt]
+    \item Integrate the dual-model MoE setup (hard-routed auxiliary and soft-routed primary both from LLaDA 2.1-mini) into the dInfer/SGLang serving stack. Verify that soft routing with varying temperature $\tau$ produces the expected agreement tradeoff between auxiliary and primary models.
+    \item Train the PRISM quality adapter. Implement soft-masked state construction, the lightweight transformer policy with three heads (unmask, remask, cache), and composed prediction and speculative KV-caching.
+    \item Train via GRPO with a correctness and cache use/thrashing reward. Validate on GSM8K before scaling to MATH and HumanEval. Sweep the $\tau$ Pareto frontier of inference speed even as auxiliary/primary model agreement degrades.
+    \item Run architecture ablations (removing auxiliary, policy, composed prediction, remask head, agreement signal). Evaluate positional variants such as access-pattern prediction and depth-selective refresh, and compare full speculation against location-only steering with training-free token selection methods.
+\end{enumerate}
+
+The policy side of AOAE matters because prior work mostly learns only where to unmask. Our proposal is to learn three coupled actions instead: where to unmask, where to remask, and which positions are safe enough to cache. The point of this design is that the three decisions interact. Aggressive caching can increase speed but is harmful if those same positions are likely to be revised; aggressive unmasking can shorten decoding but may increase the need for self-correction later. A learned controller is attractive precisely because it can reason over these tradeoffs jointly.
+
+\paragraph{Training via GRPO}
+The base model and PRISM adapter remain frozen; only the policy and soft-mask gating parameters are trained via GRPO~\cite{shao2024deepseekmath}. We use a reward of the form $R(\by^*, \by_{\hat{T}}, \hat{T}) = r(\by^*, \by_{\hat{T}}) \cdot \left(\frac{\hat{T}}{T}\right)^\alpha - \beta \sum_{t=1}^{T} \text{Thrash}(t)$, where $r(\cdot)$ is task correctness, $\hat{T}$ is the completion step, and $\text{Thrash}(t)$ counts cache invalidations caused by later revisions. The motivation for this reward is simple: incorrect generations should never be rewarded just for being fast, while correct generations should still be encouraged to finish earlier and avoid unstable cache behavior. In practice, this gives us a direct way to train for the speed/quality trade-off we actually care about, rather than optimizing an indirect proxy.
+
+Two pieces of preliminary evidence make this plan more than just a speculative idea. First, our routing-temperature proof of concept already suggests that the soft-routed model gives a meaningful speed--quality trade-off, so there is real structure for a dual-model system to exploit. Second, our training-free KV-reuse proof of concept shows that draft-derived agreement signals are measurable and can be turned into practical reuse criteria. Figure~\ref{fig:poc-support} summarizes these two results. The full AOAE thesis is therefore not about inventing these ingredients from scratch, but about integrating them into a coherent, learned inference system and showing that the whole is better than the fixed heuristics we started from.
+
+\textbf{Related Work.} To situate AOAE, it is useful to recall the standard MDLM setup. Let $\bx_0 = (x_0^1, \dots, x_0^L) \in \cV^L$ be a length-$L$ token sequence with vocabulary $\cV$ and mask token $\mask$. A denoising network $p_{\btheta}$ is trained via an ELBO-style objective $\cL(\btheta) = \E_{t,\, \bx_0,\, \bx_t} \left[ \frac{1}{t} \sum_{k=1}^L \ind[x_t^k = \mask] \log p_{\btheta}(x_0^k \mid \bx_t) \right]$. At inference time, the model starts from $\by_T = (\mask, \dots, \mask)$ and repeatedly chooses which masked positions to reveal next. If $\cU_t \subseteq \cM_t$ denotes the set of masked positions selected at step $t$, then the decoder updates only those coordinates. The central point is that the choice of $\cU_t$ strongly affects both speed and quality~\cite{jazbec2025learning,wu2025fastdllm}, which is exactly why learned inference-time control is interesting.
+
+\textbf{LLaDA 2.1 and token editing.} LLaDA~2.1~\cite{llada21} extends basic unmasking with token-to-token (T2T) editing via fixed confidence thresholds: $\Gamma_t = \bigl\{ k \in \cM_t \;\big|\; \max_v p_{\btheta}(v \mid \by_t) > \tau_{\text{mask}} \bigr\}$ and $\Delta_t = \bigl\{ k \notin \cM_t \;\big|\; \max_v p_{\btheta}(v \mid \by_t) > \tau_{\text{edit}} \;\wedge\; \arg\max_v \neq y_t^k \bigr\}$. This is a strong baseline and an important starting point for us, but the unmasking and editing rules are still fixed by hand. AOAE keeps the insight that some positions are ready earlier than others, but replaces the fixed thresholds with a learned controller and a speculative verifier.
+
+\textbf{KV-caching in diffusion models.} In MDLMs, bidirectional attention causes KV states to evolve across steps, making naive caching fragile. Previous studies such as dKV-Cache~\cite{ma2025dkv} cache high-confidence positions and recompute only changed ones, achieving large speedups. A useful notion in this literature is the per-token, per-layer KV drift, $\Delta^{k}_{t,\ell}
+    =
+    \left\lVert K^{k}_{t,\ell} - K^{k}_{t-1,\ell} \right\rVert_2
+    +
+    \left\lVert V^{k}_{t,\ell} - V^{k}_{t-1,\ell} \right\rVert_2$, which measures how stale a cached state has become. Elastic-Cache~\cite{elastic_cache} takes this further with locality and depth-selective refresh. These methods are important because they show that diffusion inference contains substantial redundancy, but they often gain efficiency by constraining the decoding path itself. AOAE differs in spirit: rather than making the trajectory conform to the cache, we want the cache policy to adapt to the trajectory.
+
+\textbf{Self-correction via PRISM.} PRISM~\cite{kim2025prism} trains a lightweight adapter to estimate per-token quality scores $q_t^k$, the probability that a generated token matches the ground truth, using corrupted/clean pairs. Tokens with low estimated quality are remasked and regenerated. This is an especially appealing idea for diffusion models because remasking is simpler than learning a fully separate replacement distribution, and it preserves the any-order property. AOAE borrows this self-correction signal but moves it inside a broader control loop: PRISM is not the whole method, but one of the signals that helps decide when to trust, revise, or reuse.
+
+\textbf{Evaluation Details.}
+We mirror the evaluation of \cite{llada21} on comparing the accuracy-speed tradeoff using score vs. Tokens per second ($TPS$) or Tokens per forward pass ($TPF$).
+
+We evaluate on a representative subset of the benchmarks reported for LLaDA 2.1 paper \cite{llada21}, which cover the same four core domains used in that paper. Namely, we use:
+\begin{itemize}
+    \item Knowledge: MMLU-Pro, GPQA
+    \item Reasoning: BIG-Bench Hard \& BIG-Bench Extra Hard, and SQuAD 2.0
+    \item Math: AIME 2025, OlympiadBench, GSM8K, and GSM-Plus
+    \item Code: LiveCodeBench, HumanEval+, CRUXEval-O
+\end{itemize}
+These tasks are all reported in the LLaDA 2.1 benchmark tables, thus enabling direct quality-speed comparison.
+
+\textbf{Metrics. }
+For evaluating accuracy and quality of the response, we measure 
+Accuracy (exact match / pass@1). For evaluating throughput of our inferece system, we measure TPS (tokens/sec on A100) and TPF, NFEs.
+In addition to measuring quality and speed, we also keep track of cache hit rate $\bar{\alpha} = \frac{1}{TL}\sum_{t,k} \alpha_t^k$, effective speedup vs.\ soft-routed-only baseline (the verifier), and cache refresh ratio $\frac{1}{T}\sum_t |\cQ_t|/L$, for our speculative KV-cache. 
+Our aim is to achieve faster throughput while maintaining the accuracy of the base dLLM model contrasted with heuristic-based methods.
+
+\textbf{Model: } LLaDA~2.1-mini (16B MoE, frozen) in dual-model configuration.
+
+\textbf{Policy-Head Architecture \& Hyperparameter}: We use a 1-layer transformer (${\sim}$500K parameters, input dimension $D{+}4$).
+The PRISM adapter is fine-tuned on 10K samples.\\
+% Hyperparameters: $K{=}5$ (soft-masking), $G{=}8$ (GRPO group size), $\alpha{=}1.0$, $\beta{=}0.1$, $\epsilon{=}0.2$, $\gamma{=}0.5$ (composed prediction).
+Primary experiment: sweep $\tau_r \in \{0.001, 0.01, 0.05, 0.1, 0.2, 0.5\}$.
+All evaluations runs inference of the dLLM integrated into the dInfer and SGLang.
+
+\textbf{Training.}
+Policy training uses 50K prompts from Math and Code for downstream reasoning tasks: for math, we use prompts sampled from OpenMathInstruct-2, and MBPP Pro for code.  
+
+
+\textbf{Anticipated Risks and Challenges.}
+
+\begin{itemize}[leftmargin=*, topsep=0pt]
+    \item We rely on the premise that using all 16B parameters via soft routing yields meaningfully better predictions than the 1.4B hard-routed subset. We can also consider fine-tuning the soft-routed variant to ensure the dual-model architecture's benchmark performance compares to single-model baselines. We will test this early before committing to the full pipeline.
+    \item Prior work trained a single Bernoulli head (unmask only). Adding remask and cache heads triples the action dimension and introduces conflicting objectives (speed reward favors aggressive caching, while the thrash penalty punishes caching positions that are later remasked). The policy may converge to degenerate strategies, so careful reward shaping and staged training (unmask-only first, then adding heads) may be needed. This challenge of credit-assignment may also inevitably degrade model performance during GRPO.
+\end{itemize}
+
+% \textbf{Team.} As we already discussed with course instructors both in person and over email, Gavin and I have been working for a couple weeks on an NLP-related research project with help from a Harvard grad student friend of ours, aiming to improve inference-time steering and KV caching for masked diffusion LLMs. Although our third friend is not taking the class, we will bear all responsibility for the success/outcome of the project, write the entirety of the final report and poster presentation ourselves, and take credit for only the parts of the research that we directly work on. We will also present between the two of us and will work on most of the theoretical design and experimentation ourselves. The project is entirely self-contained and only relies on outside mentorship to guide the literature review and brainstorming processes.
+
+\textbf{Appendix.}
+
+\begin{algorithm}[!ht]
+\caption{AOAE Speculative Diffusion Inference}
+\label{alg:aoae}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Auxiliary $p_{\btheta}^{\text{hard}}$, primary $p_{\btheta}^{\text{soft}}$, PRISM $q_\psi$, policy $\pi_{\bphi}$, prompt $\bx$, steps $T$
+\State \textbf{Init:} $\by_T \leftarrow (\mask, \dots, \mask)$, \; $\cK \leftarrow \emptyset$
+\For{$t = T, T{-}1, \dots, 1$}
+    \State \textbf{Phase 0 (Draft):} $\{d_t^k\} \leftarrow p_{\btheta}^{\text{hard}}(\cdot \mid \bx, \by_t)$; pre-cache KV states \Comment{${\sim}$1.4B active}
+    \State \textbf{Phase 0b (Verify):} $\{p_t^k\} \leftarrow p_{\btheta}^{\text{soft}}(\cdot \mid \bx, \by_t; \cK)$; $\{q_t^k\} \leftarrow q_\psi(\by_t)$ \Comment{all 16B active}
+    \State Compute $\alpha_t^k = \ind[\arg\max d_t^k = \arg\max p_t^k]$; construct $s_t$
+    \State $(\bu_t, \mathbf{r}_t, \bm{\kappa}_t) \sim \pi_{\bphi}(\cdot \mid s_t)$
+    \For{$k : r_t^k {=} 1,\, m_t^k {=} 0$} \Comment{\textbf{Phase 1: Remask}}
+        \State $y_{t-1}^k \leftarrow \mask$; \; $\cK \leftarrow \cK \setminus \{k\}$
+    \EndFor
+    \State $\tilde{p}_t^k \leftarrow \textsc{Compose}(p_t^k, d_t^k, \alpha_t^k, \gamma)$
+    \For{$k : u_t^k {=} 1,\, m_t^k {=} 1$} \Comment{\textbf{Phase 2: Unmask}}
+        \State $y_{t-1}^k \sim \tilde{p}_t^k$
+    \EndFor
+    \For{$k : \kappa_t^k {=} 1,\, \alpha_t^k {=} 1,\, r_t^k {=} 0$} \Comment{\textbf{Phase 3: Cache}}
+        \State $\cK \leftarrow \cK \cup \{k\}$
+    \EndFor
+\EndFor
+\State \textbf{Return} $\by_1$
+\end{algorithmic}
+\end{algorithm}
+
+
+\begin{figure}[!ht]
+\centering
+\begin{minipage}[t]{0.45\linewidth}
+\centering
+\includegraphics[width=\linewidth]{outputs/sweeps/llada21_hard_vs_llada21_soft_routing_sweep/routing_sweep_vs_condition.png}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.5\linewidth}
+\centering
+\includegraphics[width=\linewidth]{outputs/sweeps/poc2_reuse_signal_sweep/reuse_signal_pareto.png}
+\end{minipage}
+\caption{\textbf{Initial empirical result for AOAE.} Left: our routing sweep shows that changing soft-routing condition already produces a measurable throughput trade-off while preserving strong quality, which is the key prerequisite for a hard/soft speculative design. Right: our proof-of-concept sweep shows that simple draft-derived agreement signals can already trace useful TPS/accuracy trade-offs, supporting the idea that cache reuse can be predicted rather than hard-coded.}
+\label{fig:poc-support}
+\end{figure}
+
+\textbf{References.}
+\bibliographystyle{plain}
+\begin{thebibliography}{99}
+\vspace{-50pt}
+
+\bibitem{llada21}
+S.~Nie et al. {LLaDA 2.1}: Speeding up text diffusion via token editing. \emph{arXiv:2602.08676}, 2025.
+
+\bibitem{jazbec2025learning}
+M.~Jazbec et al. Learning unmasking policies for diffusion language models. \emph{arXiv:2512.09106}, 2025.
+
+\bibitem{kim2025prism}
+J.~Kim et al. {PRISM}: Plug-in remasking for inference-time self-correction of masked diffusions. \emph{arXiv:2510.01384}, 2025.
+
+\bibitem{ma2025dkv}
+Y.~Ma et al. {dKV-Cache}: The cache for diffusion language models. \emph{NeurIPS}, 2025.
+
+\bibitem{elastic_cache}
+Q.~Nguyen-Tri et al. Attention is all you need for KV cache in diffusion LLMs. \emph{ICLR}, 2026.
+
+\bibitem{sahoo2024simple}
+S.~Sahoo, M.~Arriola, Y.~Schiff, A.~Gokaslan, E.~Marber, S.~Kuleshov, C.~Jones, and V.~Kuleshov.
+\newblock Simple and effective masked diffusion language models.
+\newblock In \emph{NeurIPS}, 2024.
+
+\bibitem{wu2025fastdllm}
+R.~Wu, Y.~Qiu, D.~Zheng, Z.~Yu, L.~Jiang, and L.~Jiao.
+\newblock Fast-{dLLM}: Training-free fast generation for diffusion large language models.
+\newblock \emph{arXiv preprint}, 2025.
+
+\bibitem{shao2024deepseekmath}
+Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo.
+\newblock DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models.
+\newblock {\em arXiv preprint arXiv:2402.03300}, 2024.
+\bibitem{cobbe2021gsm8k}
+K.~Cobbe et al.
+\newblock Training verifiers to solve math word problems.
+\newblock \emph{arXiv:2110.14168}, 2021.
+
+\bibitem{hendrycks2021math}
+D.~Hendrycks et al.
+\newblock Measuring mathematical problem solving with the {MATH} dataset.
+\newblock \emph{NeurIPS}, 2021.
+
+\bibitem{chen2021humaneval}
+M.~Chen et al.
+\newblock Evaluating large language models trained on code.
+\newblock \emph{arXiv:2107.03374}, 2021.
+\end{thebibliography}
+
+\end{document}

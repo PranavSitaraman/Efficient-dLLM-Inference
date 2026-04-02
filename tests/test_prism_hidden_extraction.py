@@ -72,6 +72,32 @@ def test_forward_hidden_only_uses_last_hidden_state_when_available(monkeypatch):
     assert extracted is last_hidden
 
 
+def test_forward_hidden_only_passes_attention_mask_to_new_hf_backbone():
+    import aoae.models.base_model as mod
+
+    batch_size, seq_len, hidden_dim, vocab_size = 2, 3, 4096, 126464
+    base_model = _make_base_model(hidden_dim=hidden_dim, vocab_size=vocab_size)
+    expected_mask = torch.zeros(batch_size, 1, seq_len, seq_len)
+    base_model._make_attention_mask = lambda *args, **kwargs: expected_mask
+
+    class DummyBackbone(torch.nn.Module):
+        def forward(self, input_ids, attention_mask=None, output_hidden_states=False):
+            del input_ids, output_hidden_states
+            assert attention_mask is expected_mask
+            return types.SimpleNamespace(
+                last_hidden_state=torch.randn(batch_size, seq_len, hidden_dim)
+            )
+
+    base_model.model = types.SimpleNamespace(model=DummyBackbone())
+
+    extracted = mod.LLaDABaseModel.forward_hidden_only(
+        base_model,
+        torch.ones(batch_size, seq_len, dtype=torch.long),
+    )
+
+    assert extracted.shape == (batch_size, seq_len, hidden_dim)
+
+
 def test_prism_adapter_raises_clear_error_on_hidden_dim_mismatch():
     from aoae.models.prism import PRISMAdapter
 

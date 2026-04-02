@@ -3,11 +3,6 @@ __pycache__/
 *.egg-info/
 external/
 .pytest_cache/
-.coverage
-.mypy_cache/
-.ruff_cache/
-htmlcov/
+# outputs/
+# results/
 logs/
-outputs/
-results/
-wandb/

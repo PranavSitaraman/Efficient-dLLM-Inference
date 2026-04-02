@@ -455,6 +455,36 @@ class TestAOAEInference:
         n_unmasked = (output[0, 4:] != MASK_ID).sum().item()
         assert n_unmasked > 0
 
+    def test_fallback_unmask_still_applies_when_recording_trajectory(self, base_model, embed_w):
+        from aoae.models.soft_mask import SoftMaskedState
+        from aoae.models.policy import AOAEPolicy
+        from aoae.inference import aoae_inference
+
+        sm = SoftMaskedState(DEFAULT_CFG, embed_w)
+        sm.set_mask_embedding(MASK_ID)
+        pol = AOAEPolicy(DEFAULT_CFG, input_dim=DIM)
+
+        def zero_actions(policy_out, mask_ind):
+            shape = mask_ind.shape
+            return {
+                "u_t": torch.zeros(shape, dtype=torch.float32),
+                "r_t": torch.zeros(shape, dtype=torch.float32),
+                "kappa_t": torch.zeros(shape, dtype=torch.float32),
+            }
+
+        pol.sample_actions = zero_actions
+
+        prompt = torch.tensor([[10, 20, 30, 40]])
+        output, traj = aoae_inference(
+            base_model, pol, sm, None, prompt, DEFAULT_CFG,
+            record_trajectory=True,
+        )
+
+        assert traj is not None
+        assert traj.changed_list
+        assert traj.changed_list[0].sum().item() > 0
+        assert (output[0, 4:] != MASK_ID).sum().item() > 0
+
 
 # ======================================================================
 # Tests: Baseline decoders
@@ -2168,22 +2198,48 @@ class TestRunBlockwiseSpeculativeInference:
 
 
 class TestHFBlockCausalBias:
-    def test_hf_path_uses_attention_bias_not_attention_mask(self):
+    def test_hf_path_uses_attention_bias_when_model_requests_it(self):
         from aoae.models.base_model import LLaDABaseModel
 
         class DummyOut:
             def __init__(self):
                 self.logits = torch.randn(1, 4, 8)
 
-        class DummyHFModel:
-            def __call__(self, input_ids, **kwargs):
-                assert "attention_bias" in kwargs
-                assert "attention_mask" not in kwargs
-                bias = kwargs["attention_bias"]
+        class DummyHFModel(torch.nn.Module):
+            def forward(self, input_ids, attention_bias=None):
+                del input_ids
+                assert attention_bias is not None
+                bias = attention_bias
                 assert bias.shape == (1, 1, 4, 4)
                 return DummyOut()
 
         model = object.__new__(LLaDABaseModel)
+        torch.nn.Module.__init__(model)
+        model._backend = "hf"
+        model.dtype = torch.float32
+        model._block_length = 2
+        model.model = DummyHFModel()
+
+        input_ids = torch.ones((1, 4), dtype=torch.long)
+        out = model.forward_block_causal(input_ids, block_length=2)
+        assert out.shape == (1, 4, 8)
+
+    def test_hf_path_uses_attention_mask_when_model_requests_it(self):
+        from aoae.models.base_model import LLaDABaseModel
+
+        class DummyOut:
+            def __init__(self):
+                self.logits = torch.randn(1, 4, 8)
+
+        class DummyHFModel(torch.nn.Module):
+            def forward(self, input_ids, attention_mask=None):
+                del input_ids
+                assert attention_mask is not None
+                assert attention_mask.shape == (1, 1, 4, 4)
+                return DummyOut()
+
+        model = object.__new__(LLaDABaseModel)
+        torch.nn.Module.__init__(model)
         model._backend = "hf"
         model.dtype = torch.float32
         model._block_length = 2

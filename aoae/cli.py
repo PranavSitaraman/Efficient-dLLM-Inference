@@ -15,6 +15,8 @@ from typing import Iterable, List, Optional
 import yaml
 
 from .checkpoints import resolve_policy_checkpoint
+from .checkpoints import inspect_grpo_artifacts
+from .checkpoints import find_latest_checkpoint
 from .experiment_utils import parse_float_list
 from .preflight import run_preflight
 
@@ -44,6 +46,39 @@ def _extract_flag_value(argv: List[str], flag: str, default: Optional[str] = Non
         if token.startswith(prefix):
             return token[len(prefix):]
     return default
+
+
+def _normalize_legacy_cli_argv(argv_list: List[str]) -> List[str]:
+    """Rewrite legacy positional train invocations to the canonical flag form.
+
+    Older wrappers used:
+      - ``train prism [config]``
+      - ``train grpo [config] [resume]``
+
+    The canonical interface is now:
+      - ``train --config <cfg> --stage prism``
+      - ``train --config <cfg> --stage grpo --resume <resume>``
+    """
+    if not argv_list or argv_list[0] != "train" or len(argv_list) < 2:
+        return argv_list
+
+    stage = argv_list[1]
+    if stage not in {"prism", "grpo"}:
+        return argv_list
+
+    remainder = list(argv_list[2:])
+    if any(token.startswith("-") for token in remainder):
+        return argv_list
+
+    rewritten = ["train", "--stage", stage]
+    if remainder:
+        rewritten.extend(["--config", remainder[0]])
+        remainder = remainder[1:]
+    if stage == "grpo" and remainder:
+        rewritten.extend(["--resume", remainder[0]])
+        remainder = remainder[1:]
+    rewritten.extend(remainder)
+    return rewritten
 
 
 def _config_tp_size(path: Optional[str]) -> int:
@@ -379,9 +414,26 @@ def run_train_command(args: argparse.Namespace):
 
 
 def run_pipeline_command(args: argparse.Namespace):
+    cfg = _load_config(args.config)
+    output_dir = cfg.get("logging", {}).get("output_dir", "")
+    prism_path = os.path.join(output_dir, "prism_adapter.pt") if output_dir else ""
+    final_policy_path = os.path.join(output_dir, "policy_final.pt") if output_dir else ""
+    latest_policy_ckpt = find_latest_checkpoint(output_dir)
+    grpo_status = inspect_grpo_artifacts(output_dir, cfg) if output_dir else {
+        "valid": False,
+        "reason": "missing_output_dir",
+        "checkpoint_path": None,
+    }
+
     if not args.skip_preflight:
         report = run_preflight(args.config, strict_moe=args.strict_moe)
         print(json.dumps(report, indent=2))
+
+    if cfg.get("base_model", {}).get("backend") != "dual":
+        print(
+            "[Pipeline] Using a single-model dense/HF config. "
+            "This path is a reference/dev pipeline, not the canonical paper speculative AOAE setup."
+        )
 
     def _run_nested_cli(argv: List[str]):
         rc = main(argv)
@@ -389,20 +441,49 @@ def run_pipeline_command(args: argparse.Namespace):
             raise SystemExit(rc)
         return rc
 
-    if not args.skip_prism:
+    if not args.skip_prism and prism_path and os.path.exists(prism_path):
+        print(f"[Pipeline] Found existing PRISM adapter at {prism_path}; skipping PRISM training.")
+    elif not args.skip_prism:
         _run_nested_cli(["train", "--config", args.config, "--stage", "prism"])
 
-    if not args.skip_grpo:
+    ran_grpo = False
+    if (
+        not args.skip_grpo
+        and final_policy_path
+        and os.path.exists(final_policy_path)
+        and bool(grpo_status.get("valid"))
+    ):
+        print(f"[Pipeline] Found existing final GRPO checkpoint at {final_policy_path}; skipping GRPO training.")
+    elif not args.skip_grpo:
+        if final_policy_path and os.path.exists(final_policy_path):
+            print(
+                "[Pipeline] Existing GRPO artifacts are stale or below the minimum quality bar "
+                f"({grpo_status.get('reason')}); retraining."
+            )
         nested_grpo = ["train", "--config", args.config, "--stage", "grpo"]
-        if args.resume is not None:
-            nested_grpo.extend(["--resume", args.resume])
+        resume_value = args.resume
+        if resume_value is None and latest_policy_ckpt is not None:
+            resume_value = "auto"
+            print(f"[Pipeline] Found existing GRPO checkpoint at {latest_policy_ckpt}; resuming training.")
+        if resume_value is not None:
+            nested_grpo.extend(["--resume", resume_value])
         _run_nested_cli(nested_grpo)
+        ran_grpo = True
+        grpo_status = inspect_grpo_artifacts(output_dir, cfg) if output_dir else grpo_status
+    elif not bool(grpo_status.get("valid")) and args.checkpoint is None:
+        print(
+            "[Pipeline] No valid GRPO checkpoint is available for evaluation "
+            f"({grpo_status.get('reason')}); AOAE policy eval will be skipped."
+        )
 
     if args.skip_eval:
         return None
 
-    cfg = _load_config(args.config)
-    checkpoint = resolve_policy_checkpoint(args.checkpoint, cfg.get("logging", {}).get("output_dir", ""))
+    checkpoint = args.checkpoint
+    if checkpoint is None and bool(grpo_status.get("valid")):
+        checkpoint = resolve_policy_checkpoint(None, cfg.get("logging", {}).get("output_dir", ""))
+    if checkpoint is None and ran_grpo and output_dir:
+        checkpoint = resolve_policy_checkpoint(None, output_dir)
     eval_args = argparse.Namespace(
         config=args.config,
         checkpoint=checkpoint,
@@ -480,7 +561,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     pipeline_parser = subparsers.add_parser("pipeline", help="Run preflight, training, and evaluation end to end.")
-    pipeline_parser.add_argument("--config", type=str, default="configs/default.yaml", help="Path to YAML config file.")
+    pipeline_parser.add_argument("--config", type=str, default="configs/paper.yaml", help="Path to YAML config file.")
     pipeline_parser.add_argument("--resume", type=str, default=None, help="Resume GRPO training from checkpoint or use 'auto'.")
     pipeline_parser.add_argument("--checkpoint", type=str, default=None, help="Optional explicit checkpoint for the eval step.")
     pipeline_parser.add_argument("--max_samples", type=int, default=None, help="Optional evaluation cap.")
@@ -506,6 +587,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[Iterable[str]] = None):
     argv_list = list(argv) if argv is not None else sys.argv[1:]
+    argv_list = _normalize_legacy_cli_argv(argv_list)
     _apply_runtime_env_defaults()
     relaunch_code = _maybe_relaunch_with_torchrun(argv_list)
     if relaunch_code is not None:

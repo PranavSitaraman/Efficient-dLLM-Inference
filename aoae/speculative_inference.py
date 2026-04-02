@@ -225,6 +225,7 @@ def speculative_inference(
             trajectory.thrash_counts.append(thrash.detach())
 
         resp_tokens = resp_tokens.clone()
+        fallback_positions = torch.zeros_like(mask_ind)
 
         # ====== Phase 1: Remask ======
         remask_positions = r_t.bool() & ~mask_ind
@@ -253,7 +254,7 @@ def speculative_inference(
             resp_tokens[unmask_positions] = sampled[unmask_positions]
 
         # ====== Fallback ======
-        if use_fallback and not record_trajectory:
+        if use_fallback:
             still_masked = (resp_tokens == mask_id)
             no_unmasks = (u_t.sum(dim=-1) == 0) & still_masked.any(dim=-1)
             if no_unmasks.any():
@@ -262,6 +263,7 @@ def speculative_inference(
                     if len(masked_pos) > 0:
                         best_pos = masked_pos[confidence[b_idx, masked_pos].argmax()]
                         resp_tokens[b_idx, best_pos] = resp_logits[b_idx, best_pos].argmax()
+                        fallback_positions[b_idx, best_pos] = True
 
         # ====== Phase 3: Cache (agreement positions only) ======
         if cache_mgr is not None:
@@ -275,7 +277,7 @@ def speculative_inference(
                     (kappa_t * (~agreement).float()).sum().item()
                 )
 
-        changed = (u_t.bool() | r_t.bool()).float()
+        changed = (u_t.bool() | r_t.bool() | fallback_positions).float()
         if trajectory is not None:
             trajectory.changed_list.append(changed.detach())
         if use_positional_cache:

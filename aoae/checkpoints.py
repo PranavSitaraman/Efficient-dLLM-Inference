@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import glob
+import hashlib
+import json
 import os
 from typing import Dict, Optional
 
 import torch
+
+
+GRPO_TRAIN_CONTRACT_VERSION = 1
 
 
 def load_state_dict_flexible(
@@ -32,10 +37,15 @@ def load_state_dict_flexible(
 
 
 def find_latest_checkpoint(output_dir: str, pattern: str = "policy_step*.pt") -> Optional[str]:
-    """Return the numerically latest step checkpoint in an output directory."""
+    """Return the most recent resumable training checkpoint in an output directory."""
     if not output_dir:
         return None
-    ckpts = glob.glob(os.path.join(output_dir, pattern))
+    explicit_candidates = [
+        os.path.join(output_dir, "policy_latest.pt"),
+        os.path.join(output_dir, "policy_interrupt.pt"),
+    ]
+    ckpts = [path for path in explicit_candidates if os.path.exists(path)]
+    ckpts.extend(glob.glob(os.path.join(output_dir, pattern)))
     if not ckpts:
         return None
 
@@ -47,7 +57,7 @@ def find_latest_checkpoint(output_dir: str, pattern: str = "policy_step*.pt") ->
         except ValueError:
             return -1
 
-    ckpts.sort(key=_step_num)
+    ckpts.sort(key=lambda path: (os.path.getmtime(path), _step_num(path)))
     return ckpts[-1]
 
 
@@ -58,7 +68,7 @@ def resolve_policy_checkpoint(
     """Resolve an explicit checkpoint path or auto-detect the best available one."""
     if explicit:
         return explicit
-    for name in ("policy_best.pt", "policy_final.pt"):
+    for name in ("policy_best.pt", "policy_final.pt", "policy_latest.pt"):
         candidate = os.path.join(output_dir, name)
         if os.path.exists(candidate):
             return candidate
@@ -84,3 +94,86 @@ def resolve_sidecar_artifact(
         if os.path.exists(candidate):
             return candidate
     return None
+
+
+def build_grpo_config_fingerprint(cfg: Dict[str, object]) -> str:
+    """Build a stable fingerprint for GRPO-relevant config sections."""
+    tracked = {
+        "base_model": cfg.get("base_model", {}),
+        "soft_mask": cfg.get("soft_mask", {}),
+        "policy": cfg.get("policy", {}),
+        "prism": cfg.get("prism", {}),
+        "grpo": cfg.get("grpo", {}),
+        "inference": cfg.get("inference", {}),
+        "data": {
+            "train_dataset": cfg.get("data", {}).get("train_dataset"),
+            "train_split": cfg.get("data", {}).get("train_split"),
+            "train_max_samples": cfg.get("data", {}).get("train_max_samples"),
+            "max_prompt_len": cfg.get("data", {}).get("max_prompt_len"),
+            "max_answer_len": cfg.get("data", {}).get("max_answer_len"),
+        },
+    }
+    payload = json.dumps(tracked, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def read_grpo_training_metadata(output_dir: str) -> Optional[Dict[str, object]]:
+    """Load the sidecar GRPO metadata if it exists and is valid JSON."""
+    if not output_dir:
+        return None
+    path = os.path.join(output_dir, "grpo_training_metadata.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def inspect_grpo_artifacts(output_dir: str, cfg: Dict[str, object]) -> Dict[str, object]:
+    """Determine whether existing GRPO artifacts are safe to reuse."""
+    status: Dict[str, object] = {
+        "valid": False,
+        "reason": "missing_output_dir",
+        "checkpoint_path": None,
+        "metadata": None,
+    }
+    if not output_dir:
+        return status
+
+    metadata = read_grpo_training_metadata(output_dir)
+    checkpoint_path = resolve_policy_checkpoint(None, output_dir)
+    status["checkpoint_path"] = checkpoint_path
+    status["metadata"] = metadata
+
+    if checkpoint_path is None:
+        status["reason"] = "missing_checkpoint"
+        return status
+    if metadata is None:
+        status["reason"] = "missing_metadata"
+        return status
+    if metadata.get("stage") != "grpo":
+        status["reason"] = "wrong_stage"
+        return status
+    if int(metadata.get("train_contract_version", -1)) != GRPO_TRAIN_CONTRACT_VERSION:
+        status["reason"] = "stale_contract"
+        return status
+
+    expected_fingerprint = build_grpo_config_fingerprint(cfg)
+    if metadata.get("config_fingerprint") != expected_fingerprint:
+        status["reason"] = "config_mismatch"
+        return status
+
+    min_reward = float(cfg.get("grpo", {}).get("min_checkpoint_reward", 0.0))
+    best_reward = metadata.get("best_reward")
+    if best_reward is None or float(best_reward) < min_reward:
+        status["reason"] = "reward_below_threshold"
+        return status
+
+    status["valid"] = True
+    status["reason"] = "ok"
+    return status
