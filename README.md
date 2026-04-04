@@ -256,7 +256,7 @@ Binary: 1 if the final decoded text matches the reference answer, 0 otherwise.  
 
 **Justification:** This is the ground truth signal.  Everything else is a shaping reward to provide denser gradients.
 
-#### 2. Speed Factor (dense, per-rollout)
+#### 2. Speed Factor (a.k.a effective_flops) (dense, per-rollout)
 
 ```
 effective_flops = (used_steps / T) · (1 − mean_cached_fraction)
@@ -278,7 +278,7 @@ penalty   = β · Σ_t thrash(t)
 
 Penalizes caching a position and then immediately editing it (wasteful invalidation).
 
-**Justification:** Without this, the policy can game the speed factor by caching everything indiscriminately.  β = 0.1 is small enough to not dominate but large enough to discourage pathological thrashing.
+**Justification:** Without this, the policy can game the effective flops by caching everything indiscriminately.  β = 0.1 is small enough to not dominate but large enough to discourage pathological thrashing.
 
 #### 4. Unresolved Mask Penalty (dense, terminal)
 
