@@ -85,10 +85,28 @@ def compute_reward(
         correct = check_math_correctness(gen_text, reference_answer[b])
         correctness[b] = 1.0 if correct else 0.0
 
-    # --- Speed factor ---
-    # used_steps: forward-time steps consumed (smaller is faster).
-    # Map to reverse-time completion index T_hat in [1, T]:
-    #   T_hat = T - used_steps + 1
+    # --- Speed factor (compute-aware proxy for wall-time speedup) ---
+    #
+    # Old formula: speed_factor = (T_hat / T)^alpha
+    #   Only rewards finishing in fewer *steps*, ignoring within-step savings
+    #   from caching.  A policy that caches 80% of positions per step but uses
+    #   all T steps gets zero credit for the 80% FLOP reduction.
+    #
+    # New formula: effective_flops = (used_steps / T) * (1 - mean_cached_fraction)
+    #              speed_factor    = (1 - effective_flops)^alpha
+    #
+    #   Derivation: dLLM cost per step is proportional to (L - |K_t|) / L, where
+    #   |K_t| is the number of cached positions (their K/V projections are reused,
+    #   not recomputed).  Total effective compute ∝ Σ_t (1 - cached_t) / T.
+    #   Multiplying by (used_steps / T) accounts for early termination.  The result
+    #   is a dimensionless, hardware-independent fraction in [0, 1]:
+    #     0 → everything cached + zero steps (free)
+    #     1 → nothing cached + all T steps (full cost)
+    #
+    #   NOTE: during training the base model forward still runs on the full
+    #   sequence regardless of cache state (DKVCacheManager is a *logical* tracker,
+    #   not a compute-skipping implementation).  The reward therefore trains the
+    #   policy toward cache decisions that *would* be efficient at deployment.
     if getattr(trajectory, "completion_step", None) is not None:
         used_steps = trajectory.completion_step.to(device).float().clamp(min=1.0, max=float(T))
     else:
@@ -97,8 +115,15 @@ def compute_reward(
             if "u_t" in a and a["u_t"].sum() > 0
         )
         used_steps = torch.full((B,), float(max(n_active_steps, 1)), device=device)
-    t_hat = (float(T) - used_steps + 1.0).clamp(min=1.0, max=float(T))
-    speed_factor = (t_hat / float(T)).pow(alpha)
+
+    cached_fracs = getattr(trajectory, "cached_fractions", [])
+    if cached_fracs:
+        mean_cached = torch.stack([cf.to(device) for cf in cached_fracs]).mean(dim=0)  # [B]
+    else:
+        mean_cached = torch.zeros(B, device=device)
+
+    effective_flops = (used_steps / float(T)) * (1.0 - mean_cached)          # [B] in [0,1]
+    speed_factor = (1.0 - effective_flops.clamp(0.0, 1.0)).pow(alpha)         # [B] in [0,1]
 
     # --- Cache thrashing penalty ---
     total_thrash = torch.zeros(B, device=device)
@@ -117,7 +142,35 @@ def compute_reward(
             unresolved_fraction = (final_tokens.to(device) == mask_id).float().mean(dim=-1)
             reward = reward - unresolved_penalty_weight * unresolved_fraction
 
-    # Optional dense signal for next-H positional access quality.
+    # --- Cache quality F1 (soft precision-recall of cache set) ---
+    #
+    # Replaces the old drift_penalty which was precision-only (penalise caching
+    # unstable positions) with a two-sided F1 signal that also rewards caching
+    # stable positions (recall).
+    #
+    # Per-step cache_quality_f1 ∈ [0, 1] is computed in the inference loop:
+    #   stability(k) = exp(-λ * rel_drift_k)
+    #   precision     = mean_{k ∈ K_t}(stability(k))
+    #   recall        = Σ_{k ∈ K_t} stability(k) / Σ_all stability(k)
+    #   cache_F1      = 2 * precision * recall / (precision + recall)
+    #
+    # This is a *reward* (higher = better cache decisions), not a penalty.
+    cache_q_w = float(gc.get("cache_quality_weight", 0.0))
+    if cache_q_w > 0.0:
+        cache_f1_steps = getattr(trajectory, "cache_quality_f1", [])
+        if cache_f1_steps:
+            mean_cache_f1 = torch.stack([f.to(device) for f in cache_f1_steps]).mean(dim=0)  # [B]
+            reward = reward + cache_q_w * mean_cache_f1
+
+    # --- Dense access-prediction reward (intermediate signal for q_t head) ---
+    #
+    # Without this signal the q_t (access prediction) head receives no gradient:
+    # the terminal correctness reward is too sparse to credit individual per-step
+    # access decisions.  Enabling this (access_reward_weight > 0) provides a
+    # per-rollout F1 score measuring how well the policy predicted *which*
+    # positions would be accessed in the next H steps.  This teaches the cache
+    # head (κ_t) to be forward-looking: commit positions that will actually be
+    # needed, not just positions that happen to be confident right now.
     access_w = float(gc.get("access_reward_weight", 0.0))
     if access_w > 0.0 and hasattr(trajectory, "access_metrics"):
         spec_f1 = float(trajectory.access_metrics.get("access_next_h_spec_f1", 0.0))

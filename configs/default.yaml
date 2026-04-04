@@ -53,9 +53,16 @@ cache:
 grpo:
   group_size: 4                # Reproduction budget: batched rollouts per prompt
   clip_eps: 0.2                # epsilon for clipping (paper §3.5)
-  alpha: 1.0                   # speed bonus weight (paper §3.5)
+  alpha: 1.0                   # speed bonus exponent; applied to (1 - effective_flops)
   beta: 0.1                    # cache-thrashing penalty weight (paper §3.5)
-  access_reward_weight: 0.0    # optional dense reward from next-H speculative access F1
+  # Dense intermediate signals — important for credit assignment beyond sparse
+  # terminal correctness.  These provide per-step gradients to the cache (κ_t)
+  # and access (q_t) heads that the terminal reward alone cannot supply.
+  access_reward_weight: 0.1    # F1 of next-H access prediction; trains the q_t head
+  cache_quality_weight: 0.05   # soft precision-recall F1 reward for cache set quality;
+                               # trains κ_t to commit stable positions (subsumes old drift penalty)
+  stability_lambda: 10.0       # λ in stability(k) = exp(-λ * rel_drift_k); higher = sharper
+                               # distinction between stable/unstable positions (good range: 5–20)
   unresolved_penalty_weight: 0.25  # keep no-progress / still-masked rollouts negative during training
   min_checkpoint_reward: 0.0   # pipeline will refuse to reuse checkpoints that never achieved non-negative mean reward
   lr: 3.0e-4
@@ -78,7 +85,7 @@ inference:
   fallback_unmask: true        # unmask highest-confidence when u_t = 0
   disable_remask: false        # ablation: set true to disable remasking
   positional_cache:
-    enabled: false             # set true for POC2 positional speculative caching
+    enabled: true              # enables age_feature and last_action_feature inputs to policy
     horizon: 4                 # next-H window for access prediction
     refresh_budget: 32         # additional non-mandatory positions per step
     candidate_policy: "learned_topb"  # learned_topb|sliding_window|confidence_topb
@@ -104,7 +111,7 @@ inference:
 
 # ---- Analysis ------------------------------------------------
 analysis:
-  track_kv_dynamics: false
+  track_kv_dynamics: true
   keep_step_traces: true
   locality_windows: [8, 16, 32]
   confidence_threshold: 0.9

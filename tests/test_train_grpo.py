@@ -190,3 +190,66 @@ def test_compute_reward_penalizes_unresolved_masks():
     )
 
     assert reward[0].item() < 0.0
+
+
+def test_compute_reward_cache_quality_f1_adds_positive_reward():
+    """cache_quality_weight > 0 should increase reward when cache_quality_f1 is high."""
+    from aoae.train_grpo import compute_reward
+    from aoae.inference import AOAETrajectory
+    from unittest.mock import MagicMock
+
+    tokenizer = MagicMock()
+    tokenizer.decode.return_value = "I don't know."
+
+    cfg = {
+        "base_model": {"mask_token_id": 99},
+        "grpo": {
+            "alpha": 1.0,
+            "beta": 0.0,
+            "access_reward_weight": 0.0,
+            "unresolved_penalty_weight": 0.0,
+            "cache_quality_weight": 0.1,
+        },
+    }
+
+    # Trajectory WITHOUT cache_quality_f1 (baseline)
+    traj_no_f1 = AOAETrajectory()
+    traj_no_f1.completion_step = torch.tensor([8.0])
+    traj_no_f1.thrash_counts = [torch.tensor([0.0])]
+    traj_no_f1.actions = [{"u_t": torch.zeros(1, 4)}]
+
+    reward_no_f1 = compute_reward(
+        generated_tokens=torch.randint(0, 10, (1, 4)),
+        reference_answer=["42"],
+        tokenizer=tokenizer,
+        trajectory=traj_no_f1,
+        cfg=cfg,
+        T=16,
+    )
+
+    # Trajectory WITH high cache_quality_f1
+    traj_with_f1 = AOAETrajectory()
+    traj_with_f1.completion_step = torch.tensor([8.0])
+    traj_with_f1.thrash_counts = [torch.tensor([0.0])]
+    traj_with_f1.actions = [{"u_t": torch.zeros(1, 4)}]
+    traj_with_f1.cache_quality_f1 = [
+        torch.tensor([0.9]),
+        torch.tensor([0.8]),
+        torch.tensor([0.85]),
+    ]
+
+    reward_with_f1 = compute_reward(
+        generated_tokens=torch.randint(0, 10, (1, 4)),
+        reference_answer=["42"],
+        tokenizer=tokenizer,
+        trajectory=traj_with_f1,
+        cfg=cfg,
+        T=16,
+    )
+
+    # The F1 signal should boost the reward
+    assert reward_with_f1[0].item() > reward_no_f1[0].item()
+    # Verify the boost is approximately cache_quality_weight * mean_f1
+    expected_boost = 0.1 * ((0.9 + 0.8 + 0.85) / 3.0)
+    actual_boost = reward_with_f1[0].item() - reward_no_f1[0].item()
+    assert abs(actual_boost - expected_boost) < 1e-5

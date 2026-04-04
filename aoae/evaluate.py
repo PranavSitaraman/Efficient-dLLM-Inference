@@ -247,6 +247,7 @@ def evaluate_aoae(
     max_samples: Optional[int] = None,
     predictions_sink: Optional[List[Dict[str, Any]]] = None,
     prediction_limit: int = 0,
+    dynamics_sink: Optional[List[Dict[str, Any]]] = None,
 ) -> EvalResult:
     """Evaluate AOAE on a dataset."""
     mask_id = cfg["base_model"]["mask_token_id"]
@@ -282,6 +283,9 @@ def evaluate_aoae(
         if prompt_ids.dim() == 1:
             prompt_ids = prompt_ids.unsqueeze(0)
 
+        _do_track_kv = dynamics_sink is not None and bool(
+            cfg.get("analysis", {}).get("track_kv_dynamics", False)
+        )
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         t0 = time.perf_counter()
@@ -295,10 +299,16 @@ def evaluate_aoae(
                 cfg=cfg,
                 record_trajectory=False,
                 policy_temperature=policy_temperature,
+                track_kv_dynamics=_do_track_kv,
             )
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         t1 = time.perf_counter()
+
+        # Collect KV dynamics summary from the minimal trajectory shell that
+        # aoae_inference() creates when track_kv_dynamics=True.
+        if _do_track_kv and trajectory is not None and trajectory.kv_dynamics_summary is not None:
+            dynamics_sink.append({"kv_dynamics": trajectory.kv_dynamics_summary})
 
         gen_tokens = output_ids[0, prompt_ids.shape[1]:]
         n_gen = int((gen_tokens != mask_id).sum().item())
@@ -840,6 +850,7 @@ def run_pareto_sweep(
     max_samples,
     predictions_sink: Optional[List[Dict[str, Any]]] = None,
     prediction_limit: int = 0,
+    dynamics_sink: Optional[List[Dict[str, Any]]] = None,
 ) -> List[EvalResult]:
     """Sweep policy temperature to generate Pareto curve points."""
     temperatures = [0.3, 0.5, 0.7, 1.0, 1.5, 2.0]
@@ -853,6 +864,7 @@ def run_pareto_sweep(
             max_samples=max_samples,
             predictions_sink=predictions_sink,
             prediction_limit=prediction_limit,
+            dynamics_sink=dynamics_sink,
         )
         results.append(r)
         print(f"  Accuracy: {r.accuracy:.4f}  TPS: {r.avg_tokens_per_sec:.1f}")
@@ -1396,6 +1408,7 @@ def main(
                     max_samples,
                     predictions_sink=saved_predictions,
                     prediction_limit=prediction_limit,
+                    dynamics_sink=kv_dynamics_records,
                 )
                 all_results.extend(aoae_results)
             else:

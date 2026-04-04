@@ -59,6 +59,29 @@ class AOAETrajectory:
     access_metrics: Dict[str, float] = field(default_factory=dict)
     mean_boundary_depth: float = 0.0
     boundary_distribution: str = "{}"
+    # ---- compute-aware speed bonus ----
+    # Fraction of positions currently in the dKV-Cache at each step (after Phase 3
+    # commit).  Used to compute effective_flops = (used_steps/T)*(1-mean_cached),
+    # which captures BOTH fewer forward passes AND cheaper passes due to caching.
+    cached_fractions: List[torch.Tensor] = field(default_factory=list)
+    # ---- Cache quality F1 (soft precision-recall training signal) ----
+    # Per-step F1 measuring whether the cache set contains the *stable*
+    # positions (low H_t drift) and excludes the *unstable* ones.
+    #
+    # For every position k, we compute:
+    #   stability(k) = exp(-λ * rel_drift_k)   ∈ (0, 1]
+    # where rel_drift_k = ||H_t^k - H_{t-1}^k||₂ / ||H_{t-1}^k||₂.
+    #
+    # Then soft precision/recall over the cache set K_t:
+    #   precision = mean_{k ∈ K_t}(stability(k))
+    #   recall    = Σ_{k ∈ K_t} stability(k) / Σ_all_k stability(k)
+    #   cache_F1  = 2 * precision * recall / (precision + recall)
+    #
+    # This subsumes the old drift_penalty (which was precision-only, no recall)
+    # and adds the missing "go commit those stable tokens" gradient.
+    cache_quality_f1: List[torch.Tensor] = field(default_factory=list)
+    # ---- KV dynamics tracker summary (eval only, None during training) ----
+    kv_dynamics_summary: Optional[Dict] = None
 
 
 def aoae_inference(
@@ -70,6 +93,7 @@ def aoae_inference(
     cfg: dict,
     record_trajectory: bool = False,
     policy_temperature: float = 1.0,
+    track_kv_dynamics: bool = False,
 ) -> Tuple[torch.Tensor, Optional[AOAETrajectory]]:
     """
     Run AOAE inference (Algorithm 1).
@@ -119,6 +143,22 @@ def aoae_inference(
     trajectory = AOAETrajectory() if record_trajectory else None
     pos_state = init_positional_state(B, L_gen, device)
 
+    # --- KV dynamics tracker (eval diagnostic, off during GRPO rollouts) ---
+    # Uses hidden-state proxy (forward_with_all_hidden) when enabled.
+    # Requires track_kv_dynamics=True AND analysis.track_kv_dynamics=True in cfg.
+    _track_kv = track_kv_dynamics and bool(
+        cfg.get("analysis", {}).get("track_kv_dynamics", False)
+    )
+    _dynamics_tracker = None
+    if _track_kv:
+        from .kv_dynamics import SpeculativeDynamicsTracker
+        _dynamics_tracker = SpeculativeDynamicsTracker(cfg)
+
+    # H_t from the previous step: used to compute per-cached-position drift.
+    # drift_k = ||H_t^k - H_{t-1}^k|| / ||H_{t-1}^k||  for k in K (cache set)
+    # This is a proxy for actual KV-vector drift without requiring K/V extraction.
+    _prev_H_t: Optional[torch.Tensor] = None
+
     # --- Main diffusion loop: t = T, T-1, ..., 1 ---
     for t in range(T, 0, -1):
         step_frac = t / T
@@ -134,7 +174,16 @@ def aoae_inference(
             break
 
         # --- Base model forward ---
-        if prism_adapter is not None:
+        # When KV dynamics tracking is on we need all layer hidden states for the
+        # SpeculativeDynamicsTracker (hidden-state-proxy drift mode).  We reuse the
+        # same forward_with_all_hidden call for PRISM if both are active, avoiding
+        # a redundant pass.
+        _layer_hiddens_for_tracker: List[torch.Tensor] = []
+        if _track_kv:
+            logits, _all_hidden = base_model.forward_with_all_hidden(y)
+            resp_hidden = _all_hidden[-1][:, resp_slice, :] if prism_adapter is not None else None
+            _layer_hiddens_for_tracker = [h[:, resp_slice, :].detach() for h in _all_hidden]
+        elif prism_adapter is not None:
             logits, hidden_states = base_model.forward_with_hidden(y)
             resp_hidden = hidden_states[:, resp_slice, :]
         else:
@@ -152,6 +201,48 @@ def aoae_inference(
         H_t, confidence, entropy = soft_mask_module(
             resp_logits, mask_ind, step_frac
         )  # H_t: [B, L_gen, D]
+
+        # --- Cache quality F1 (soft precision-recall of cache set) ---
+        # Measured BEFORE Phase 1 invalidation so we capture the quality of
+        # the cache set as it stood at the start of this step.
+        #
+        # For every position k we compute a soft stability score:
+        #   stability(k) = exp(-λ * rel_drift_k)   ∈ (0, 1]
+        # where rel_drift_k = ||H_t^k - H_{t-1}^k||₂ / ||H_{t-1}^k||₂.
+        #
+        # Soft precision/recall over cache set K_t:
+        #   precision = mean_{k ∈ K_t}(stability(k))
+        #   recall    = Σ_{k ∈ K_t} stability(k) / Σ_all stability(k)
+        #   F1        = 2 * precision * recall / (precision + recall)
+        #
+        # This subsumes the old drift penalty (precision-only) and adds
+        # the missing recall gradient: "commit those stable tokens."
+        if trajectory is not None and _prev_H_t is not None and cache_mgr is not None:
+            _cached_mask = cache_mgr.get_cached_mask()          # [B, L_gen] bool
+            _h_delta = (H_t.detach() - _prev_H_t).norm(dim=-1) # [B, L_gen]
+            _h_norm  = _prev_H_t.norm(dim=-1).clamp(min=1e-8)  # [B, L_gen]
+            _rel_drift = _h_delta / _h_norm                     # [B, L_gen] ∈ [0, ~2]
+
+            # Soft stability: threshold-free, scale-invariant
+            _stab_lambda = float(cfg.get("grpo", {}).get("stability_lambda", 10.0))
+            _all_stability = torch.exp(-_stab_lambda * _rel_drift)  # [B, L_gen]
+
+            _cached_f = _cached_mask.float()                        # [B, L_gen]
+            _n_cached = _cached_f.sum(-1).clamp(min=1.0)            # [B]
+
+            # Precision: mean stability of cached positions
+            _cached_prec = (_all_stability * _cached_f).sum(-1) / _n_cached  # [B]
+
+            # Recall: fraction of total stability budget captured by cache
+            _total_stab = _all_stability.sum(-1).clamp(min=1e-8)    # [B]
+            _cached_stab = (_all_stability * _cached_f).sum(-1)     # [B]
+            _recall = _cached_stab / _total_stab                    # [B]
+
+            # Harmonic mean (F1)
+            _cache_f1 = 2.0 * _cached_prec * _recall / (_cached_prec + _recall + 1e-8)  # [B]
+            trajectory.cache_quality_f1.append(_cache_f1.detach())
+        _prev_H_t = H_t.detach()
+
         age_feat = None
         last_action_feat = None
         if use_positional_cache:
@@ -267,11 +358,34 @@ def aoae_inference(
         if cache_mgr is not None:
             cache_mgr.commit(kappa_t * q_exec)
 
+        # --- Record cached fraction after commit (for compute-aware speed bonus) ---
+        # Stored per-step so compute_reward() can compute mean_cached_fraction and
+        # use it in: effective_flops = (used_steps/T) * (1 - mean_cached_fraction)
+        if trajectory is not None and cache_mgr is not None:
+            trajectory.cached_fractions.append(cache_mgr.cached_fraction().detach())
+
         changed = (u_t.bool() | r_t.bool() | fallback_positions).float()
         if trajectory is not None:
             trajectory.changed_list.append(changed.detach())
         if use_positional_cache:
             update_positional_state(pos_state, q_exec=q_exec, changed=changed, cfg=cfg)
+
+        # --- KV dynamics tracker observation (eval diagnostic only) ---
+        # Uses all-layer hidden states (hidden-state proxy drift, not actual K/V).
+        # agreement is unavailable in single-model mode → zeros (no auxiliary).
+        if _dynamics_tracker is not None and _layer_hiddens_for_tracker:
+            _agreement_proxy = torch.zeros(B, L_gen, device=device)
+            _q_t_tracked = actions.get("q_t", torch.zeros_like(u_t))
+            _dynamics_tracker.observe_step(
+                layer_hiddens=_layer_hiddens_for_tracker,
+                max_prob=confidence,
+                mask_ind=mask_ind,
+                agreement=_agreement_proxy,
+                u_t=u_t,
+                r_t=r_t,
+                kappa_t=kappa_t,
+                q_t=_q_t_tracked,
+            )
 
         # --- Write back response tokens ---
         if trajectory is not None:
@@ -305,6 +419,16 @@ def aoae_inference(
         else:
             trajectory.mean_boundary_depth = 0.0
             trajectory.boundary_distribution = "{}"
+
+    # --- Finalize KV dynamics tracker ---
+    # If the tracker ran, store its summary so evaluate_aoae() can collect it.
+    # When record_trajectory=False (normal eval path), we create a minimal
+    # trajectory shell just to carry the summary — avoids changing the return type.
+    if _dynamics_tracker is not None:
+        _dyn_summary = _dynamics_tracker.summarize()
+        if trajectory is None:
+            trajectory = AOAETrajectory()
+        trajectory.kv_dynamics_summary = _dyn_summary
 
     return y, trajectory
 

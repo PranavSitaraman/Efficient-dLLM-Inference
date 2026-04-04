@@ -45,6 +45,9 @@ grpo:
   alpha: 1.0
   beta: 0.1
   access_reward_weight: 0.0
+  cache_quality_weight: 0.05
+  stability_lambda: 10.0
+  unresolved_penalty_weight: 0.25
   min_checkpoint_reward: 0.0
   lr: 3.0e-4
   weight_decay: 0.01

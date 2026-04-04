@@ -57,7 +57,8 @@ def test_tracker_prefers_exact_kv_drift_and_tracks_attention_deviation():
     assert summary["layer_drift_measure"] == "exact_kv"
     assert summary["attention_deviation_available"] is True
     assert summary["exact_kv_drift_steps"] == 1
-    assert per_layer[0]["mean_drift"] == pytest.approx(2.0)
+    # K drift: norm([1,1]) = sqrt(2), V drift: same → total = 2*sqrt(2)
+    assert per_layer[0]["mean_drift"] == pytest.approx(2.0 * math.sqrt(2.0))
     assert per_layer_attn[0]["mean_attention_deviation"] == pytest.approx(math.sqrt(2.0))
 
 
