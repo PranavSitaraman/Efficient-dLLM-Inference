@@ -177,3 +177,62 @@ def inspect_grpo_artifacts(output_dir: str, cfg: Dict[str, object]) -> Dict[str,
     status["valid"] = True
     status["reason"] = "ok"
     return status
+
+
+def inspect_grpo_resume_candidate(output_dir: str, cfg: Dict[str, object]) -> Dict[str, object]:
+    """Determine whether an existing GRPO checkpoint is safe to resume from.
+
+    Resume eligibility is intentionally stricter than merely "a checkpoint file
+    exists": completed runs that failed the configured quality gate should not be
+    resurrected into fresh training/eval cycles.
+    """
+    status: Dict[str, object] = {
+        "valid": False,
+        "reason": "missing_output_dir",
+        "checkpoint_path": None,
+        "metadata": None,
+    }
+    if not output_dir:
+        return status
+
+    checkpoint_path = find_latest_checkpoint(output_dir)
+    metadata = read_grpo_training_metadata(output_dir)
+    status["checkpoint_path"] = checkpoint_path
+    status["metadata"] = metadata
+
+    if checkpoint_path is None:
+        status["reason"] = "missing_checkpoint"
+        return status
+
+    if metadata is None:
+        status["valid"] = True
+        status["reason"] = "checkpoint_only"
+        return status
+
+    if metadata.get("stage") != "grpo":
+        status["reason"] = "wrong_stage"
+        return status
+    if int(metadata.get("train_contract_version", -1)) != GRPO_TRAIN_CONTRACT_VERSION:
+        status["reason"] = "stale_contract"
+        return status
+
+    expected_fingerprint = build_grpo_config_fingerprint(cfg)
+    if metadata.get("config_fingerprint") != expected_fingerprint:
+        status["reason"] = "config_mismatch"
+        return status
+
+    min_reward = float(cfg.get("grpo", {}).get("min_checkpoint_reward", 0.0))
+    best_reward = metadata.get("best_reward")
+    if best_reward is None or float(best_reward) < min_reward:
+        status["reason"] = "reward_below_threshold"
+        return status
+
+    max_steps = int(metadata.get("max_steps", cfg.get("grpo", {}).get("max_steps", -1)) or -1)
+    completed_steps = int(metadata.get("completed_steps", -1) or -1)
+    if max_steps >= 0 and completed_steps >= max_steps:
+        status["reason"] = "already_complete"
+        return status
+
+    status["valid"] = True
+    status["reason"] = "ok"
+    return status

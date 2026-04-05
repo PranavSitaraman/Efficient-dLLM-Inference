@@ -15,7 +15,7 @@ from typing import Iterable, List, Optional
 import yaml
 
 from .checkpoints import resolve_policy_checkpoint
-from .checkpoints import inspect_grpo_artifacts
+from .checkpoints import inspect_grpo_artifacts, inspect_grpo_resume_candidate
 from .checkpoints import find_latest_checkpoint
 from .experiment_utils import parse_float_list
 from .preflight import run_preflight
@@ -425,6 +425,11 @@ def run_pipeline_command(args: argparse.Namespace):
         "reason": "missing_output_dir",
         "checkpoint_path": None,
     }
+    resume_status = inspect_grpo_resume_candidate(output_dir, cfg) if output_dir else {
+        "valid": False,
+        "reason": "missing_output_dir",
+        "checkpoint_path": None,
+    }
 
     if not args.skip_preflight:
         report = run_preflight(args.config, strict_moe=args.strict_moe)
@@ -463,14 +468,20 @@ def run_pipeline_command(args: argparse.Namespace):
             )
         nested_grpo = ["train", "--config", args.config, "--stage", "grpo"]
         resume_value = args.resume
-        if resume_value is None and latest_policy_ckpt is not None:
+        if resume_value is None and latest_policy_ckpt is not None and bool(resume_status.get("valid")):
             resume_value = "auto"
             print(f"[Pipeline] Found existing GRPO checkpoint at {latest_policy_ckpt}; resuming training.")
+        elif resume_value is None and latest_policy_ckpt is not None:
+            print(
+                "[Pipeline] Ignoring existing GRPO resume checkpoint "
+                f"({resume_status.get('reason')}); starting GRPO from scratch."
+            )
         if resume_value is not None:
             nested_grpo.extend(["--resume", resume_value])
         _run_nested_cli(nested_grpo)
         ran_grpo = True
         grpo_status = inspect_grpo_artifacts(output_dir, cfg) if output_dir else grpo_status
+        resume_status = inspect_grpo_resume_candidate(output_dir, cfg) if output_dir else resume_status
     elif not bool(grpo_status.get("valid")) and args.checkpoint is None:
         print(
             "[Pipeline] No valid GRPO checkpoint is available for evaluation "
@@ -483,7 +494,7 @@ def run_pipeline_command(args: argparse.Namespace):
     checkpoint = args.checkpoint
     if checkpoint is None and bool(grpo_status.get("valid")):
         checkpoint = resolve_policy_checkpoint(None, cfg.get("logging", {}).get("output_dir", ""))
-    if checkpoint is None and ran_grpo and output_dir:
+    if checkpoint is None and ran_grpo and output_dir and bool(grpo_status.get("valid")):
         checkpoint = resolve_policy_checkpoint(None, output_dir)
     eval_args = argparse.Namespace(
         config=args.config,

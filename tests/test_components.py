@@ -1858,6 +1858,23 @@ class TestSpeculativeCacheManager:
         stats = mgr.get_stats()
         assert stats["total_invalidations"] == 1
         assert stats["total_remasks"] == 1
+        assert stats["cache_hit_rate"] == pytest.approx(5.0 / 6.0)
+
+    def test_uncached_remask_does_not_count_as_cache_invalidation(self):
+        from aoae.dinfer_integration import SpeculativeCacheManager
+
+        mgr = SpeculativeCacheManager(1, 4, torch.device("cpu"))
+        r_t = torch.tensor([[1, 0, 1, 0]], dtype=torch.float)
+        u_t = torch.zeros(1, 4)
+        kappa_t = torch.zeros(1, 4)
+        agreement = torch.ones(1, 4)
+
+        mgr.step(r_t, kappa_t, u_t, agreement)
+        stats = mgr.get_stats()
+
+        assert stats["total_invalidations"] == 0
+        assert stats["total_remasks"] == 2
+        assert stats["cache_hit_rate"] == 0.0
 
 
 class TestRunSpeculativeInferenceMetrics:

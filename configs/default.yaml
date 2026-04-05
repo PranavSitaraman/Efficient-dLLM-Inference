@@ -40,7 +40,7 @@ policy:
 prism:
   hidden_dim: 256
   threshold: 0.5               # delta — quality score threshold
-  train_samples: 10000         # number of (corrupted, clean) pairs
+  train_samples: 1000         # number of (corrupted, clean) pairs
   epochs: 3
   lr: 1.0e-3
   batch_size: 4

@@ -31,6 +31,7 @@ from .checkpoints import (
     build_grpo_config_fingerprint,
     find_latest_checkpoint,
     load_state_dict_flexible,
+    read_grpo_training_metadata,
 )
 from .inference import aoae_inference, AOAETrajectory
 from .speculative_inference import speculative_inference, SpeculativeTrajectory
@@ -662,6 +663,17 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                 accum_step = ckpt["accum_step"]
             if "epoch" in ckpt:
                 start_epoch = ckpt["epoch"]
+            if "best_reward" in ckpt and ckpt["best_reward"] is not None:
+                best_reward = float(ckpt["best_reward"])
+            else:
+                metadata = read_grpo_training_metadata(lc["output_dir"])
+                if isinstance(metadata, dict):
+                    try:
+                        best_from_metadata = metadata.get("best_reward")
+                        if best_from_metadata is not None:
+                            best_reward = float(best_from_metadata)
+                    except (TypeError, ValueError):
+                        pass
 
             if is_main:
                 print(f"  Resumed at global_step={global_step}, epoch={start_epoch}, "
@@ -673,12 +685,22 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                 f"Use --resume auto to auto-detect, or pass a valid path."
             )
 
+        should_optimize = global_step < gc["max_steps"]
+        if is_main and not should_optimize:
+            print(
+                "Resume checkpoint already reached max_steps; skipping further GRPO "
+                "optimizer steps and materializing final artifacts only."
+            )
+
         for epoch in range(start_epoch, gc["epochs"]):
+            if not should_optimize:
+                break
             current_epoch = epoch
             if is_main:
                 print(f"\n=== Epoch {epoch + 1}/{gc['epochs']} ===")
             epoch_rewards = []
             valid_samples_this_epoch = 0
+            optimizer_steps_this_epoch = 0
 
             indices = list(range(len(train_ds)))
             random.shuffle(indices)
@@ -689,6 +711,8 @@ def train(cfg: dict, resume_from: Optional[str] = None):
 
             pbar = tqdm(range(0, len(indices), gc["batch_size"]), desc="Training", disable=not is_main)
             for i in pbar:
+                if global_step >= gc["max_steps"]:
+                    break
                 batch_indices = indices[i : i + gc["batch_size"]]
 
                 for idx in batch_indices:
@@ -752,6 +776,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                     scheduler.step()
                     optimizer.zero_grad()
                     global_step += 1
+                    optimizer_steps_this_epoch += 1
 
                     # --- Logging ---
                     if global_step % lc["log_every"] == 0 and is_main:
@@ -771,6 +796,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             epoch_idx=epoch,
                             step_value=global_step,
                             accum_value=accum_step,
+                            best_value=None if best_reward == -float("inf") else best_reward,
                         )
                         print(f"  Saved checkpoint: {ckpt_path}")
 
@@ -787,7 +813,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                     f"Sample keys={sample_keys}. Sample preview={sample_preview}"
                 )
 
-            if is_main and epoch_rewards:
+            if is_main and epoch_rewards and optimizer_steps_this_epoch > 0:
                 epoch_mean_reward = float(np.mean(epoch_rewards))
                 if epoch_mean_reward > best_reward:
                     best_reward = epoch_mean_reward

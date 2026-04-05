@@ -11,6 +11,7 @@ from aoae.checkpoints import (
     GRPO_TRAIN_CONTRACT_VERSION,
     build_grpo_config_fingerprint,
     inspect_grpo_artifacts,
+    inspect_grpo_resume_candidate,
     resolve_policy_checkpoint,
 )
 from aoae.cli import _normalize_legacy_cli_argv, apply_eval_overrides, main
@@ -125,6 +126,35 @@ def test_inspect_grpo_artifacts_accepts_matching_metadata(tmp_path):
 
     assert status["valid"] is True
     assert status["reason"] == "ok"
+
+
+def test_inspect_grpo_resume_candidate_rejects_completed_low_reward_run(tmp_path):
+    out_dir = tmp_path / "outputs"
+    out_dir.mkdir()
+    (out_dir / "policy_latest.pt").write_text("x")
+    cfg = {
+        "base_model": {"backend": "dual"},
+        "soft_mask": {"top_k": 5},
+        "policy": {"d_model": 128},
+        "prism": {"hidden_dim": 256},
+        "grpo": {"min_checkpoint_reward": 0.0, "max_steps": 500},
+        "inference": {"steps": 16},
+        "data": {"train_dataset": "demo", "train_split": "train"},
+    }
+    metadata = {
+        "stage": "grpo",
+        "train_contract_version": GRPO_TRAIN_CONTRACT_VERSION,
+        "config_fingerprint": build_grpo_config_fingerprint(cfg),
+        "best_reward": -0.25,
+        "completed_steps": 500,
+        "max_steps": 500,
+    }
+    (out_dir / "grpo_training_metadata.json").write_text(json.dumps(metadata))
+
+    status = inspect_grpo_resume_candidate(str(out_dir), cfg)
+
+    assert status["valid"] is False
+    assert status["reason"] == "reward_below_threshold"
 
 
 def test_cli_eval_dry_run_creates_output_dir(tmp_path):
@@ -325,7 +355,16 @@ def test_cli_pipeline_delegates_to_canonical_subcommands(monkeypatch, tmp_path):
         calls.append(tuple(argv))
         return 0
 
+    status_iter = iter(
+        [
+            {"valid": False, "reason": "missing_checkpoint", "checkpoint_path": None},
+            {"valid": True, "reason": "ok", "checkpoint_path": f"{tmp_path / 'out'}/policy_final.pt"},
+        ]
+    )
+
     monkeypatch.setattr(mod, "run_preflight", fake_run_preflight)
+    monkeypatch.setattr(mod, "inspect_grpo_artifacts", lambda *args, **kwargs: next(status_iter))
+    monkeypatch.setattr(mod, "inspect_grpo_resume_candidate", lambda *args, **kwargs: {"valid": True, "reason": "ok"})
     monkeypatch.setattr(mod, "resolve_policy_checkpoint", lambda checkpoint, output_dir: checkpoint or f"{output_dir}/policy_final.pt")
     monkeypatch.setattr(mod, "main", fake_main)
 
@@ -497,6 +536,65 @@ def test_cli_pipeline_retrains_when_final_checkpoint_is_stale(monkeypatch, tmp_p
 
     assert calls == [
         ("train", "--config", str(cfg_path), "--stage", "grpo", "--resume", "auto"),
+    ]
+
+
+def test_cli_pipeline_does_not_resume_failed_completed_grpo_run(monkeypatch, tmp_path):
+    import aoae.cli as mod
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "prism_adapter.pt").write_text("ready")
+    (out_dir / "policy_final.pt").write_text("done")
+    (out_dir / "policy_latest.pt").write_text("resume")
+
+    cfg = {
+        "base_model": {"backend": "dual"},
+        "logging": {"output_dir": str(out_dir)},
+        "grpo": {"min_checkpoint_reward": 0.0, "max_steps": 500},
+        "soft_mask": {"top_k": 5},
+        "policy": {"d_model": 128},
+        "prism": {"hidden_dim": 256},
+        "inference": {"steps": 16},
+        "data": {"train_dataset": "demo", "train_split": "train"},
+    }
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg))
+    metadata = {
+        "stage": "grpo",
+        "train_contract_version": GRPO_TRAIN_CONTRACT_VERSION,
+        "config_fingerprint": build_grpo_config_fingerprint(cfg),
+        "best_reward": -0.1,
+        "completed_steps": 500,
+        "max_steps": 500,
+    }
+    (out_dir / "grpo_training_metadata.json").write_text(json.dumps(metadata))
+
+    calls = []
+
+    monkeypatch.setattr(mod, "run_preflight", lambda *args, **kwargs: {"ok": True})
+    monkeypatch.setattr(mod, "main", lambda argv=None: calls.append(tuple(argv)) or 0)
+    monkeypatch.setattr(mod, "resolve_policy_checkpoint", lambda checkpoint, output_dir: checkpoint or f"{output_dir}/policy_latest.pt")
+
+    mod.run_pipeline_command(
+        SimpleNamespace(
+            config=str(cfg_path),
+            resume=None,
+            checkpoint=None,
+            max_samples=None,
+            mode="standard",
+            policy_temperatures=None,
+            skip_preflight=False,
+            skip_prism=False,
+            skip_grpo=False,
+            skip_eval=True,
+            skip_baselines=False,
+            strict_moe=False,
+        )
+    )
+
+    assert calls == [
+        ("train", "--config", str(cfg_path), "--stage", "grpo"),
     ]
 
 

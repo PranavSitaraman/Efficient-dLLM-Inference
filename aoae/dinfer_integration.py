@@ -165,8 +165,8 @@ class CacheStats:
     total_remasks: int = 0
     total_unmasks: int = 0
     # Historical name kept for backwards compatibility with saved result schemas.
-    # Semantically this is closer to cache retention / net-keep rate than a true
-    # runtime cache-hit rate.
+    # Semantically this is a bounded cache-keep ratio, not a literal runtime
+    # lookup-hit metric.
     cache_hit_rate: float = 0.0
     steps_used: int = 0
 
@@ -201,8 +201,9 @@ class PolicyGuidedCacheManager:
         """
         # Phase 1: Invalidate cached positions that are being remasked
         if r_t.any():
+            invalidated = self.cache_mgr.count_thrash(r_t)
             self.cache_mgr.invalidate(r_t)
-            self.stats.total_invalidations += int(r_t.sum().item())
+            self.stats.total_invalidations += int(invalidated.sum().item())
             self.stats.total_remasks += int(r_t.sum().item())
 
         # Phase 2: Count unmasks
@@ -224,11 +225,10 @@ class PolicyGuidedCacheManager:
         """Return accumulated statistics."""
         total_ops = self.stats.total_commits + self.stats.total_invalidations
         if total_ops > 0:
-            # This measures how much cached state survives invalidation, not a
-            # literal "lookup hit rate" at runtime.
-            self.stats.cache_hit_rate = (
-                self.stats.total_commits - self.stats.total_invalidations
-            ) / max(total_ops, 1)
+            # Keep this bounded in [0, 1] so the reporting layer can interpret
+            # it as the fraction of cache operations that ended in a retained
+            # commit rather than an invalidation.
+            self.stats.cache_hit_rate = self.stats.total_commits / max(total_ops, 1)
         return self.stats
 
     def count_thrash(self, r_t: torch.Tensor) -> torch.Tensor:
@@ -272,8 +272,9 @@ class SpeculativeCacheManager:
         """
         # Phase 1: Invalidate
         if r_t.any():
+            invalidated = self.cache_mgr.count_thrash(r_t)
             self.cache_mgr.invalidate(r_t)
-            self.stats.total_invalidations += int(r_t.sum().item())
+            self.stats.total_invalidations += int(invalidated.sum().item())
             self.stats.total_remasks += int(r_t.sum().item())
 
         # Phase 2: Unmasks
@@ -302,11 +303,9 @@ class SpeculativeCacheManager:
         """Return stats dict with speculative caching metrics."""
         base = self.stats
         total_ops = base.total_commits + base.total_invalidations
-        # This measures net cache retention after invalidations; it is not a
-        # literal runtime lookup-hit metric.
-        cache_hit_rate = (
-            (base.total_commits - base.total_invalidations) / max(total_ops, 1)
-        )
+        # This is a bounded cache-keep ratio, not a literal runtime lookup-hit
+        # metric.
+        cache_hit_rate = base.total_commits / max(total_ops, 1)
         total_drafts = self._draft_accepts + self._draft_rejects
         return {
             "total_commits": base.total_commits,

@@ -1,5 +1,21 @@
 #!/bin/bash
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH -o logs/%j_paper.out
+#SBATCH -e logs/%j_paper.err
+#SBATCH --gres=gpu:2
+#SBATCH --mem=256G
+#SBATCH --cpus-per-task=16
+#SBATCH --time=4:00:00
+#SBATCH --job-name=aoae_paper
+#SBATCH --partition=kempner_h100
+#SBATCH --account=kempner_sham_lab
+
 set -euo pipefail
+
+module load python/3.12.5-fasrc01 cuda/11.8.0-fasrc01 cudnn/8.9.2.26_cuda11-fasrc01
+eval "$(conda shell.bash hook)"
+conda activate rtx
 
 # Usage:
 #   bash reproduce.sh

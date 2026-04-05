@@ -24,6 +24,7 @@ from datasets import load_dataset
 from typing import Optional, List, Dict, Any
 
 from .checkpoints import (
+    inspect_grpo_artifacts,
     load_state_dict_flexible,
     resolve_policy_checkpoint,
     resolve_sidecar_artifact,
@@ -49,6 +50,22 @@ from .tasks import extract_answer, extract_prompt_and_reference
 
 
 _MAX_SAVED_PREDICTIONS = 50
+
+
+def _resolve_valid_auto_policy_checkpoint(
+    explicit: Optional[str],
+    cfg: Dict[str, Any],
+) -> Optional[str]:
+    """Auto-detect a policy checkpoint only when artifacts pass the quality gate."""
+    if explicit:
+        return explicit
+    output_dir = str(cfg.get("logging", {}).get("output_dir", "") or "")
+    if not output_dir:
+        return None
+    status = inspect_grpo_artifacts(output_dir, cfg)
+    if not bool(status.get("valid")):
+        return None
+    return resolve_policy_checkpoint(None, output_dir)
 
 
 @dataclass
@@ -768,9 +785,7 @@ def evaluate_speculative(
     # TPS = actual generated tokens / wall time
     avg_tps = total_gen_tokens / max(total_time, 1e-6)
     total_cache_ops = total_cache_commits + total_cache_invalidations
-    cache_hit_rate = (
-        (total_cache_commits - total_cache_invalidations) / max(total_cache_ops, 1)
-    )
+    cache_hit_rate = total_cache_commits / max(total_cache_ops, 1)
     draft_accept_rate = total_draft_accepts / max(total_draft_accepts + total_draft_rejects, 1)
     agreement_rate = total_agreement / max(total_agreement_obs, 1)
     reuse_mean_safe = total_reuse_safe / max(total_reuse_safe_obs, 1)
@@ -1203,6 +1218,7 @@ def main(
     if speculative_policy_temperatures is None:
         speculative_policy_temperatures = [0.5, 1.0, 1.5]
     prediction_limit = _get_prediction_save_limit(cfg)
+    checkpoint_path = _resolve_valid_auto_policy_checkpoint(checkpoint_path, cfg)
 
     all_results: List[EvalResult] = []
     kv_dynamics_records: List[Dict[str, Any]] = []
@@ -1246,11 +1262,7 @@ def main(
                     prediction_limit=prediction_limit,
                 )
 
-            if not checkpoint_path:
-                checkpoint_path = resolve_policy_checkpoint(
-                    checkpoint_path,
-                    cfg["logging"]["output_dir"],
-                )
+            checkpoint_path = _resolve_valid_auto_policy_checkpoint(checkpoint_path, cfg)
 
             has_trained_policy = checkpoint_path and os.path.exists(checkpoint_path) and uses_aoae_policy
 
