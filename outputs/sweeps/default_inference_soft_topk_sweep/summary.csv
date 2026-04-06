@@ -1,0 +1,7 @@
+label,mode,soft_topk,tau_r,accuracy,tps
+hard baseline,hard,,,0.76,135.8
+soft_topk=16,soft,16,0.5,0.76,62.3
+soft_topk=32 (run 1),soft,32,0.5,0.78,105.5
+soft_topk=32 (run 2),soft,32,0.5,0.76,125.3
+soft_topk=64,soft,64,0.5,0.76,99.9
+soft_topk=128,soft,128,0.5,0.76,77.0
