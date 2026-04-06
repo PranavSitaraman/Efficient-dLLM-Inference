@@ -59,6 +59,32 @@ class SpeculativeTrajectory:
     access_metrics: Dict[str, float] = field(default_factory=dict)
     mean_boundary_depth: float = 0.0
     boundary_distribution: str = "{}"
+    # ---- compute-aware speed bonus ----
+    # Fraction of positions currently in the dKV-Cache at each step (after Phase 3
+    # commit).  Used to compute effective_flops = (used_steps/T)*(1-mean_cached),
+    # which captures BOTH fewer forward passes AND cheaper passes due to caching.
+    cached_fractions: List[torch.Tensor] = field(default_factory=list)
+    # ---- Cache quality F1 (soft precision-recall training signal) ----
+    # Per-step F1 measuring whether the cache set contains the *stable*
+    # positions (low H_t drift) and excludes the *unstable* ones.
+    #
+    # For every position k, we compute:
+    #   stability(k) = exp(-λ * rel_drift_k)   ∈ (0, 1]
+    # where rel_drift_k = ||H_t^k - H_{t-1}^k||₂ / ||H_{t-1}^k||₂.
+    #
+    # Then soft precision/recall over the cache set K_t:
+    #   precision = mean_{k ∈ K_t}(stability(k))
+    #   recall    = Σ_{k ∈ K_t} stability(k) / Σ_all_k stability(k)
+    #   cache_F1  = 2 * precision * recall / (precision + recall)
+    #
+    # Subsumes the old drift_penalty (precision-only) and adds the "commit
+    # stable tokens" recall gradient.  Computed using primary model H_t.
+    cache_quality_f1: List[torch.Tensor] = field(default_factory=list)
+    # ---- KV dynamics tracker summary (eval only, None during training) ----
+    # Populated by SpeculativeDynamicsTracker when track_kv_dynamics=True.
+    # Mirrors the same field in AOAETrajectory so evaluate.py can treat both
+    # trajectory types uniformly when extracting KV dynamics for analysis.
+    kv_dynamics_summary: Optional[Dict] = None
 
 
 def speculative_inference(
@@ -70,6 +96,7 @@ def speculative_inference(
     cfg: dict,
     record_trajectory: bool = False,
     policy_temperature: float = 1.0,
+    track_kv_dynamics: bool = False,
 ) -> Tuple[torch.Tensor, Optional[SpeculativeTrajectory]]:
     """
     Run speculative diffusion inference (Algorithm 1).
@@ -83,6 +110,11 @@ def speculative_inference(
         cfg:               config dict.
         record_trajectory: if True, store actions/log_probs for GRPO.
         policy_temperature: tau_pi for Bernoulli tempering.
+        track_kv_dynamics: if True (and analysis.track_kv_dynamics=True in cfg),
+            create a SpeculativeDynamicsTracker and populate
+            trajectory.kv_dynamics_summary using the PRIMARY model's all-layer
+            hidden states as a hidden-state proxy for KV drift.  Off by default
+            during GRPO training to avoid the extra forward-pass overhead.
 
     Returns:
         output_ids: [B, P + L_gen] full sequence with generated tokens.
@@ -120,6 +152,23 @@ def speculative_inference(
     reuse_state = None
     pos_state = init_positional_state(B, L_gen, device)
 
+    # H_t from the previous step: used to compute per-position drift for the
+    # cache quality F1 signal.  Mirrors the same variable in aoae_inference().
+    _prev_H_t: Optional[torch.Tensor] = None
+
+    # --- KV dynamics tracker (eval diagnostic, off during GRPO rollouts) ---
+    # Uses primary model all-layer hidden states as a hidden-state proxy for KV
+    # drift (no actual K/V extraction needed).  When active, dual_forward_resp
+    # is called with need_all_hidden=True so primary_hidden_states is populated;
+    # this also covers PRISM's need_hidden=True (last hidden state is set too).
+    _track_kv = track_kv_dynamics and bool(
+        cfg.get("analysis", {}).get("track_kv_dynamics", False)
+    )
+    _dynamics_tracker = None
+    if _track_kv:
+        from .kv_dynamics import SpeculativeDynamicsTracker
+        _dynamics_tracker = SpeculativeDynamicsTracker(cfg)
+
     # --- Main speculative diffusion loop ---
     for t in range(T, 0, -1):
         step_frac = t / T
@@ -133,9 +182,14 @@ def speculative_inference(
             break
 
         # === Phase 0 + 0b: Dual-model forward ===
-        need_hidden = (prism_adapter is not None)
+        # When KV dynamics tracking is enabled, request all-layer hidden states
+        # so the tracker can compute hidden-state-proxy drift per layer.
+        # need_all_hidden=True also satisfies PRISM's need for the last hidden
+        # state (dual_forward sets primary_hidden = primary_hidden_states[-1]).
+        _need_all_hidden = _track_kv
+        _need_hidden = (prism_adapter is not None) and not _need_all_hidden
         dual_out = dual_model.dual_forward_resp(
-            y, resp_slice, need_hidden=need_hidden,
+            y, resp_slice, need_hidden=_need_hidden, need_all_hidden=_need_all_hidden,
         )
         resp_logits = dual_out.primary_logits      # [B, L_gen, V]
         aux_logits = dual_out.auxiliary_logits      # [B, L_gen, V]
@@ -155,6 +209,42 @@ def speculative_inference(
         H_t, confidence, entropy = soft_mask_module(
             resp_logits, mask_ind, step_frac
         )
+
+        # --- Cache quality F1 (soft precision-recall of cache set) ---
+        # Measured BEFORE Phase 1 invalidation so we capture the quality of
+        # the cache set as it stood at the start of this step.
+        #
+        # Identical computation to aoae_inference (inference.py lines 205-244),
+        # using the PRIMARY model's H_t as the hidden-state proxy for drift.
+        # This was previously absent from the speculative path entirely, causing
+        # cache_quality_f1 to remain empty and the reward to silently drop the
+        # entire cache quality term.
+        if trajectory is not None and _prev_H_t is not None and cache_mgr is not None:
+            _cached_mask = cache_mgr.get_cached_mask()           # [B, L_gen] bool
+            _h_delta = (H_t.detach() - _prev_H_t).norm(dim=-1)  # [B, L_gen]
+            _h_norm  = _prev_H_t.norm(dim=-1).clamp(min=1e-8)   # [B, L_gen]
+            _rel_drift = _h_delta / _h_norm                      # [B, L_gen] ∈ [0, ~2]
+
+            # Soft stability: threshold-free, scale-invariant
+            _stab_lambda = float(cfg.get("grpo", {}).get("stability_lambda", 10.0))
+            _all_stability = torch.exp(-_stab_lambda * _rel_drift)  # [B, L_gen]
+
+            _cached_f = _cached_mask.float()                         # [B, L_gen]
+            _n_cached = _cached_f.sum(-1).clamp(min=1.0)             # [B]
+
+            # Precision: mean stability of cached positions
+            _cached_prec = (_all_stability * _cached_f).sum(-1) / _n_cached  # [B]
+
+            # Recall: fraction of total stability budget captured by cache
+            _total_stab = _all_stability.sum(-1).clamp(min=1e-8)    # [B]
+            _cached_stab = (_all_stability * _cached_f).sum(-1)     # [B]
+            _recall = _cached_stab / _total_stab                    # [B]
+
+            # Harmonic mean (F1)
+            _cache_f1 = 2.0 * _cached_prec * _recall / (_cached_prec + _recall + 1e-8)  # [B]
+            trajectory.cache_quality_f1.append(_cache_f1.detach())
+        _prev_H_t = H_t.detach()
+
         age_feat = None
         last_action_feat = None
         if use_positional_cache:
@@ -277,6 +367,36 @@ def speculative_inference(
                     (kappa_t * (~agreement).float()).sum().item()
                 )
 
+        # --- Record cached fraction after commit (for compute-aware speed bonus) ---
+        # Stored per-step so compute_reward() can compute mean_cached_fraction and
+        # use it in: effective_flops = (used_steps/T) * (1 - mean_cached_fraction).
+        # Previously absent from speculative path — caused speed bonus to silently
+        # collapse to a step-only term with no credit for within-step caching.
+        if trajectory is not None and cache_mgr is not None:
+            trajectory.cached_fractions.append(cache_mgr.cached_fraction().detach())
+
+        # --- KV dynamics tracker observation (eval diagnostic only) ---
+        # Uses primary model all-layer hidden states as a hidden-state proxy for
+        # KV drift.  The real agreement signal is directly available here (unlike
+        # the single-model path which uses a zeros proxy).
+        if _dynamics_tracker is not None:
+            _layer_hiddens_for_tracker = (
+                [h.detach() for h in dual_out.primary_hidden_states]
+                if dual_out.primary_hidden_states is not None
+                else []
+            )
+            _q_t_tracked = actions.get("q_t", torch.zeros_like(u_t))
+            _dynamics_tracker.observe_step(
+                layer_hiddens=_layer_hiddens_for_tracker,
+                max_prob=confidence,
+                mask_ind=mask_ind,
+                agreement=agreement.float(),  # real agreement, not proxy
+                u_t=u_t,
+                r_t=r_t,
+                kappa_t=kappa_t,
+                q_t=_q_t_tracked,
+            )
+
         changed = (u_t.bool() | r_t.bool() | fallback_positions).float()
         if trajectory is not None:
             trajectory.changed_list.append(changed.detach())
@@ -315,5 +435,14 @@ def speculative_inference(
         else:
             trajectory.mean_boundary_depth = 0.0
             trajectory.boundary_distribution = "{}"
+
+    # --- Finalize KV dynamics tracker ---
+    # If the tracker ran, store its summary in the trajectory so evaluate.py
+    # and the training logger can collect it (same pattern as aoae_inference).
+    if _dynamics_tracker is not None:
+        _dyn_summary = _dynamics_tracker.summarize()
+        if trajectory is None:
+            trajectory = SpeculativeTrajectory()
+        trajectory.kv_dynamics_summary = _dyn_summary
 
     return y, trajectory

@@ -23,7 +23,11 @@ unset NCCL_BLOCKING_WAIT
 
 CONFIG="${1:-configs/default.yaml}"
 CHECKPOINT="${2:-}"
-shift 2 || true
+if [[ $# -ge 2 ]]; then
+  shift 2
+else
+  shift "$#"
+fi
 
 mkdir -p logs outputs
 

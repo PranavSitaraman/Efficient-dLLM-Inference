@@ -18,13 +18,14 @@ import math
 import random
 import copy
 import tempfile
+import collections
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
 # LambdaLR imported at usage site below (to keep scheduler logic together)
 from tqdm import tqdm
 import numpy as np
-from typing import Optional, List, Dict, Tuple, Any
+from typing import Optional, List, Dict, Tuple, Any, Union
 
 from .checkpoints import (
     GRPO_TRAIN_CONTRACT_VERSION,
@@ -38,6 +39,89 @@ from .speculative_inference import speculative_inference, SpeculativeTrajectory
 from .tasks import check_math_correctness, extract_answer, extract_prompt_and_reference
 from .runtime_checks import collect_runtime_info
 
+# Both trajectory types share the same reward-relevant attributes; Union lets
+# type checkers verify this without forcing a common base class.
+AnyTrajectory = Union[AOAETrajectory, SpeculativeTrajectory]
+
+
+# ======================================================================
+# Training logger (WandB + JSONL + enriched console output)
+# ======================================================================
+
+class _TrainingLogger:
+    """
+    Unified training logger: optional WandB, mandatory JSONL file, console.
+
+    Activated by ``logging.use_wandb=true`` in config.  All scalar metrics
+    logged via ``log_step()`` are:
+      - printed to stdout at every ``log_every`` step
+      - appended as a JSON line to ``<output_dir>/training_log.jsonl``
+      - forwarded to WandB (if enabled)
+
+    Design: the logger is constructed once before the training loop, holds
+    the file handle open for efficiency, and is closed in a ``close()`` call.
+    """
+
+    def __init__(self, cfg: dict):
+        lc = cfg["logging"]
+        self._output_dir = str(lc["output_dir"])
+        _wandb_val = lc.get("use_wandb", False)
+        # Accept: false/True/true (bool) or "offline" / "online" (string)
+        if isinstance(_wandb_val, str):
+            _wandb_mode = _wandb_val  # "offline", "online", "disabled", etc.
+            self._use_wandb = _wandb_val.lower() not in ("false", "disabled", "")
+        else:
+            _wandb_mode = "online"
+            self._use_wandb = bool(_wandb_val)
+        os.makedirs(self._output_dir, exist_ok=True)
+        self._jsonl_path = os.path.join(self._output_dir, "training_log.jsonl")
+        self._jsonl_fh = open(self._jsonl_path, "a", buffering=1)  # line-buffered
+
+        if self._use_wandb:
+            try:
+                import wandb
+                wandb.init(
+                    project=str(lc.get("project", "aoae")),
+                    name=str(lc.get("run_name", "grpo")),
+                    config=cfg,
+                    resume="allow",
+                    mode=_wandb_mode,
+                )
+                self._wandb = wandb
+                print("[Logger] WandB run initialized.")
+            except Exception as e:
+                print(f"[Logger] WandB init failed ({e}); falling back to file-only logging.")
+                self._wandb = None
+                self._use_wandb = False
+        else:
+            self._wandb = None
+
+    def log_step(self, metrics: Dict[str, Any], step: int) -> None:
+        """Write one log entry (dict of scalar metrics + step number)."""
+        record = {"global_step": step, **metrics}
+        # JSONL
+        try:
+            self._jsonl_fh.write(json.dumps(record) + "\n")
+        except Exception:
+            pass
+        # WandB
+        if self._wandb is not None:
+            try:
+                self._wandb.log(metrics, step=step)
+            except Exception:
+                pass
+
+    def close(self) -> None:
+        try:
+            self._jsonl_fh.close()
+        except Exception:
+            pass
+        if self._wandb is not None:
+            try:
+                self._wandb.finish()
+            except Exception:
+                pass
+
 
 # ======================================================================
 # Reward computation (Eq. reward from paper)
@@ -47,30 +131,38 @@ def compute_reward(
     generated_tokens: torch.Tensor,
     reference_answer: List[str],
     tokenizer,
-    trajectory: AOAETrajectory,
+    trajectory: "AnyTrajectory",
     cfg: dict,
     T: int,
-) -> torch.Tensor:
+) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
     """
-    Compute multiplicative reward (Eq. reward):
+    Compute multiplicative reward (Eq. reward) and return a component breakdown.
 
-      R = r(y*, y_hat) * (T_hat/T)^alpha - beta * sum Thrash(t)
-          - lambda_unresolved * unresolved_fraction
+      R = r(y*, y_hat) * speed_factor
+          - beta * sum_t Thrash(t)
+          - unresolved_penalty_weight * unresolved_fraction
+          + cache_quality_weight * mean_cache_F1
+          + access_reward_weight * access_F1
 
-    Here T_hat is completion in the paper's reverse-time convention
-    (larger is faster). Internally we track used forward steps, then map
-    to reverse-time completion before applying the speed factor.
+    Speed factor (compute-aware):
+      effective_flops = (used_steps / T) * (1 - mean_cached_fraction)
+      speed_factor    = (1 - effective_flops)^alpha
 
     Args:
         generated_tokens: [B, L_gen] generated response tokens.
         reference_answer: list of B reference answer strings.
         tokenizer:        for decoding generated tokens.
-        trajectory:       AOAETrajectory with thrash counts.
+        trajectory:       AOAETrajectory or SpeculativeTrajectory with thrash counts.
         cfg:              config dict.
         T:                total diffusion steps.
 
     Returns:
-        rewards: [B] per-sample scalar reward.
+        rewards:    [B] per-sample total scalar reward.
+        components: dict of [B] per-sample component tensors, containing:
+                    correctness, speed_factor, effective_flops, used_steps_frac,
+                    mean_cached_fraction, thrash_penalty, total_thrash,
+                    unresolved_penalty, cache_f1_reward, access_reward.
+                    All on the same device as generated_tokens.
     """
     gc = cfg["grpo"]
     alpha = gc["alpha"]
@@ -96,18 +188,12 @@ def compute_reward(
     # New formula: effective_flops = (used_steps / T) * (1 - mean_cached_fraction)
     #              speed_factor    = (1 - effective_flops)^alpha
     #
-    #   Derivation: dLLM cost per step is proportional to (L - |K_t|) / L, where
-    #   |K_t| is the number of cached positions (their K/V projections are reused,
-    #   not recomputed).  Total effective compute ∝ Σ_t (1 - cached_t) / T.
-    #   Multiplying by (used_steps / T) accounts for early termination.  The result
-    #   is a dimensionless, hardware-independent fraction in [0, 1]:
+    #   Derivation: dLLM cost per step ∝ (L - |K_t|) / L, where |K_t| is the
+    #   number of cached positions.  Total effective compute ∝ Σ_t (1 - cached_t)/T.
+    #   Multiplied by (used_steps/T) for early termination credit.  Result is
+    #   hardware-independent and dimensionless in [0, 1]:
     #     0 → everything cached + zero steps (free)
     #     1 → nothing cached + all T steps (full cost)
-    #
-    #   NOTE: during training the base model forward still runs on the full
-    #   sequence regardless of cache state (DKVCacheManager is a *logical* tracker,
-    #   not a compute-skipping implementation).  The reward therefore trains the
-    #   policy toward cache decisions that *would* be efficient at deployment.
     if getattr(trajectory, "completion_step", None) is not None:
         used_steps = trajectory.completion_step.to(device).float().clamp(min=1.0, max=float(T))
     else:
@@ -123,61 +209,71 @@ def compute_reward(
     else:
         mean_cached = torch.zeros(B, device=device)
 
-    effective_flops = (used_steps / float(T)) * (1.0 - mean_cached)          # [B] in [0,1]
+    used_steps_frac = used_steps / float(T)                                   # [B] in [0,1]
+    effective_flops = used_steps_frac * (1.0 - mean_cached)                   # [B] in [0,1]
     speed_factor = (1.0 - effective_flops.clamp(0.0, 1.0)).pow(alpha)         # [B] in [0,1]
 
     # --- Cache thrashing penalty ---
     total_thrash = torch.zeros(B, device=device)
     for thrash_t in trajectory.thrash_counts:
         total_thrash += thrash_t.to(device)
+    thrash_penalty = beta * total_thrash                                       # [B]
 
-    # --- Reward ---
-    reward = correctness * speed_factor - beta * total_thrash
+    # --- Reward (base) ---
+    reward = correctness * speed_factor - thrash_penalty
 
-    # Penalize trajectories that terminate with unresolved masks. This keeps
-    # "do nothing / let masks linger" from becoming a neutral zero-reward mode.
+    # --- Unresolved-mask penalty ---
+    unresolved_penalty = torch.zeros(B, device=device)
     if unresolved_penalty_weight > 0.0:
         final_tokens = getattr(trajectory, "final_tokens", None)
         if final_tokens is not None:
             mask_id = int(cfg["base_model"]["mask_token_id"])
             unresolved_fraction = (final_tokens.to(device) == mask_id).float().mean(dim=-1)
-            reward = reward - unresolved_penalty_weight * unresolved_fraction
+            unresolved_penalty = unresolved_penalty_weight * unresolved_fraction
+            reward = reward - unresolved_penalty
 
-    # --- Cache quality F1 (soft precision-recall of cache set) ---
+    # --- Cache quality F1 reward ---
     #
-    # Replaces the old drift_penalty which was precision-only (penalise caching
-    # unstable positions) with a two-sided F1 signal that also rewards caching
-    # stable positions (recall).
-    #
-    # Per-step cache_quality_f1 ∈ [0, 1] is computed in the inference loop:
+    # Replaces the old drift_penalty (precision-only) with a two-sided F1 that
+    # also rewards committing stable tokens (recall).  Computed in inference loop:
     #   stability(k) = exp(-λ * rel_drift_k)
     #   precision     = mean_{k ∈ K_t}(stability(k))
     #   recall        = Σ_{k ∈ K_t} stability(k) / Σ_all stability(k)
     #   cache_F1      = 2 * precision * recall / (precision + recall)
-    #
-    # This is a *reward* (higher = better cache decisions), not a penalty.
     cache_q_w = float(gc.get("cache_quality_weight", 0.0))
+    cache_f1_reward = torch.zeros(B, device=device)
     if cache_q_w > 0.0:
         cache_f1_steps = getattr(trajectory, "cache_quality_f1", [])
         if cache_f1_steps:
-            mean_cache_f1 = torch.stack([f.to(device) for f in cache_f1_steps]).mean(dim=0)  # [B]
-            reward = reward + cache_q_w * mean_cache_f1
+            mean_cache_f1 = torch.stack([f.to(device) for f in cache_f1_steps]).mean(dim=0)
+            cache_f1_reward = cache_q_w * mean_cache_f1
+            reward = reward + cache_f1_reward
 
-    # --- Dense access-prediction reward (intermediate signal for q_t head) ---
+    # --- Dense access-prediction reward ---
     #
-    # Without this signal the q_t (access prediction) head receives no gradient:
-    # the terminal correctness reward is too sparse to credit individual per-step
-    # access decisions.  Enabling this (access_reward_weight > 0) provides a
-    # per-rollout F1 score measuring how well the policy predicted *which*
-    # positions would be accessed in the next H steps.  This teaches the cache
-    # head (κ_t) to be forward-looking: commit positions that will actually be
-    # needed, not just positions that happen to be confident right now.
+    # Provides a dense gradient for the q_t head (access prediction) that is
+    # otherwise too sparse to learn from terminal correctness alone.
     access_w = float(gc.get("access_reward_weight", 0.0))
+    access_reward = torch.zeros(B, device=device)
     if access_w > 0.0 and hasattr(trajectory, "access_metrics"):
         spec_f1 = float(trajectory.access_metrics.get("access_next_h_spec_f1", 0.0))
-        reward = reward + access_w * torch.full_like(reward, spec_f1)
+        access_reward = torch.full((B,), access_w * spec_f1, device=device)
+        reward = reward + access_reward
 
-    return reward
+    components: Dict[str, torch.Tensor] = {
+        "correctness":         correctness,
+        "speed_factor":        speed_factor,
+        "effective_flops":     effective_flops,
+        "used_steps_frac":     used_steps_frac,
+        "mean_cached_fraction": mean_cached,
+        "thrash_penalty":      thrash_penalty,
+        "total_thrash":        total_thrash,
+        "unresolved_penalty":  unresolved_penalty,
+        "cache_f1_reward":     cache_f1_reward,
+        "access_reward":       access_reward,
+    }
+
+    return reward, components
 
 
 # ======================================================================
@@ -361,7 +457,7 @@ def collect_rollout_group(
     tokenizer,
     dual_model=None,
     rollout_cfg: Optional[dict] = None,
-) -> Tuple[List[Dict], torch.Tensor, torch.Tensor]:
+) -> Tuple[List[Dict], torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
     """
     Collect G rollout trajectories for a single prompt batch.
 
@@ -371,9 +467,10 @@ def collect_rollout_group(
         (other args as before)
 
     Returns:
-        trajectories: list of G trajectory dicts (for GRPO loss).
-        rewards:       [G] per-trajectory rewards.
-        advantages:    [G] group-mean normalized advantages.
+        trajectories:      list of G trajectory dicts (for GRPO loss).
+        rewards:           [G] per-trajectory total rewards.
+        advantages:        [G] group-mean normalized advantages.
+        reward_components: dict of [G] per-trajectory component tensors.
     """
     gc = cfg["grpo"]
     rollout_cfg = rollout_cfg if rollout_cfg is not None else build_rollout_cfg(cfg)
@@ -410,14 +507,17 @@ def collect_rollout_group(
         )
 
     gen_tokens = output_ids[:, prompt_ids.shape[1]:]
-    rewards_t = compute_reward(
+    rewards_t, reward_components_t = compute_reward(
         gen_tokens,
         repeated_references,
         tokenizer,
         trajectory,
         rollout_cfg,
         T,
-    ).detach().cpu()
+    )
+    rewards_t = rewards_t.detach().cpu()
+    reward_components_t = {k: v.detach().cpu() for k, v in reward_components_t.items()}
+
     trajectories = split_group_trajectory(trajectory, G)
     for g, traj_data in enumerate(trajectories):
         traj_data["reward"] = float(rewards_t[g].item())
@@ -427,7 +527,7 @@ def collect_rollout_group(
         normalize_std=bool(gc.get("normalize_advantage_std", False)),
     )
 
-    return trajectories, rewards_t, advantages
+    return trajectories, rewards_t, advantages, reward_components_t
 
 
 # ======================================================================
@@ -631,7 +731,13 @@ def train(cfg: dict, resume_from: Optional[str] = None):
         grad_accum = gc["grad_accum_steps"]
         best_path = os.path.join(lc["output_dir"], "policy_best.pt")
 
+        # Initialize logger (rank 0 only to avoid duplicate writes in DDP)
+        _logger = _TrainingLogger(cfg) if is_main else None
+
         # --- Resume from checkpoint ---
+        # Normalize sentinel strings to None so callers can pass "fresh"/"none"/""
+        if resume_from in ("fresh", "none", ""):
+            resume_from = None
         if resume_from == "auto":
             resume_from = find_latest_checkpoint(lc["output_dir"])
             if resume_from and is_main:
@@ -701,6 +807,9 @@ def train(cfg: dict, resume_from: Optional[str] = None):
             epoch_rewards = []
             valid_samples_this_epoch = 0
             optimizer_steps_this_epoch = 0
+            # Running buffers for reward component logging (reset each log window)
+            _component_bufs: Dict[str, List[float]] = collections.defaultdict(list)
+            _last_grpo_loss: float = 0.0
 
             indices = list(range(len(train_ds)))
             random.shuffle(indices)
@@ -738,8 +847,8 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                     if prompt_ids.dim() == 1:
                         prompt_ids = prompt_ids.unsqueeze(0)
 
-                    # Collect G rollouts
-                    trajectories, rewards, advantages = collect_rollout_group(
+                    # Collect G rollouts (returns reward component breakdown too)
+                    trajectories, rewards, advantages, reward_components = collect_rollout_group(
                         base_model=base_model,
                         policy=policy,
                         soft_mask_module=soft_mask,
@@ -754,6 +863,12 @@ def train(cfg: dict, resume_from: Optional[str] = None):
 
                     epoch_rewards.append(rewards.mean().item())
 
+                    # Accumulate per-rollout component values for logging
+                    G = gc["group_size"]
+                    for comp_key, comp_val in reward_components.items():
+                        for g in range(min(G, comp_val.shape[0])):
+                            _component_bufs[comp_key].append(float(comp_val[g].item()))
+
                     # Clipped GRPO surrogate with importance sampling
                     # Pass DDP-wrapped modules so .backward() syncs gradients
                     grpo_loss = compute_grpo_loss(
@@ -763,6 +878,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         advantages=advantages.to(device),
                         clip_eps=gc["clip_eps"],
                     )
+                    _last_grpo_loss = float(grpo_loss.item())
                     # Scale loss for gradient accumulation
                     scaled_loss = grpo_loss / (len(batch_indices) * grad_accum)
                     scaled_loss.backward()
@@ -780,13 +896,69 @@ def train(cfg: dict, resume_from: Optional[str] = None):
 
                     # --- Logging ---
                     if global_step % lc["log_every"] == 0 and is_main:
-                        recent = epoch_rewards[-lc["log_every"]:] if epoch_rewards else [0]
-                        avg_r = np.mean(recent)
-                        std_r = np.std(recent) if len(recent) > 1 else 0.0
-                        frac_pos = np.mean([1.0 if r > 0 else 0.0 for r in recent])
-                        print(f"  step={global_step}  avg_reward={avg_r:.4f}  "
-                              f"std_reward={std_r:.4f}  frac_positive={frac_pos:.2f}  "
-                              f"lr={scheduler.get_last_lr()[0]:.2e}")
+                        log_window = lc["log_every"]
+                        recent_r = epoch_rewards[-log_window:] if epoch_rewards else [0.0]
+                        avg_r = float(np.mean(recent_r))
+                        std_r = float(np.std(recent_r)) if len(recent_r) > 1 else 0.0
+                        frac_pos = float(np.mean([1.0 if r > 0 else 0.0 for r in recent_r]))
+                        cur_lr = float(scheduler.get_last_lr()[0])
+
+                        def _buf_mean(k: str) -> float:
+                            vs = _component_bufs.get(k, [])
+                            return float(np.mean(vs)) if vs else 0.0
+
+                        # Compact console line + secondary detail line
+                        print(
+                            f"  step={global_step:5d}  "
+                            f"reward={avg_r:+.4f}±{std_r:.4f}  "
+                            f"frac_pos={frac_pos:.2f}  "
+                            f"loss={_last_grpo_loss:+.4f}  "
+                            f"lr={cur_lr:.2e}"
+                        )
+                        print(
+                            f"    correct={_buf_mean('correctness'):.3f}  "
+                            f"speed={_buf_mean('speed_factor'):.3f}  "
+                            f"eff_flops={_buf_mean('effective_flops'):.3f}  "
+                            f"steps_frac={_buf_mean('used_steps_frac'):.3f}  "
+                            f"cached={_buf_mean('mean_cached_fraction'):.3f}"
+                        )
+                        print(
+                            f"    thrash_pen={_buf_mean('thrash_penalty'):.4f}  "
+                            f"thrash_cnt={_buf_mean('total_thrash'):.1f}  "
+                            f"cacheF1_rew={_buf_mean('cache_f1_reward'):.4f}  "
+                            f"unresolved_pen={_buf_mean('unresolved_penalty'):.4f}"
+                        )
+
+                        # Structured log entry for WandB + JSONL
+                        log_metrics: Dict[str, Any] = {
+                            "epoch": epoch,
+                            "lr": cur_lr,
+                            "grpo_loss": _last_grpo_loss,
+                            # Reward summary
+                            "reward/total_mean": avg_r,
+                            "reward/total_std": std_r,
+                            "reward/frac_positive": frac_pos,
+                            # Reward component means
+                            "reward/correctness": _buf_mean("correctness"),
+                            "reward/speed_factor": _buf_mean("speed_factor"),
+                            "reward/effective_flops": _buf_mean("effective_flops"),
+                            "reward/used_steps_frac": _buf_mean("used_steps_frac"),
+                            "reward/thrash_penalty": _buf_mean("thrash_penalty"),
+                            "reward/cache_f1_reward": _buf_mean("cache_f1_reward"),
+                            "reward/unresolved_penalty": _buf_mean("unresolved_penalty"),
+                            "reward/access_reward": _buf_mean("access_reward"),
+                            # Cache metrics (useful for WandB curves)
+                            "cache/mean_cached_fraction": _buf_mean("mean_cached_fraction"),
+                            "cache/total_thrash_count": _buf_mean("total_thrash"),
+                            "cache/cache_f1": (
+                                _buf_mean("cache_f1_reward") / max(float(gc.get("cache_quality_weight", 1e-8)), 1e-8)
+                            ),
+                        }
+                        if _logger is not None:
+                            _logger.log_step(log_metrics, step=global_step)
+
+                        # Reset component accumulators for next window
+                        _component_bufs.clear()
 
                     # --- Save checkpoint (rank 0 only) ---
                     if is_main and (global_step == 1 or global_step % lc["save_every"] == 0):
@@ -871,6 +1043,8 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                 )
             print(f"\nTraining complete. Final model saved to {final_path}")
             print(f"GRPO metadata saved to {metadata_path}")
+            if _logger is not None:
+                print(f"Training log (JSONL) saved to {_logger._jsonl_path}")
     except KeyboardInterrupt:
         if is_main and policy is not None and soft_mask is not None:
             interrupt_path = os.path.join(lc["output_dir"], "policy_interrupt.pt")
@@ -884,6 +1058,8 @@ def train(cfg: dict, resume_from: Optional[str] = None):
             print(f"\nTraining interrupted. Recovery checkpoint saved to {interrupt_path}")
         raise
     finally:
+        if _logger is not None:
+            _logger.close()
         if dual_model is not None:
             dual_model.close()
         if base_model is not None:

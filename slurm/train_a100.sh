@@ -34,11 +34,18 @@ export FLASHINFER_DISABLE_VERSION_CHECK=1
 export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
 export MASTER_PORT="${MASTER_PORT:-29500}"
 export NCCL_SOCKET_FAMILY=AF_INET
+if [[ "$MASTER_ADDR" == "localhost" ]]; then
+  export MASTER_ADDR="127.0.0.1"
+fi
 
 STAGE="${1:-prism}"
 CONFIG="${2:-configs/default.yaml}"
 RESUME="${3:-auto}"
-shift 3 || true
+if [[ $# -ge 3 ]]; then
+  shift 3
+else
+  shift "$#"
+fi
 
 DEFAULT_GPUS="$(python3 - <<PY
 import yaml

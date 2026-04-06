@@ -44,6 +44,7 @@ from .dinfer_integration import (
     run_blockwise_speculative_inference,
     run_speculative_inference,
 )
+from .speculative_inference import speculative_inference as _aoae_speculative_inference
 from .runtime_checks import collect_runtime_info, set_global_seed, is_global_rank_zero
 from .evaluators import build_evaluator
 from .tasks import extract_answer, extract_prompt_and_reference
@@ -663,6 +664,9 @@ def evaluate_speculative(
         if prompt_ids.dim() == 1:
             prompt_ids = prompt_ids.unsqueeze(0)
 
+        _do_track_kv = dynamics_sink is not None and bool(
+            cfg.get("analysis", {}).get("track_kv_dynamics", False)
+        )
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         t0 = time.perf_counter()
@@ -677,16 +681,56 @@ def evaluate_speculative(
                     cfg=cfg,
                     policy_temperature=policy_temperature,
                 )
+                _spec_trajectory = None
             else:
-                output_ids, stats = run_speculative_inference(
+                # "aoae" schedule: use speculative_inference() — the same path
+                # used during GRPO training, ensuring eval/train consistency and
+                # enabling KV dynamics tracking via trajectory.kv_dynamics_summary.
+                # This replaces the former run_speculative_inference() (dinfer)
+                # routing for the aoae schedule.
+                output_ids, _spec_trajectory = _aoae_speculative_inference(
                     dual_model=dual_model,
                     policy=policy,
                     soft_mask_module=soft_mask,
                     prism_adapter=prism,
                     prompt_ids=prompt_ids,
                     cfg=cfg,
+                    record_trajectory=False,
                     policy_temperature=policy_temperature,
+                    track_kv_dynamics=_do_track_kv,
                 )
+                # Build a stats-like dict from SpeculativeTrajectory for the
+                # metric accumulators below (mirrors the dinfer stats contract).
+                stats: Dict[str, Any] = {}
+                if _spec_trajectory is not None:
+                    traj = _spec_trajectory
+                    stats["primary_steps"] = T
+                    stats["aux_only_steps"] = 0
+                    stats["total_commits"] = int(traj.total_cache_hits)
+                    stats["total_invalidations"] = int(traj.total_cache_misses)
+                    stats["draft_accepts"] = int(traj.total_cache_hits)
+                    stats["draft_rejects"] = int(traj.total_cache_misses)
+                    stats["mean_agreement"] = float(traj.mean_agreement_rate)
+                    stats["agreement_observations"] = len(traj.agreement_list)
+                    stats["reuse_mean_safe_reuse"] = float(traj.mean_agreement_rate)
+                    stats["safe_reuse_observations"] = len(traj.agreement_list)
+                    stats["reuse_mean_js_divergence"] = 0.0
+                    am = traj.access_metrics
+                    stats["access_access_rate"] = float(am.get("access_rate", 0.0))
+                    stats["access_access_mandatory_rate"] = float(am.get("access_mandatory_rate", 0.0))
+                    stats["access_access_optional_rate"] = float(am.get("access_optional_rate", 0.0))
+                    stats["access_access_budget_utilization"] = float(am.get("access_budget_utilization", 0.0))
+                    stats["access_access_effective_budget"] = float(am.get("access_effective_budget", 0.0))
+                    stats["access_next_h_precision"] = float(am.get("access_next_h_precision", 0.0))
+                    stats["access_next_h_recall"] = float(am.get("access_next_h_recall", 0.0))
+                    stats["access_next_h_f1"] = float(am.get("access_next_h_f1", 0.0))
+                    stats["access_next_h_spec_precision"] = float(am.get("access_next_h_spec_precision", 0.0))
+                    stats["access_next_h_spec_recall"] = float(am.get("access_next_h_spec_recall", 0.0))
+                    stats["access_next_h_spec_f1"] = float(am.get("access_next_h_spec_f1", 0.0))
+                    stats["mean_boundary_depth"] = float(getattr(traj, "mean_boundary_depth", 0.0))
+                    stats["boundary_distribution"] = str(getattr(traj, "boundary_distribution", "{}"))
+                    if traj.kv_dynamics_summary is not None:
+                        stats["kv_dynamics"] = traj.kv_dynamics_summary
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         t1 = time.perf_counter()

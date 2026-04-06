@@ -22,9 +22,15 @@ conda activate rtx
 #   bash reproduce.sh --workflow paper --max_samples 100
 #   bash reproduce.sh --slurm --workflow poc1 --max_samples 100
 #   bash reproduce.sh --workflow routing -- --tau_r_values 0.01,0.05,0.1
+#
+# GRPO-only on A100 (requires pretrained PRISM at outputs/paper/prism_adapter.pt):
+#   bash reproduce.sh --slurm --workflow grpo                          # kempner_h100 account (default)
+#   bash reproduce.sh --slurm --workflow grpo --sitanc                 # sitanc_lab / seas_gpu partition
+#   bash reproduce.sh --slurm --workflow grpo --checkpoint auto        # resume existing ckpt
 
 WORKFLOW="pipeline"
 USE_SLURM=false
+SITANC=false
 CONFIG=""
 CHECKPOINT=""
 MAX_SAMPLES=""
@@ -35,6 +41,7 @@ resolve_default_config() {
     case "$1" in
         pipeline)  echo "configs/paper.yaml" ;;
         paper)     echo "configs/paper.yaml" ;;
+        grpo)      echo "configs/paper.yaml" ;;
         poc1)      echo "configs/poc1.yaml" ;;
         poc2)      echo "configs/poc2.yaml" ;;
         ablations) echo "configs/paper.yaml" ;;
@@ -86,6 +93,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --strict_moe)
             STRICT_MOE=true
+            shift
+            ;;
+        --sitanc)
+            SITANC=true
             shift
             ;;
         --)
@@ -161,6 +172,28 @@ if $USE_SLURM; then
             echo "GRPO job:  $GRPO_JOB"
             echo "Eval job:  $EVAL_JOB"
             ;;
+        grpo)
+            # GRPO-only on 2×A100 — assumes pretrained PRISM at output_dir/prism_adapter.pt.
+            # Pass --checkpoint auto to resume an existing GRPO checkpoint.
+            GRPO_RESUME="${CHECKPOINT:-fresh}"
+            if $SITANC; then
+                GRPO_PARTITION="seas_gpu"
+                GRPO_ACCOUNT="sitanc_lab"
+                GRPO_GRES="gpu:nvidia_a100-sxm4-80gb:2"
+            else
+                GRPO_PARTITION="gpu_a100"
+                GRPO_ACCOUNT="kempner_sham_lab"
+                GRPO_GRES="gpu:2"
+            fi
+            echo ""
+            echo "[Submit] GRPO-only (2×A100, partition=${GRPO_PARTITION}, account=${GRPO_ACCOUNT}, resume=${GRPO_RESUME:-fresh})"
+            GRPO_JOB=$(sbatch --parsable \
+                --gres="$GRPO_GRES" \
+                --partition="$GRPO_PARTITION" \
+                --account="$GRPO_ACCOUNT" \
+                slurm/train_a100.sh grpo "$CONFIG" ${GRPO_RESUME:+"$GRPO_RESUME"})
+            echo "GRPO job: $GRPO_JOB"
+            ;;
         paper)
             JOB=$(sbatch --parsable slurm/paper.sh suite "$CONFIG" "${COMMON_ARGS[@]}")
             echo "Paper-suite job: $JOB"
@@ -195,6 +228,17 @@ fi
 case "$WORKFLOW" in
     pipeline)
         python3 -m aoae.cli pipeline --config "$CONFIG" --skip_preflight "${COMMON_ARGS[@]}"
+        ;;
+    grpo)
+        # Local GRPO-only run — useful for debugging before submitting to cluster.
+        GRPO_RESUME="${CHECKPOINT:-fresh}"
+        torchrun \
+            --nproc_per_node "$(python3 -c "import yaml; print(yaml.safe_load(open('$CONFIG'))['hardware']['tp_size'])")" \
+            --nnodes 1 --node_rank 0 \
+            --master_addr "${MASTER_ADDR:-127.0.0.1}" \
+            --master_port "${MASTER_PORT:-29500}" \
+            -m aoae.cli train --config "$CONFIG" --stage grpo --resume "$GRPO_RESUME" \
+            "${FORWARD_ARGS[@]}"
         ;;
     paper)
         python3 -m aoae.cli paper-suite --config "$CONFIG" "${COMMON_ARGS[@]}"

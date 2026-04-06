@@ -1,4 +1,20 @@
-# Canonical speculative AOAE config used for the paper-level workflow.
+# Canonical speculative AOAE config used for the paper-level GRPO workflow.
+#
+# Changes from previous version:
+#   - group_size: 2 → 8  (larger rollout groups → lower-variance advantage estimates)
+#   - track_kv_dynamics: false → true  (hidden-state proxy drift tracking enabled)
+#   - track_attention_deviation: false → true (layer-wise attention deviation)
+#   - keep_step_traces: true  (per-step action ratios for detailed analysis)
+#   - use_wandb: false → true  (enable WandB logging; set WANDB_API_KEY env var)
+#   - log_every: 50 → 10  (more frequent reward-curve data points)
+#   - save_every: 500 → 100 (more frequent checkpoints)
+#   - max_steps: 500 → 2000 (longer training horizon for group_size=8)
+#   - grad_accum_steps: 4 → 1  (group_size=8 already averages over 8 rollouts)
+#   - warmup_steps: 50 → 100 (longer warmup for larger group)
+#   - cache_quality_weight: 0.05 → 0.1 (stronger F1 signal now it is computed correctly)
+#   - unresolved_penalty_weight: 0.25 (unchanged — keeps masks from lingering)
+#   - stability_lambda: 10.0 (unchanged — maps drift ∈ [0, 0.2] to meaningful contrast)
+#   - normalize_advantage_std: false → true (recommended with group_size ≥ 8)
 
 base_model:
   name_or_path: "inclusionAI/LLaDA2.1-mini"
@@ -40,24 +56,25 @@ cache:
 
 grpo:
   enabled: true
-  group_size: 2
+  group_size: 8                    # ↑ from 2 — better advantage signal, lower variance
   clip_eps: 0.2
-  alpha: 1.0
-  beta: 0.1
-  access_reward_weight: 0.0
-  cache_quality_weight: 0.05
-  stability_lambda: 10.0
-  unresolved_penalty_weight: 0.25
+  alpha: 1.0                       # speed reward exponent
+  beta: 0.1                        # thrash penalty weight
+  access_reward_weight: 0.0        # q_t head disabled until κ_t converges
+  cache_quality_weight: 0.1        # ↑ from 0.05 — F1 now computed correctly in both paths
+  stability_lambda: 10.0           # soft stability exponent λ (maps drift∈[0,0.2] → contrast)
+  unresolved_penalty_weight: 0.25  # penalty for lingering [M] tokens at end of rollout
   min_checkpoint_reward: 0.0
   lr: 3.0e-4
   weight_decay: 0.01
-  epochs: 2
-  max_steps: 500
+  epochs: 3                        # ↑ from 2 — more epochs for larger max_steps
+  max_steps: 2000                  # ↑ from 500 — longer run to see convergence
   batch_size: 1
-  grad_accum_steps: 4
-  warmup_steps: 50
+  grad_accum_steps: 1              # ↓ from 4 — group_size=8 gives sufficient averaging
+  warmup_steps: 100                # ↑ from 50 — proportional to larger max_steps
   max_grad_norm: 1.0
   policy_temperature: 1.0
+  normalize_advantage_std: true    # recommended for group_size ≥ 8
 
 inference:
   steps: 32
@@ -93,8 +110,17 @@ inference:
   compose_gamma: 0.5
 
 analysis:
-  track_kv_dynamics: false
-  keep_step_traces: true
+  # KV dynamics tracking — uses PRIMARY model all-layer hidden states as a
+  # hidden-state proxy for actual KV drift (no K/V extraction required).
+  # Enabled here so the GRPO run produces training-time drift diagnostics
+  # (stored in trajectory.kv_dynamics_summary, logged during eval phases).
+  # NOTE: each step does a primary_forward_with_diagnostics() call instead of
+  # primary_forward_with_hidden() when track_kv_dynamics=True, which is ~1.5×
+  # slower.  Only enable during eval or short diagnostic runs; disable for
+  # maximum throughput training (set to false).
+  track_kv_dynamics: true
+  track_attention_deviation: true  # per-layer attention deviation tracking
+  keep_step_traces: true           # per-step action/mask ratios (for analysis)
   locality_windows: [8, 16, 32]
   confidence_threshold: 0.9
   attention_proxy_top_frac: 0.1
@@ -118,15 +144,15 @@ evaluation:
 
 logging:
   project: "aoae"
-  run_name: "paper"
-  log_every: 50
-  eval_every: 500
-  save_every: 500
+  run_name: "paper_grpo_g8"
+  log_every: 10          # ↓ from 50 — more frequent JSONL/WandB data points
+  eval_every: 200        # ↓ from 500 — more frequent eval snapshots
+  save_every: 100        # ↓ from 500 — more frequent checkpoints
   output_dir: "outputs/paper/"
-  use_wandb: false
+  use_wandb: "offline"   # offline — logs locally; sync later with `wandb sync`
 
 hardware:
   seed: 42
   bf16: true
-  tp_size: 1
+  tp_size: 2
   deterministic: false
