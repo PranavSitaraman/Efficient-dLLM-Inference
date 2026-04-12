@@ -21,6 +21,43 @@ import torch.nn.functional as F
 from typing import Dict, Optional
 
 
+def _safe_policy_temperature(temperature: float) -> float:
+    """Return a strictly positive finite temperature for probability heads."""
+    try:
+        temp = float(temperature)
+    except (TypeError, ValueError):
+        return 1e-6
+    if not math.isfinite(temp) or temp <= 0.0:
+        return 1e-6
+    return temp
+
+
+def _validate_bernoulli_probs(name: str, probs: torch.Tensor) -> None:
+    """Raise a clear error before CUDA Bernoulli kernels trip a device assert."""
+    finite_mask = torch.isfinite(probs)
+    in_range_mask = (probs >= 0.0) & (probs <= 1.0)
+    valid_mask = finite_mask & in_range_mask
+    if bool(valid_mask.all()):
+        return
+
+    finite_vals = probs[finite_mask]
+    if finite_vals.numel() > 0:
+        min_val = float(finite_vals.min().item())
+        max_val = float(finite_vals.max().item())
+    else:
+        min_val = float("nan")
+        max_val = float("nan")
+    nan_count = int(torch.isnan(probs).sum().item())
+    posinf_count = int(torch.isposinf(probs).sum().item())
+    neginf_count = int(torch.isneginf(probs).sum().item())
+    out_of_range_count = int((finite_mask & ~in_range_mask).sum().item())
+    raise RuntimeError(
+        f"Invalid Bernoulli probabilities in {name}: "
+        f"nan={nan_count}, +inf={posinf_count}, -inf={neginf_count}, "
+        f"out_of_range={out_of_range_count}, finite_min={min_val}, finite_max={max_val}"
+    )
+
+
 def call_policy(
     policy,
     H_t: torch.Tensor,
@@ -150,6 +187,7 @@ class AOAEPolicy(nn.Module):
         B, L, D = H_t.shape
         device = H_t.device
         del confidence  # Kept for interface parity with heuristic fallback policies.
+        temp = _safe_policy_temperature(temperature)
 
         # --- Build per-position input features ---
         m_feat = mask_indicator.float().unsqueeze(-1)              # [B, L, 1]
@@ -193,7 +231,7 @@ class AOAEPolicy(nn.Module):
         if self.boundary_enabled and self.head_boundary is not None:
             pooled = x.mean(dim=1)  # [B, d]
             boundary_logits = self.head_boundary(pooled)  # [B, num_bins]
-            boundary_probs = F.softmax(boundary_logits / max(temperature, 1e-6), dim=-1)
+            boundary_probs = F.softmax(boundary_logits / temp, dim=-1)
 
         # --- Validity constraints via logit masking ---
         # Unmask only on masked positions
@@ -203,10 +241,10 @@ class AOAEPolicy(nn.Module):
         # Cache-remask exclusion is enforced at sampling time (see sample_actions)
 
         # --- Tempered probabilities ---
-        unmask_probs = torch.sigmoid(unmask_logits / temperature)
-        remask_probs = torch.sigmoid(remask_logits / temperature)
-        cache_probs = torch.sigmoid(cache_logits / temperature)
-        access_probs = torch.sigmoid(access_logits / temperature)
+        unmask_probs = torch.sigmoid(unmask_logits / temp)
+        remask_probs = torch.sigmoid(remask_logits / temp)
+        cache_probs = torch.sigmoid(cache_logits / temp)
+        access_probs = torch.sigmoid(access_logits / temp)
 
         out = {
             "unmask_logits": unmask_logits,
@@ -237,6 +275,10 @@ class AOAEPolicy(nn.Module):
         Returns:
             dict with "u_t", "r_t", "kappa_t", "q_t" — each [B, L] binary.
         """
+        _validate_bernoulli_probs("unmask_probs", policy_out["unmask_probs"])
+        _validate_bernoulli_probs("remask_probs", policy_out["remask_probs"])
+        _validate_bernoulli_probs("cache_probs", policy_out["cache_probs"])
+        _validate_bernoulli_probs("access_probs", policy_out["access_probs"])
         u_t = torch.bernoulli(policy_out["unmask_probs"])    # [B, L]
         r_t = torch.bernoulli(policy_out["remask_probs"])    # [B, L]
         kappa_t = torch.bernoulli(policy_out["cache_probs"])  # [B, L]

@@ -42,6 +42,7 @@ from .runtime_checks import collect_runtime_info
 # Both trajectory types share the same reward-relevant attributes; Union lets
 # type checkers verify this without forcing a common base class.
 AnyTrajectory = Union[AOAETrajectory, SpeculativeTrajectory]
+_MAX_IMPORTANCE_LOG_RATIO = 20.0
 
 
 # ======================================================================
@@ -346,7 +347,16 @@ def compute_grpo_loss(
             new_lp = pol_inner.log_prob(policy_out, actions)  # [1]
 
             # Importance ratio
-            rho = torch.exp(new_lp - old_lp)  # [1]
+            log_ratio = new_lp - old_lp
+            if not torch.isfinite(log_ratio).all():
+                raise RuntimeError(
+                    "Non-finite GRPO log-ratio detected before importance sampling: "
+                    f"new_lp={new_lp.detach().cpu().tolist()}, old_lp={old_lp.detach().cpu().tolist()}"
+                )
+            rho = torch.exp(log_ratio.clamp(
+                min=-_MAX_IMPORTANCE_LOG_RATIO,
+                max=_MAX_IMPORTANCE_LOG_RATIO,
+            ))  # [1]
 
             # Clipped surrogate
             A_g = advantages[g]
@@ -887,6 +897,23 @@ def train(cfg: dict, resume_from: Optional[str] = None):
 
                 # --- Optimizer step after grad_accum mini-batches ---
                 if accum_step % grad_accum == 0:
+                    # Detect NaN/inf gradients before clipping; zero them out so a
+                    # single bad sample cannot infect the policy parameters with NaN.
+                    # (Root cause: unclamped importance ratio exp(new_lp - old_lp) can
+                    # be inf when the policy has changed significantly since rollout
+                    # collection, producing inf loss → inf grad → NaN after clip.)
+                    _nan_grad_params = []
+                    for _n, _p in policy.named_parameters():
+                        if _p.grad is not None and not torch.isfinite(_p.grad).all():
+                            _nan_grad_params.append(_n)
+                            _p.grad = None
+                    if _nan_grad_params and is_main:
+                        print(
+                            f"[WARN] step={global_step}: NaN/inf gradients zeroed in "
+                            f"{len(_nan_grad_params)} policy params: "
+                            f"{_nan_grad_params[:5]}"
+                            + (" ..." if len(_nan_grad_params) > 5 else "")
+                        )
                     nn.utils.clip_grad_norm_(trainable_params, gc["max_grad_norm"])
                     optimizer.step()
                     scheduler.step()
