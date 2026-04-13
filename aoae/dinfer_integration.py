@@ -237,11 +237,13 @@ class PolicyGuidedCacheManager:
 
 
 class SpeculativeCacheManager:
-    """Cache manager for dual-model speculative diffusion.
+    """Legacy cache manager for older dual-model speculative runners.
 
-    Extends PolicyGuidedCacheManager with agreement-gated caching:
-    positions are only committed to the persistent cache when the
-    hard-routed auxiliary and soft-routed primary agree on the token.
+    WARNING: this older path still conflates speculative acceptance with a
+    persistent cache by committing agreement-gated positions into a
+    DKVCacheManager. The newer AOAE path in speculative_inference.py instead
+    treats K_spec as transient one-step speculative state and K_stable as the
+    only persistent cache.
 
     Tracks additional metrics: agreement rate, draft acceptance rate,
     and effective speedup from speculative caching.
@@ -262,7 +264,7 @@ class SpeculativeCacheManager:
         u_t: torch.Tensor,
         agreement: torch.Tensor,
     ):
-        """Process one step with agreement-gated caching.
+        """Process one legacy step with agreement-gated persistent caching.
 
         Args:
             r_t: [B, L] remask decisions

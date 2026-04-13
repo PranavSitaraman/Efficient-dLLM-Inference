@@ -42,7 +42,7 @@ class SoftMaskedState(nn.Module):
         del mask_indicator, step_frac
         bsz, seq_len, vocab_size = logits.shape
 
-        logits_f = logits.float()
+        logits_f = torch.nan_to_num(logits.float(), nan=0.0)
         log_probs = F.log_softmax(logits_f, dim=-1)
         probs = log_probs.exp()
         confidence = probs.max(dim=-1).values

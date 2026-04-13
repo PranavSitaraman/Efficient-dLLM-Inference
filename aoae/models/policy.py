@@ -192,7 +192,12 @@ class AOAEPolicy(nn.Module):
         # --- Build per-position input features ---
         m_feat = mask_indicator.float().unsqueeze(-1)              # [B, L, 1]
         if quality_scores is not None:
-            q_feat = quality_scores.unsqueeze(-1)                  # [B, L, 1]
+            q_feat = torch.nan_to_num(
+                quality_scores.to(device=device, dtype=torch.float32),
+                nan=0.0,
+                posinf=1.0,
+                neginf=0.0,
+            ).clamp(0.0, 1.0).unsqueeze(-1)                       # [B, L, 1]
         else:
             q_feat = torch.zeros(B, L, 1, device=device)          # [B, L, 1]
         t_feat = torch.full((B, L, 1), step_frac, device=device)  # [B, L, 1]

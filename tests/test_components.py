@@ -1858,6 +1858,23 @@ class TestDefaultPolicy:
         assert (lp == 0.0).all()
 
 
+class TestPRISMAdapter:
+    def test_forward_scrubs_nonfinite_hidden_states(self):
+        from aoae.models.prism import PRISMAdapter
+
+        cfg = {"prism": {"hidden_dim": 16, "threshold": 0.5}}
+        adapter = PRISMAdapter(cfg, hidden_dim=8)
+        hidden = torch.randn(2, 5, 8)
+        hidden[0, 0, 0] = float("nan")
+        hidden[0, 1, 1] = float("inf")
+        hidden[0, 2, 2] = float("-inf")
+
+        scores = adapter(hidden)
+        assert scores.shape == (2, 5)
+        assert torch.isfinite(scores).all()
+        assert ((scores >= 0.0) & (scores <= 1.0)).all()
+
+
 # ======================================================================
 # Tests: SpeculativeCacheManager
 # ======================================================================
@@ -2471,3 +2488,191 @@ class TestDInferCacheReuse:
         assert first_cache.consolidated == 2
         assert second_cache.consolidated == 1
         assert calls[1]["replace_position"] == (1, 2)
+
+    def test_base_model_replace_falls_back_loudly_on_nonfinite_logits(self, capsys):
+        from aoae.models.base_model import LLaDABaseModel
+
+        model = object.__new__(LLaDABaseModel)
+        model._backend = "dinfer"
+        model._block_length = 32
+        model._dinfer_runtime = "vllm"
+        model.dtype = torch.float32
+        model._make_attention_mask = lambda b, s, d, block_length=32: torch.ones(
+            (b, 1, s, s), dtype=torch.bool, device=d
+        )
+        model._make_query_attention_mask = lambda b, fs, qs, qe, d, block_length=32: torch.ones(
+            (b, 1, qe - qs, fs), dtype=torch.bool, device=d
+        )
+
+        class DummyCache:
+            def __init__(self):
+                self.consolidated = 0
+
+            def consolidate(self):
+                self.consolidated += 1
+
+        first_cache = DummyCache()
+        fallback_cache = DummyCache()
+        fallback_logits = torch.tensor(
+            [[[0.1, 0.2, 0.3], [1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]],
+            dtype=torch.float32,
+        )
+        calls = []
+
+        def fake_forward(**kwargs):
+            calls.append(kwargs)
+            if "replace_position" in kwargs:
+                return types.SimpleNamespace(
+                    logits=torch.tensor([[[float("nan"), 0.0, 0.0]]], dtype=torch.float32),
+                    past_key_values=DummyCache(),
+                )
+            if len(calls) == 1:
+                return types.SimpleNamespace(
+                    logits=torch.randn(1, 3, 3),
+                    past_key_values=first_cache,
+                )
+            return types.SimpleNamespace(
+                logits=fallback_logits,
+                past_key_values=fallback_cache,
+            )
+
+        model._forward_dinfer_outputs = fake_forward
+
+        _, cached = LLaDABaseModel.forward_with_cache(model, torch.tensor([[1, 2, 3]]))
+        logits, updated = LLaDABaseModel.forward_replace_with_cache(
+            model,
+            torch.tensor([[1, 2, 3]]),
+            slice(1, 2),
+            cached,
+        )
+
+        assert updated is fallback_cache
+        assert torch.equal(logits, fallback_logits[:, 1:2, :])
+        assert getattr(model, "_aoae_cache_fallback_count", 0) == 1
+        err = capsys.readouterr().err
+        assert "NON-FINITE OUTPUT FROM CACHED" in err
+        assert "incoherent" in err.lower()
+        assert "FULL sequence" in err
+
+    def test_base_model_replace_falls_back_on_tagged_nonfinite_runtime_error(self, capsys):
+        from aoae.models.base_model import LLaDABaseModel
+
+        model = object.__new__(LLaDABaseModel)
+        model._backend = "dinfer"
+        model._block_length = 32
+        model._dinfer_runtime = "vllm"
+        model.dtype = torch.float32
+        model._make_attention_mask = lambda b, s, d, block_length=32: torch.ones(
+            (b, 1, s, s), dtype=torch.bool, device=d
+        )
+        model._make_query_attention_mask = lambda b, fs, qs, qe, d, block_length=32: torch.ones(
+            (b, 1, qe - qs, fs), dtype=torch.bool, device=d
+        )
+
+        class DummyCache:
+            def __init__(self):
+                self.consolidated = 0
+
+            def consolidate(self):
+                self.consolidated += 1
+
+        first_cache = DummyCache()
+        fallback_cache = DummyCache()
+        fallback_logits = torch.tensor(
+            [[[0.5, 0.4, 0.3], [9.0, 8.0, 7.0], [0.2, 0.1, 0.0]]],
+            dtype=torch.float32,
+        )
+        calls = []
+
+        def fake_forward(**kwargs):
+            calls.append(kwargs)
+            if "replace_position" in kwargs:
+                raise RuntimeError(
+                    "[AOAE][NONFINITE_REPLACE_PATH] layer=model.layers.0 label=fused_moe_output"
+                )
+            if len(calls) == 1:
+                return types.SimpleNamespace(
+                    logits=torch.randn(1, 3, 3),
+                    past_key_values=first_cache,
+                )
+            return types.SimpleNamespace(
+                logits=fallback_logits,
+                past_key_values=fallback_cache,
+            )
+
+        model._forward_dinfer_outputs = fake_forward
+
+        _, cached = LLaDABaseModel.forward_with_cache(model, torch.tensor([[1, 2, 3]]))
+        logits, updated = LLaDABaseModel.forward_replace_with_cache(
+            model,
+            torch.tensor([[1, 2, 3]]),
+            slice(1, 2),
+            cached,
+        )
+
+        assert updated is fallback_cache
+        assert torch.equal(logits, fallback_logits[:, 1:2, :])
+        err = capsys.readouterr().err
+        assert "[AOAE][CACHE FALLBACK]" in err
+
+    def test_kspec_cache_returns_full_recompute_logits_after_mid_loop_fallback(self):
+        from aoae.models.base_model import LLaDABaseModel
+
+        model = object.__new__(LLaDABaseModel)
+        model._backend = "dinfer"
+        model._block_length = 32
+        model._dinfer_runtime = "vllm"
+        model.dtype = torch.float32
+        model.vocab_size = 3
+        model._make_attention_mask = lambda b, s, d, block_length=32: torch.ones(
+            (b, 1, s, s), dtype=torch.bool, device=d
+        )
+        model._make_query_attention_mask = lambda b, fs, qs, qe, d, block_length=32: torch.ones(
+            (b, 1, qe - qs, fs), dtype=torch.bool, device=d
+        )
+
+        class DummyCache:
+            def __init__(self, name):
+                self.name = name
+                self.consolidated = 0
+
+            def consolidate(self):
+                self.consolidated += 1
+
+        aux_cache = DummyCache("aux")
+        first_replace_cache = DummyCache("replace1")
+        fallback_cache = DummyCache("fallback")
+        fallback_logits = torch.tensor(
+            [[[0.0, 0.0, 0.0], [1.0, 1.1, 1.2], [2.0, 2.1, 2.2], [3.0, 3.1, 3.2]]],
+            dtype=torch.float32,
+        )
+
+        def fake_forward(**kwargs):
+            replace_position = kwargs.get("replace_position")
+            if replace_position == (1, 2):
+                return types.SimpleNamespace(
+                    logits=torch.tensor([[[9.0, 9.1, 9.2]]], dtype=torch.float32),
+                    past_key_values=first_replace_cache,
+                )
+            if replace_position == (3, 4):
+                return types.SimpleNamespace(
+                    logits=torch.tensor([[[float("nan"), 0.0, 0.0]]], dtype=torch.float32),
+                    past_key_values=DummyCache("bad"),
+                )
+            return types.SimpleNamespace(
+                logits=fallback_logits,
+                past_key_values=fallback_cache,
+            )
+
+        model._forward_dinfer_outputs = fake_forward
+
+        logits, updated = LLaDABaseModel.forward_with_kspec_cache(
+            model,
+            torch.tensor([[10, 11, 12, 13]]),
+            slice(1, 4),
+            aux_cache,
+            torch.tensor([[False, True, False]]),
+        )
+
+        assert updated is fallback_cache
+        assert torch.equal(logits, fallback_logits[:, 1:4, :])

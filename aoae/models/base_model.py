@@ -301,6 +301,25 @@ def _kspec_find_clusters(non_agreed: torch.BoolTensor) -> list:
     return clusters
 
 
+def _nonfinite_tensor_summary(name: str, tensor: torch.Tensor) -> str:
+    """Return a compact summary of NaN/Inf counts and finite range."""
+    data = tensor.detach()
+    nan_count = int(torch.isnan(data).sum().item())
+    posinf_count = int(torch.isposinf(data).sum().item())
+    neginf_count = int(torch.isneginf(data).sum().item())
+    finite = data[torch.isfinite(data)]
+    if finite.numel() > 0:
+        finite_min = float(finite.min().item())
+        finite_max = float(finite.max().item())
+    else:
+        finite_min = float("nan")
+        finite_max = float("nan")
+    return (
+        f"{name}: nan={nan_count}, +inf={posinf_count}, -inf={neginf_count}, "
+        f"finite_min={finite_min}, finite_max={finite_max}"
+    )
+
+
 class LLaDABaseModel(nn.Module):
     """Frozen LLaDA wrapper — no gradients flow through this module."""
 
@@ -1024,6 +1043,8 @@ class LLaDABaseModel(nn.Module):
             past_key_values.consolidate()
         if full_input_ids.device != self.device:
             full_input_ids = full_input_ids.to(self.device)
+        self._aoae_last_cache_replace_fell_back = False
+        self._aoae_last_full_recompute_logits = None
 
         start = int(replace_slice.start)
         end = int(replace_slice.stop)
@@ -1037,14 +1058,30 @@ class LLaDABaseModel(nn.Module):
             full_input_ids.device,
             block_length=self._block_length,
         )
-        outputs = self._forward_dinfer_outputs(
-            input_ids=query_ids,
-            attention_mask=attention_mask,
-            past_key_values=past_key_values,
-            use_cache=True,
-            replace_position=(start, end),
-        )
+        try:
+            outputs = self._forward_dinfer_outputs(
+                input_ids=query_ids,
+                attention_mask=attention_mask,
+                past_key_values=past_key_values,
+                use_cache=True,
+                replace_position=(start, end),
+            )
+        except (FloatingPointError, RuntimeError) as exc:
+            message = str(exc).lower()
+            if "[aoae][nonfinite" not in message and "incoherent cache" not in message:
+                raise
+            return self._fallback_from_incoherent_cache(
+                full_input_ids=full_input_ids,
+                replace_slice=replace_slice,
+                reason=str(exc),
+            )
         logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+        if not torch.isfinite(logits).all():
+            return self._fallback_from_incoherent_cache(
+                full_input_ids=full_input_ids,
+                replace_slice=replace_slice,
+                reason=_nonfinite_tensor_summary("replace_logits", logits),
+            )
         next_cache = getattr(outputs, "past_key_values", None)
         if next_cache is None:
             raise RuntimeError("dInfer replace-position forward did not return updated past_key_values.")
@@ -1060,15 +1097,17 @@ class LLaDABaseModel(nn.Module):
         aux_past_kv: object,
         k_spec_mask: torch.BoolTensor,
     ) -> Tuple[torch.Tensor, object]:
-        """Primary forward with K_spec KV skip.
+        """Primary forward with the current k=1 K_spec frontier / skip hint.
 
-        Reuses aux_past_kv (K/V from the auxiliary model) at agreed positions
-        (k_spec_mask=True).  For each contiguous cluster of non-agreed response
-        positions the model runs forward_replace_with_cache, so only those tokens
-        incur primary Q/K/V projection cost.
+        Reuses aux_past_kv (K/V from the auxiliary model) at positions marked by
+        k_spec_mask. For each contiguous cluster of non-K_spec response positions
+        the model runs forward_replace_with_cache, so only those tokens incur
+        primary Q/K/V projection cost.
 
-        Under the K_spec hypothesis (aux K/V ≈ pri K/V at agreed positions) this
-        gives a real wall-clock saving proportional to the agreement rate.
+        IMPORTANT: despite the legacy name, K_spec is conceptually a transient
+        speculative frontier, not a persistent cache. The current runtime uses
+        the frontier as a one-step, lossy reuse hint under the hypothesis
+        aux K/V ≈ pri K/V at those positions.
 
         Args:
             full_input_ids: [B, L_total] — full prompt + response sequence.
@@ -1076,7 +1115,8 @@ class LLaDABaseModel(nn.Module):
             aux_past_kv:    KV cache from the auxiliary forward this step.
                             Used as the starting cache; aux K/V already injected at
                             ALL positions (prompt + agreed response) by construction.
-            k_spec_mask:    [B, L_gen] bool — True = agreed (reuse aux K/V, skip primary).
+            k_spec_mask:    [B, L_gen] bool — current one-step K_spec frontier.
+                            True = reuse aux K/V and skip primary there.
 
         Returns:
             logits_fresh:  [B, L_gen, V] — primary logits at non-agreed positions;
@@ -1093,7 +1133,8 @@ class LLaDABaseModel(nn.Module):
         L_gen = resp_slice.stop - P
         dev = full_input_ids.device
 
-        # All positions agreed → skip primary entirely; caller uses aux_logits everywhere.
+        # All positions in the one-step K_spec frontier → skip primary entirely;
+        # caller uses aux_logits everywhere.
         if k_spec_mask.all():
             return (
                 torch.zeros(B, L_gen, self.vocab_size, dtype=self.dtype, device=dev),
@@ -1114,9 +1155,71 @@ class LLaDABaseModel(nn.Module):
                 slice(P + c_start, P + c_end),
                 current_kv,
             )
+            if getattr(self, "_aoae_last_cache_replace_fell_back", False):
+                full_logits = getattr(self, "_aoae_last_full_recompute_logits", None)
+                if full_logits is None:
+                    raise RuntimeError(
+                        "[AOAE][CACHE FALLBACK BUG] Missing full recompute logits after cached "
+                        "replace fallback."
+                    )
+                return full_logits[:, resp_slice, :], current_kv
             logits_out[:, c_start:c_end, :] = span_logits
 
         return logits_out, current_kv
+
+    def _fallback_from_incoherent_cache(
+        self,
+        *,
+        full_input_ids: torch.LongTensor,
+        replace_slice: slice,
+        reason: str,
+    ) -> Tuple[torch.Tensor, object]:
+        """Discard hybrid cached state and fully recompute after a non-finite replace pass."""
+        start = int(replace_slice.start)
+        end = int(replace_slice.stop)
+        rank = (
+            os.environ.get("RANK")
+            or os.environ.get("SLURM_PROCID")
+            or os.environ.get("LOCAL_RANK")
+            or "unknown"
+        )
+        fallback_count = int(getattr(self, "_aoae_cache_fallback_count", 0)) + 1
+        self._aoae_cache_fallback_count = fallback_count
+
+        banner = "!" * 108
+        print(banner, file=sys.stderr, flush=True)
+        print(
+            (
+                f"[AOAE][CACHE FALLBACK][rank={rank}][count={fallback_count}] "
+                f"NON-FINITE OUTPUT FROM CACHED replace_position=({start}, {end})"
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
+            (
+                "[AOAE][CACHE FALLBACK] This implies the cached/stale hybrid KV state became "
+                "incoherent. Discarding cached KV and recomputing the FULL sequence."
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        print(
+            f"[AOAE][CACHE FALLBACK] Trigger summary: {reason}",
+            file=sys.stderr,
+            flush=True,
+        )
+        print(banner, file=sys.stderr, flush=True)
+
+        full_logits, fresh_cache = self.forward_with_cache(full_input_ids)
+        if not torch.isfinite(full_logits).all():
+            raise RuntimeError(
+                "[AOAE][CACHE FALLBACK FAILED] Fresh full recompute also returned non-finite logits. "
+                f"{_nonfinite_tensor_summary('full_logits', full_logits)}"
+            )
+        self._aoae_last_cache_replace_fell_back = True
+        self._aoae_last_full_recompute_logits = full_logits.detach()
+        return full_logits[:, start:end, :], fresh_cache
 
     # ------------------------------------------------------------------
     @torch.no_grad()

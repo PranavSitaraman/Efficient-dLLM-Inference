@@ -63,8 +63,8 @@ class SpeculativeTrajectory:
     mean_boundary_depth: float = 0.0
     boundary_distribution: str = "{}"
     # ---- compute-aware speed bonus ----
-    # K_spec fraction: per-step fraction of positions with drafter-verifier agreement
-    # (speculative acceptance, one-step validity).  Updated each step by agreement mask.
+    # Legacy metric name: per-step fraction of positions in the transient
+    # K_spec speculative frontier / one-step speculative-accept state.
     spec_cached_fractions: List[torch.Tensor] = field(default_factory=list)
     # K_stable fraction: per-step fraction of positions in the persistent κ_t cache.
     # Combined, effective_flops = (used_steps/T)*(1 - mean(K_spec ∪ K_stable)).
@@ -166,12 +166,14 @@ def speculative_inference(
     _prev_H_t: Optional[torch.Tensor] = None
 
     # --- KV cache state ---
-    # K_spec skip (cache.kspec_skip): real wall-clock saving for the primary model.
-    #   Auxiliary forward always runs with use_cache=True.  The returned aux_past_kv
-    #   is used as the starting KV state for the primary; the primary only runs
-    #   forward_replace_with_cache over non-agreed contiguous clusters, reusing
-    #   aux K/V at agreed positions under the K_spec hypothesis (aux K/V ≈ pri K/V).
-    #   Saving per step ≈ (agreement rate) × (primary response FLOP).
+    # K_spec skip (cache.kspec_skip): current k=1 special case of speculative
+    # verification. Auxiliary forward always runs with use_cache=True. The
+    # returned aux_past_kv is used as the starting KV state for the primary; the
+    # primary only runs forward_replace_with_cache over non-agreed contiguous
+    # clusters, reusing aux K/V at previous-step K_spec positions under the
+    # lossy hypothesis aux K/V ≈ pri K/V there. Conceptually K_spec is a
+    # transient verifier frontier, not a persistent cache; the current runtime
+    # materializes that frontier as a one-step reuse hint.
     #
     # Prefix KV cache (cache.prefix_kv_cache): additionally caches the prompt
     #   prefix for the auxiliary (skips prompt recompute each step).  The primary
@@ -275,8 +277,9 @@ def speculative_inference(
                 _prefix_cache_initialized = True
 
             # Primary: run only over non-agreed response clusters (K_spec skip).
-            # k_spec_mask = previous step's agreement; all-False on step 1 → full forward.
-            _k_spec = cache_mgr.spec.get_cached_mask()  # [B, L_gen] prev-step agreement
+            # _k_spec is the current k=1 materialization of the transient K_spec
+            # frontier: previous-step one-step accepted / reusable positions.
+            _k_spec = cache_mgr.spec.get_cached_mask()  # [B, L_gen]
             _pri_fresh, _ = dual_model.primary_forward_with_kspec(
                 y, resp_slice, aux_past_kv, _k_spec,
             )
@@ -343,6 +346,11 @@ def speculative_inference(
         # output → same logits → same H_t as the last step those positions were active.
         if use_stable_kv_skip and _can_use_cache:
             _stable_skip = cache_mgr.stable.get_cached_mask() & ~mask_ind  # [B, L_gen]
+            # Guard: NaN from forward_replace_with_cache (bf16 MoE numerical issues)
+            # must be scrubbed before updating _stable_logits_cache, otherwise NaN
+            # poisons the cache and propagates to all future steps via substitution.
+            # NaN → 0.0 is safe: 0-logits = uniform distribution = "no information".
+            resp_logits = torch.nan_to_num(resp_logits, nan=0.0)
             if _stable_logits_cache is None:
                 # Step 1: all positions were active, resp_logits is fully real.
                 _stable_logits_cache = resp_logits.detach().clone()
@@ -513,9 +521,10 @@ def speculative_inference(
                         resp_tokens[b_idx, best_pos] = resp_logits[b_idx, best_pos].argmax()
                         fallback_positions[b_idx, best_pos] = True
 
-        # ====== Phase 3a: Speculative Accept (K_spec) ======
-        # Positions where drafter and verifier agree: KV valid for one step.
-        # K_spec is replaced each step (not accumulated).
+        # ====== Phase 3a: Speculative Frontier / Accept State (K_spec) ======
+        # K_spec is transient and replaced each step; it is not a persistent KV
+        # cache. In the current k=1 implementation we store the one-step
+        # accepted/reusable positions for the next primary pass.
         if cache_mgr is not None:
             cache_mgr.step_spec(agreement)
 
@@ -534,7 +543,7 @@ def speculative_inference(
                 )
 
         # --- Record cached fractions after commit (compute-aware speed bonus) ---
-        # spec_cached_fractions: K_spec (agreement-based, one-step, replaced each step).
+        # spec_cached_fractions: legacy metric name for K_spec frontier occupancy.
         # cached_fractions:      K_spec ∪ K_stable (combined, for reward computation).
         # effective_flops = (used_steps/T) * (1 - mean_combined_cached_fraction).
         if trajectory is not None and cache_mgr is not None:

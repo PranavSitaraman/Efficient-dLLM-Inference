@@ -1,22 +1,24 @@
 """
-Policy-Controlled KV-Cache Managers (paper §3.3, §3.6).
+Policy-controlled speculative-frontier / stable-cache bookkeepers.
 
-Two distinct caches are maintained (per kv_cache_staleness.md):
+Two distinct state pools are maintained (per kv_cache_staleness.md):
 
-  K_spec  (SpeculativeKVCache) — transient, one-step validity.
-    Positions where the auxiliary drafter and primary verifier have the same
-    argmax token at step t.  Valid for ONE forward pass only; replaced each
-    step by the new agreement mask.
+  K_spec  (SpeculativeKVCache; legacy class name) — transient speculative
+    frontier / speculative-accept state with one-step lifetime.
+    Conceptually this is NOT a persistent KV cache. In the current k=1
+    implementation it is materialized as a one-step verifier hint / reuse mask
+    and is replaced every step.
 
-  K_stable (StableKVCache) — persistent, multi-step validity.
+  K_stable (StableKVCache) — persistent, multi-step KV cache.
     Positions where the policy's κ_t head predicts stable KV across future
-    steps.  Persists across steps; evicted only by an explicit remask (r_t=1).
+    steps. Persists across steps; evicted only by an explicit remask (r_t=1).
 
-  TwoCacheManager combines both into a single interface for inference loops.
+  SpeculativeCacheBookkeeper combines both into a single interface for the
+  speculative inference loop.
 
   DKVCacheManager (legacy) — the original single-cache design that conflated
-    the two concepts.  Kept for backward compatibility with non-speculative
-    inference paths (aoae/inference.py) and dinfer_integration.py.
+    the two concepts. Kept for backward compatibility with non-speculative
+    inference paths (aoae/inference.py) and legacy dinfer_integration.py code.
 """
 
 import torch
@@ -27,11 +29,12 @@ import torch
 # ---------------------------------------------------------------------------
 
 class SpeculativeKVCache:
-    """K_spec: agreement-based transient cache (one-step validity).
+    """K_spec: transient speculative frontier / one-step speculative-accept state.
 
-    Replaced entirely each step.  Provides a skip signal for positions where
-    the auxiliary drafter KV vectors are known to agree with the primary, so
-    re-computation can be skipped for ONE subsequent forward pass.
+    Despite the legacy class name, this is not a persistent cache. It stores
+    the short-lived speculative state that bridges the drafter and verifier.
+    In the current k=1 runtime this is represented as the previous step's
+    accepted / reusable positions and is replaced entirely each step.
     """
 
     def __init__(self, batch_size: int, seq_len: int, device: torch.device):
@@ -43,14 +46,14 @@ class SpeculativeKVCache:
         )
 
     def accept(self, agreement: torch.Tensor):
-        """Replace K_spec with the current agreement mask (not a union)."""
+        """Replace the one-step speculative frontier mask (not a union)."""
         self.cached = agreement.bool()
 
     def get_cached_mask(self) -> torch.BoolTensor:
         return self.cached
 
     def cached_fraction(self) -> torch.Tensor:
-        """[B] fraction of positions currently in K_spec."""
+        """[B] legacy metric name for the current K_spec frontier occupancy."""
         return self.cached.float().mean(dim=-1)
 
     def reset(self):
@@ -130,12 +133,13 @@ class StableKVCache:
 
 
 class SpeculativeCacheBookkeeper:
-    """Bookkeeper for K_spec + K_stable set membership (§3.6 two-cache system).
+    """Bookkeeper for K_spec + K_stable set membership (§3.6 two-pool system).
 
     IMPORTANT: This class tracks BOOLEAN MASKS only — it does NOT store KV
-    tensors and does NOT skip any actual computation.  Its sole purpose is to
-    record which positions would be in each logical cache pool so that:
-      (a) the reward can compute mean_cached_fraction / effective_flops, and
+    tensors and does NOT skip any actual computation. Its sole purpose is to
+    record which positions are in the transient K_spec frontier and the
+    persistent K_stable cache so that:
+      (a) the reward can measure frontier/cache occupancy proxies, and
       (b) thrash counts and cache-quality F1 can be measured during training.
 
     Actual KV-computation skipping is handled separately:
@@ -165,7 +169,7 @@ class SpeculativeCacheBookkeeper:
     # --- New two-cache API (called from speculative_inference.py Phase 3) ---
 
     def step_spec(self, agreement: torch.Tensor):
-        """Phase 3a: Update K_spec with current step's agreement mask."""
+        """Phase 3a: Update the transient K_spec frontier for the next step."""
         self.spec.accept(agreement)
 
     def step_stable(self, kappa_t: torch.Tensor, r_t: torch.Tensor):
@@ -186,7 +190,7 @@ class SpeculativeCacheBookkeeper:
         return self.stable.count_thrash(r_t, age_decay=self.thrash_age_decay)
 
     def combined_cached_mask(self) -> torch.BoolTensor:
-        """[B, L] union of K_spec and K_stable."""
+        """[B, L] union of the transient K_spec frontier and K_stable cache."""
         return self.spec.cached | self.stable.cached
 
     def get_cached_mask(self) -> torch.BoolTensor:
@@ -194,7 +198,7 @@ class SpeculativeCacheBookkeeper:
         return self.combined_cached_mask()
 
     def spec_cached_fraction(self) -> torch.Tensor:
-        """[B] fraction of positions in K_spec."""
+        """[B] legacy metric name for K_spec frontier occupancy."""
         return self.spec.cached_fraction()
 
     def stable_cached_fraction(self) -> torch.Tensor:
@@ -202,7 +206,7 @@ class SpeculativeCacheBookkeeper:
         return self.stable.cached_fraction()
 
     def cached_fraction(self) -> torch.Tensor:
-        """[B] fraction of positions in K_spec ∪ K_stable."""
+        """[B] fraction of positions in K_spec ∪ K_stable (legacy reward proxy)."""
         return self.combined_cached_mask().float().mean(dim=-1)
 
     def reset(self):

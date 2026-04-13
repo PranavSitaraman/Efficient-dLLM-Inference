@@ -65,7 +65,12 @@ class PRISMAdapter(nn.Module):
                 f"expected last dim {expected_dim}, got {actual_dim}. "
                 "Check the base-model hidden-state extraction path."
             )
-        return torch.sigmoid(self.net(hidden_states).squeeze(-1))
+        # Primary hidden states can occasionally contain NaNs/infs under bf16 MoE
+        # routing. PRISM is only an auxiliary quality feature, so the safest
+        # fallback is to scrub non-finite values and keep scores in [0, 1].
+        hidden_states = torch.nan_to_num(hidden_states.float(), nan=0.0, posinf=0.0, neginf=0.0)
+        quality_scores = torch.sigmoid(self.net(hidden_states).squeeze(-1))
+        return torch.nan_to_num(quality_scores, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
 
     def should_remask(self, quality_scores: torch.Tensor) -> torch.BoolTensor:
         """Return True where quality is below threshold → remask."""

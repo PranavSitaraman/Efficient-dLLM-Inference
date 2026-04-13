@@ -238,12 +238,11 @@ class DualModelWrapper(nn.Module):
         aux_past_kv: object,
         k_spec_mask: torch.BoolTensor,
     ) -> Tuple[torch.Tensor, object]:
-        """Soft-routed primary forward with K_spec KV skip.
+        """Soft-routed primary forward with the current k=1 K_spec skip hint.
 
-        Reuses aux_past_kv at agreed positions (k_spec_mask=True).  Only
-        contiguous clusters of non-agreed response positions are forwarded
-        through the primary model, giving wall-clock savings equal to
-        (agreed fraction) * (primary response compute per step).
+        Reuses aux_past_kv at positions marked in the transient K_spec frontier
+        (k_spec_mask=True). Only contiguous clusters of non-K_spec response
+        positions are forwarded through the primary model.
 
         Caller must merge agreed positions after return:
             resp_logits = torch.where(k_spec_mask[..., None], aux_logits, returned)
@@ -251,7 +250,7 @@ class DualModelWrapper(nn.Module):
         Returns:
             logits_fresh:  [B, L_gen, V] — primary logits at non-agreed positions;
                            zeros at agreed positions (caller fills with aux_logits).
-            kv_updated:    hybrid KV cache (aux at agreed, primary at non-agreed).
+            kv_updated:    hybrid KV state (aux at K_spec positions, primary elsewhere).
         """
         set_soft_routing(self._model.model)
         try:
