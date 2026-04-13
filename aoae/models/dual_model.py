@@ -186,6 +186,29 @@ class DualModelWrapper(nn.Module):
             set_hard_routing(self._model.model)
 
     @torch.no_grad()
+    def auxiliary_forward_with_cache(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, object]:
+        """Hard-routed forward returning logits and a reusable KV cache."""
+        set_hard_routing(self._model.model)
+        return self._model.forward_with_cache(input_ids)
+
+    @torch.no_grad()
+    def auxiliary_forward_replace_with_cache(
+        self,
+        full_input_ids: torch.LongTensor,
+        replace_slice: slice,
+        past_key_values: object,
+    ) -> Tuple[torch.Tensor, object]:
+        """Hard-routed partial recompute against an existing KV cache."""
+        set_hard_routing(self._model.model)
+        return self._model.forward_replace_with_cache(
+            full_input_ids,
+            replace_slice,
+            past_key_values,
+        )
+
+    @torch.no_grad()
     def primary_forward_with_hidden(
         self, input_ids: torch.LongTensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -204,6 +227,70 @@ class DualModelWrapper(nn.Module):
         set_soft_routing(self._model.model)
         try:
             return self._model.forward_with_all_hidden(input_ids)
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def primary_forward_with_kspec(
+        self,
+        full_input_ids: torch.LongTensor,
+        resp_slice: slice,
+        aux_past_kv: object,
+        k_spec_mask: torch.BoolTensor,
+    ) -> Tuple[torch.Tensor, object]:
+        """Soft-routed primary forward with K_spec KV skip.
+
+        Reuses aux_past_kv at agreed positions (k_spec_mask=True).  Only
+        contiguous clusters of non-agreed response positions are forwarded
+        through the primary model, giving wall-clock savings equal to
+        (agreed fraction) * (primary response compute per step).
+
+        Caller must merge agreed positions after return:
+            resp_logits = torch.where(k_spec_mask[..., None], aux_logits, returned)
+
+        Returns:
+            logits_fresh:  [B, L_gen, V] — primary logits at non-agreed positions;
+                           zeros at agreed positions (caller fills with aux_logits).
+            kv_updated:    hybrid KV cache (aux at agreed, primary at non-agreed).
+        """
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_with_kspec_cache(
+                full_input_ids, resp_slice, aux_past_kv, k_spec_mask,
+            )
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def primary_forward_with_stable_cache(
+        self,
+        full_input_ids: torch.LongTensor,
+        resp_slice: slice,
+        stable_kv: object,
+        stable_skip_mask: torch.BoolTensor,
+    ) -> Tuple[torch.Tensor, object]:
+        """Soft-routed primary forward skipping already-stable (unmasked, unchanged) positions.
+
+        Reuses stable_kv at positions marked True in stable_skip_mask.
+        Only contiguous clusters of active (False) positions are forwarded through the
+        primary model — giving real wall-clock savings without any drafter overhead.
+
+        Args:
+            full_input_ids:  [B, L_total] current sequence.
+            resp_slice:      slice(P, P+L_gen) — response region.
+            stable_kv:       persistent primary KV cache from the previous step.
+            stable_skip_mask:[B, L_gen] bool — True = stable, skip recompute.
+
+        Returns:
+            logits_fresh:  [B, L_gen, V] — primary logits at active positions;
+                           zeros at stable positions (unused: already unmasked).
+            kv_updated:    stable_kv updated at active positions.
+        """
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_with_kspec_cache(
+                full_input_ids, resp_slice, stable_kv, stable_skip_mask,
+            )
         finally:
             set_hard_routing(self._model.model)
 

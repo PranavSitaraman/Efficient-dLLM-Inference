@@ -1,20 +1,27 @@
-# Canonical speculative AOAE config used for the paper-level GRPO workflow.
+# Canonical speculative AOAE config — stable KV cache GRPO run.
+#
+# Pivot from K_spec (2026-04-12): K_spec adds a full aux forward every step.
+# Since aux and primary are the SAME model (routing toggled), C_aux ≈ C_pri.
+# Even at 100% agreement cost = C_aux + 0 ≈ C_pri — drafter tax always paid.
+#
+# Stable KV cache (2026-04-12): primary-only, no drafter.
+#   - Maintains stable_primary_kv across steps.
+#   - Active positions = K_stable^c ∪ [MASK] (recomputed via cluster forward).
+#   - Stable positions (in K_stable, not [MASK]) → KV reused exactly.
+#   - Savings track K_stable size (policy κ_t driven), not total unmasked count.
+#   - Age-decaying thrash penalty: exp(-0.1 * age), discourages premature commits.
 #
 # Changes from previous version:
 #   - group_size: 2 → 8  (larger rollout groups → lower-variance advantage estimates)
 #   - track_kv_dynamics: false → true  (hidden-state proxy drift tracking enabled)
-#   - track_attention_deviation: false → true (layer-wise attention deviation)
 #   - keep_step_traces: true  (per-step action ratios for detailed analysis)
-#   - use_wandb: false → true  (enable WandB logging; set WANDB_API_KEY env var)
 #   - log_every: 50 → 10  (more frequent reward-curve data points)
-#   - save_every: 500 → 100 (more frequent checkpoints)
 #   - max_steps: 500 → 2000 (longer training horizon for group_size=8)
-#   - grad_accum_steps: 4 → 1  (group_size=8 already averages over 8 rollouts)
-#   - warmup_steps: 50 → 100 (longer warmup for larger group)
 #   - cache_quality_weight: 0.05 → 0.1 (stronger F1 signal now it is computed correctly)
-#   - unresolved_penalty_weight: 0.25 (unchanged — keeps masks from lingering)
-#   - stability_lambda: 10.0 (unchanged — maps drift ∈ [0, 0.2] to meaningful contrast)
-#   - normalize_advantage_std: false → true (recommended with group_size ≥ 8)
+#   - kspec_skip: true → false  (K_spec disabled, stable_kv_cache enabled)
+#   - stable_kv_cache: true  (stability-oriented real KV skip, primary only)
+#   - thrash_age_decay: 0.1  (age-decaying thrash penalty)
+#   - compose_gamma: 0.5 → 0.0  (no aux model in stable path, compose is no-op)
 
 base_model:
   name_or_path: "inclusionAI/LLaDA2.1-mini"
@@ -53,13 +60,32 @@ prism:
 
 cache:
   enabled: true
+  # stable_kv_cache: stability-oriented real KV skip — NO drafter needed.
+  #   Maintains a persistent primary KV cache (stable_primary_kv) across steps.
+  #   Each step only recomputes "active" positions:
+  #     active = changed-since-last-forward (newly unmasked / remasked)
+  #             ∪ still-[MASK] positions (need fresh logits for decoding).
+  #   Already-unmasked stable positions reuse cached primary KV exactly.
+  #   Saving per step ≈ (fraction already unmasked) × (primary response FLOP).
+  #   Savings grow as decoding progresses. No drafter tax.
+  #   NOTE: auto-disabled when PRISM adapter or KV dynamics tracker needs hidden states.
+  stable_kv_cache: true
+  # kspec_skip: DISABLED — K_spec adds a full aux forward each step (~C_aux ≈ C_pri)
+  #   and saves only when agreement_rate is very high AND aux is much cheaper than pri.
+  #   Since aux and pri are the same model (routing toggled), savings are marginal.
+  #   Even at 100% agreement cost = C_aux ≈ C_pri (drafter tax always paid).
+  kspec_skip: false
+  # prefix_kv_cache: cache prompt KVs for the auxiliary. Not applicable in stable path
+  #   (no aux); kept false.
+  prefix_kv_cache: false
 
 grpo:
   enabled: true
   group_size: 8                    # ↑ from 2 — better advantage signal, lower variance
   clip_eps: 0.2
   alpha: 1.0                       # speed reward exponent
-  beta: 0.1                        # thrash penalty weight
+  beta: 0.1                        # thrash penalty weight (multiplied by age-weighted count)
+  thrash_age_decay: 0.1            # exp(-decay*age) weight for thrash penalty; 0=uniform
   access_reward_weight: 0.0        # q_t head disabled until κ_t converges
   cache_quality_weight: 0.1        # ↑ from 0.05 — F1 now computed correctly in both paths
   stability_lambda: 10.0           # soft stability exponent λ (maps drift∈[0,0.2] → contrast)
@@ -93,6 +119,9 @@ inference:
     use_topb_from_probs: true
     force_mandatory: true
     age_cap: 64
+  # reuse_signal: UNUSED in stable path — compute_reuse_signal() is skipped when
+  # stable_kv_cache=true (agreement is set to zeros; no aux model to compare against).
+  # Restore relevance when re-enabling the speculative path (kspec_skip=true).
   reuse_signal:
     method: "argmax_match"
     threshold: 0.0
@@ -107,7 +136,9 @@ inference:
       js_divergence: [0.01, 0.03, 0.05, 0.1]
       temporal_confidence: [0.3, 0.5, 0.7]
   block_length: 32
-  compose_gamma: 0.5
+  compose_gamma: 0.0    # WAS 0.5 — disabled: stable path has no aux model, so dual-model
+                        # composed prediction (α·pri + (1-α)·aux at agreed positions) is
+                        # a no-op. Restore to 0.5 when re-enabling speculative+stability.
 
 analysis:
   # KV dynamics tracking — uses PRIMARY model all-layer hidden states as a
@@ -144,7 +175,7 @@ evaluation:
 
 logging:
   project: "aoae"
-  run_name: "paper_grpo_g8"
+  run_name: "paper_grpo_stable_kv"
   log_every: 10          # ↓ from 50 — more frequent JSONL/WandB data points
   eval_every: 200        # ↓ from 500 — more frequent eval snapshots
   save_every: 100        # ↓ from 500 — more frequent checkpoints

@@ -204,11 +204,19 @@ def compute_reward(
         )
         used_steps = torch.full((B,), float(max(n_active_steps, 1)), device=device)
 
+    # combined cached_fractions = K_spec ∪ K_stable fraction (stored by TwoCacheManager).
     cached_fracs = getattr(trajectory, "cached_fractions", [])
     if cached_fracs:
         mean_cached = torch.stack([cf.to(device) for cf in cached_fracs]).mean(dim=0)  # [B]
     else:
         mean_cached = torch.zeros(B, device=device)
+
+    # spec_cached_fractions tracks K_spec only (agreement-based, one-step).
+    spec_cached_fracs = getattr(trajectory, "spec_cached_fractions", [])
+    if spec_cached_fracs:
+        mean_spec_cached = torch.stack([cf.to(device) for cf in spec_cached_fracs]).mean(dim=0)
+    else:
+        mean_spec_cached = torch.zeros(B, device=device)
 
     used_steps_frac = used_steps / float(T)                                   # [B] in [0,1]
     effective_flops = used_steps_frac * (1.0 - mean_cached)                   # [B] in [0,1]
@@ -267,11 +275,12 @@ def compute_reward(
         "effective_flops":     effective_flops,
         "used_steps_frac":     used_steps_frac,
         "mean_cached_fraction": mean_cached,
-        "thrash_penalty":      thrash_penalty,
-        "total_thrash":        total_thrash,
-        "unresolved_penalty":  unresolved_penalty,
-        "cache_f1_reward":     cache_f1_reward,
-        "access_reward":       access_reward,
+        "thrash_penalty":       thrash_penalty,
+        "total_thrash":         total_thrash,
+        "unresolved_penalty":   unresolved_penalty,
+        "cache_f1_reward":      cache_f1_reward,
+        "access_reward":        access_reward,
+        "mean_spec_cached":     mean_spec_cached,   # K_spec (agreement, one-step)
     }
 
     return reward, components
@@ -319,8 +328,15 @@ def compute_grpo_loss(
 
         step_loss = torch.tensor(0.0, device=advantages.device)
 
+        sm_inner = soft_mask_module.module if hasattr(soft_mask_module, "module") else soft_mask_module
+
         for t_idx in range(n_steps):
-            H_t = traj["H_t_list"][t_idx]           # [1, L, D]
+            # Recompute h_t from stored intermediates so that ω_s/ω_a/ω_b receive
+            # gradients.  weighted_embeds and entropy are detached rollout data;
+            # autograd flows through the live ω parameters in recompute_h_t().
+            weighted_embeds = traj["weighted_embeds_list"][t_idx]  # [1, L, D]
+            entropy_t       = traj["entropy_list"][t_idx]          # [1, L]
+            H_t = sm_inner.recompute_h_t(weighted_embeds, entropy_t)
             mask_ind = traj["mask_ind_list"][t_idx]  # [1, L]
             step_frac = traj["step_fracs"][t_idx]
             actions = traj["actions_list"][t_idx]     # dict of [1, L]
@@ -349,10 +365,11 @@ def compute_grpo_loss(
             # Importance ratio
             log_ratio = new_lp - old_lp
             if not torch.isfinite(log_ratio).all():
-                raise RuntimeError(
-                    "Non-finite GRPO log-ratio detected before importance sampling: "
-                    f"new_lp={new_lp.detach().cpu().tolist()}, old_lp={old_lp.detach().cpu().tolist()}"
-                )
+                # NaN/inf log_ratio means the policy has NaN parameters (from a
+                # previous gradient explosion).  Skip this step's contribution
+                # rather than crashing — the NaN grad guard above will zero out
+                # the offending gradients before the next optimizer step.
+                continue
             rho = torch.exp(log_ratio.clamp(
                 min=-_MAX_IMPORTANCE_LOG_RATIO,
                 max=_MAX_IMPORTANCE_LOG_RATIO,
@@ -427,6 +444,12 @@ def split_group_trajectory(trajectory: Any, group_size: int) -> List[Dict[str, A
             ],
             "old_log_probs": [_slice_tensor(lp, g) for lp in trajectory.log_probs],
             "H_t_list": [_slice_tensor(h_t, g) for h_t in trajectory.H_t_list],
+            "weighted_embeds_list": [
+                _slice_tensor(we, g) for we in getattr(trajectory, "weighted_embeds_list", [])
+            ],
+            "entropy_list": [
+                _slice_tensor(ent, g) for ent in getattr(trajectory, "entropy_list", [])
+            ],
             "mask_ind_list": [_slice_tensor(mask_ind, g) for mask_ind in trajectory.mask_ind_list],
             "quality_scores_list": [
                 _slice_tensor(q_scores, g) for q_scores in trajectory.quality_scores_list

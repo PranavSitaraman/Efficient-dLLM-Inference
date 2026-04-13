@@ -116,7 +116,10 @@ def compose_prediction_dual(
     alpha_k = agreement.float().unsqueeze(-1)  # [B, L, 1]
 
     # Compose: primary_logits + gamma * alpha_k * aux_log_probs
-    composed = primary_logits + gamma * alpha_k * aux_log_probs
+    # nan_to_num guards against 0 * -inf = NaN (IEEE 754) in bf16,
+    # where log_softmax produces -inf for near-zero-probability tokens and
+    # alpha_k=0 at disagreement positions.
+    composed = primary_logits + torch.nan_to_num(gamma * alpha_k * aux_log_probs, nan=0.0)
 
     return composed
 
@@ -142,5 +145,5 @@ def compute_composition_entropy(
     composed_logits = compose_prediction(base_logits, cache_probs, gamma)
     probs = F.softmax(composed_logits, dim=-1)
     log_probs = F.log_softmax(composed_logits, dim=-1)
-    entropy = -(probs * log_probs).sum(dim=-1)
+    entropy = -(torch.nan_to_num(probs * log_probs, nan=0.0)).sum(dim=-1)
     return entropy

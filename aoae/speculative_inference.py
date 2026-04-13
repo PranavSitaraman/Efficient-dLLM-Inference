@@ -17,7 +17,7 @@ import torch.nn.functional as F
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass, field
 
-from .cache import DKVCacheManager
+from .cache import SpeculativeCacheBookkeeper
 from .models.composed_prediction import compose_prediction_dual
 from .models.dual_model import DualModelWrapper, DualModelOutput
 from .models.policy import call_policy
@@ -40,6 +40,9 @@ class SpeculativeTrajectory:
     policy_outputs: List[Dict[str, torch.Tensor]] = field(default_factory=list)
     thrash_counts: List[torch.Tensor] = field(default_factory=list)
     H_t_list: List[torch.Tensor] = field(default_factory=list)
+    # Soft-mask intermediates for differentiable ω re-computation in GRPO loss.
+    weighted_embeds_list: List[torch.Tensor] = field(default_factory=list)
+    entropy_list: List[torch.Tensor] = field(default_factory=list)
     mask_ind_list: List[torch.BoolTensor] = field(default_factory=list)
     quality_scores_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     agreement_list: List[torch.Tensor] = field(default_factory=list)
@@ -60,9 +63,11 @@ class SpeculativeTrajectory:
     mean_boundary_depth: float = 0.0
     boundary_distribution: str = "{}"
     # ---- compute-aware speed bonus ----
-    # Fraction of positions currently in the dKV-Cache at each step (after Phase 3
-    # commit).  Used to compute effective_flops = (used_steps/T)*(1-mean_cached),
-    # which captures BOTH fewer forward passes AND cheaper passes due to caching.
+    # K_spec fraction: per-step fraction of positions with drafter-verifier agreement
+    # (speculative acceptance, one-step validity).  Updated each step by agreement mask.
+    spec_cached_fractions: List[torch.Tensor] = field(default_factory=list)
+    # K_stable fraction: per-step fraction of positions in the persistent κ_t cache.
+    # Combined, effective_flops = (used_steps/T)*(1 - mean(K_spec ∪ K_stable)).
     cached_fractions: List[torch.Tensor] = field(default_factory=list)
     # ---- Cache quality F1 (soft precision-recall training signal) ----
     # Per-step F1 measuring whether the cache set contains the *stable*
@@ -144,8 +149,12 @@ def speculative_inference(
 
     resp_slice = slice(P, L_total)
 
-    # --- dKV-Cache ---
-    cache_mgr = DKVCacheManager(B, L_gen, device) if use_cache else None
+    # --- Two-cache system (K_spec + K_stable) ---
+    _thrash_age_decay = float(cfg.get("grpo", {}).get("thrash_age_decay", 0.0))
+    cache_mgr = (
+        SpeculativeCacheBookkeeper(B, L_gen, device, thrash_age_decay=_thrash_age_decay)
+        if use_cache else None
+    )
 
     trajectory = SpeculativeTrajectory() if record_trajectory else None
     agreement_rates = []
@@ -155,6 +164,41 @@ def speculative_inference(
     # H_t from the previous step: used to compute per-position drift for the
     # cache quality F1 signal.  Mirrors the same variable in aoae_inference().
     _prev_H_t: Optional[torch.Tensor] = None
+
+    # --- KV cache state ---
+    # K_spec skip (cache.kspec_skip): real wall-clock saving for the primary model.
+    #   Auxiliary forward always runs with use_cache=True.  The returned aux_past_kv
+    #   is used as the starting KV state for the primary; the primary only runs
+    #   forward_replace_with_cache over non-agreed contiguous clusters, reusing
+    #   aux K/V at agreed positions under the K_spec hypothesis (aux K/V ≈ pri K/V).
+    #   Saving per step ≈ (agreement rate) × (primary response FLOP).
+    #
+    # Prefix KV cache (cache.prefix_kv_cache): additionally caches the prompt
+    #   prefix for the auxiliary (skips prompt recompute each step).  The primary
+    #   always starts from aux_past_kv so it also reuses prompt K/V implicitly.
+    #
+    # Both are disabled when hidden states are needed (PRISM, KV dynamics tracker).
+    use_kspec_skip = cfg["cache"].get("kspec_skip", True) and use_cache
+    use_prefix_kv_cache = cfg["cache"].get("prefix_kv_cache", False) and use_cache
+    aux_past_kv = None
+    pri_past_kv = None   # only used when kspec_skip=False and prefix_kv_cache=True
+    _prefix_cache_initialized = False
+
+    # Stable KV cache path (no drafter): maintain primary KV across steps and only
+    # recompute at positions that changed (newly unmasked / remasked) or are still [MASK].
+    # Active when cache.stable_kv_cache=true and kspec_skip=false.
+    use_stable_kv_skip = (
+        cfg["cache"].get("stable_kv_cache", False) and use_cache
+        and not use_kspec_skip
+    )
+    stable_primary_kv = None      # persistent primary KV cache (initialized on step 1)
+    _stable_logits_cache = None   # [B, L_gen, V] most recent real primary logits at each
+                                  # position; updated at active positions each step and
+                                  # substituted at stable positions before soft_mask_module
+                                  # so H_t / policy / cache_quality_f1 see correct values.
+    # Note: no prev_y_resp needed — K_stable mask (from cache_mgr.stable) is the
+    # ground-truth for what's genuinely stable; changed/remasked positions are
+    # evicted from K_stable automatically via invalidate()/step_stable().
 
     # --- KV dynamics tracker (eval diagnostic, off during GRPO rollouts) ---
     # Uses primary model all-layer hidden states as a hidden-state proxy for KV
@@ -188,25 +232,137 @@ def speculative_inference(
         # state (dual_forward sets primary_hidden = primary_hidden_states[-1]).
         _need_all_hidden = _track_kv
         _need_hidden = (prism_adapter is not None) and not _need_all_hidden
-        dual_out = dual_model.dual_forward_resp(
-            y, resp_slice, need_hidden=_need_hidden, need_all_hidden=_need_all_hidden,
-        )
-        resp_logits = dual_out.primary_logits      # [B, L_gen, V]
-        aux_logits = dual_out.auxiliary_logits      # [B, L_gen, V]
-        agreement, reuse_state, _ = compute_reuse_signal(
-            resp_logits, aux_logits, cfg, state=reuse_state
-        )
-        agreement = agreement.bool()
+        _can_use_cache = not _need_hidden and not _need_all_hidden
+
+        if use_stable_kv_skip and _can_use_cache:
+            # --- Stable KV path: primary only, skip positions in K_stable ---
+            # K_stable = positions the policy's κ_t head committed as stable.
+            # Eviction: remask (r_t=1) evicts from K_stable via invalidate().
+            # Skip mask: K_stable positions that are NOT currently [MASK].
+            #   - [MASK] positions always need fresh logits for decoding.
+            #   - Non-K_stable unmasked positions: not yet committed or evicted;
+            #     recomputed so their KV stays current until κ_t commits them.
+            # Step 1: K_stable is empty → full primary forward (seeds stable_primary_kv).
+            if stable_primary_kv is None:
+                _full_logits, stable_primary_kv = dual_model.primary_forward_with_cache(y)
+                resp_logits = _full_logits[:, resp_slice, :]
+            else:
+                # Use K_stable mask from end of previous step (post eviction/commit).
+                _k_stable_mask = cache_mgr.stable.get_cached_mask()       # [B, L_gen]
+                _stable_skip = _k_stable_mask & ~mask_ind                  # [B, L_gen]
+                _fresh, stable_primary_kv = dual_model.primary_forward_with_stable_cache(
+                    y, resp_slice, stable_primary_kv, _stable_skip,
+                )
+                # _fresh: primary logits at active positions; zeros at skipped positions.
+                # Zeros are safe: skipped positions are unmasked and won't be sampled.
+                resp_logits = _fresh
+            # No drafter in stable path.
+            aux_logits = resp_logits
+            agreement = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
+            _pri_hidden_for_prism = None
+            _pri_hidden_states_for_tracker = None
+
+        elif use_kspec_skip and _can_use_cache:
+            # --- K_spec path: real KV skip for agreed positions ---
+            # Auxiliary runs with cache (prompt prefix reused when configured).
+            if use_prefix_kv_cache and _prefix_cache_initialized:
+                aux_logits, aux_past_kv = dual_model.auxiliary_forward_replace_with_cache(
+                    y, resp_slice, aux_past_kv,
+                )
+            else:
+                _aux_full, aux_past_kv = dual_model.auxiliary_forward_with_cache(y)
+                aux_logits = _aux_full[:, resp_slice, :]
+                _prefix_cache_initialized = True
+
+            # Primary: run only over non-agreed response clusters (K_spec skip).
+            # k_spec_mask = previous step's agreement; all-False on step 1 → full forward.
+            _k_spec = cache_mgr.spec.get_cached_mask()  # [B, L_gen] prev-step agreement
+            _pri_fresh, _ = dual_model.primary_forward_with_kspec(
+                y, resp_slice, aux_past_kv, _k_spec,
+            )
+            # Merge: agreed positions → aux_logits (no primary recompute there);
+            #        non-agreed positions → fresh primary logits.
+            resp_logits = torch.where(
+                _k_spec.unsqueeze(-1).expand_as(_pri_fresh),
+                aux_logits,
+                _pri_fresh,
+            )
+            _pri_hidden_for_prism = None
+            _pri_hidden_states_for_tracker = None
+
+        elif use_prefix_kv_cache and _can_use_cache:
+            # --- Prefix-only path: no K_spec skip, but prompt KVs cached ---
+            if not _prefix_cache_initialized:
+                _aux_full, aux_past_kv = dual_model.auxiliary_forward_with_cache(y)
+                _pri_full, pri_past_kv = dual_model.primary_forward_with_cache(y)
+                aux_logits = _aux_full[:, resp_slice, :]
+                resp_logits = _pri_full[:, resp_slice, :]
+                _prefix_cache_initialized = True
+            else:
+                aux_logits, aux_past_kv = dual_model.auxiliary_forward_replace_with_cache(
+                    y, resp_slice, aux_past_kv,
+                )
+                resp_logits, pri_past_kv = dual_model.primary_forward_replace_with_cache(
+                    y, resp_slice, pri_past_kv,
+                )
+            _pri_hidden_for_prism = None
+            _pri_hidden_states_for_tracker = None
+
+        else:
+            # --- Full forward path: needed for hidden states (PRISM, KV tracker) ---
+            dual_out = dual_model.dual_forward_resp(
+                y, resp_slice, need_hidden=_need_hidden, need_all_hidden=_need_all_hidden,
+            )
+            resp_logits = dual_out.primary_logits      # [B, L_gen, V]
+            aux_logits = dual_out.auxiliary_logits      # [B, L_gen, V]
+            _pri_hidden_for_prism = dual_out.primary_hidden
+            _pri_hidden_states_for_tracker = dual_out.primary_hidden_states
+
+        if not (use_stable_kv_skip and _can_use_cache):
+            # Stable path sets agreement=zeros directly (no drafter to compare against).
+            agreement, reuse_state, _ = compute_reuse_signal(
+                resp_logits, aux_logits, cfg, state=reuse_state
+            )
+            agreement = agreement.bool()
         agreement_rates.append(float(agreement.float().mean().item()))
 
         # --- PRISM quality scores ---
         q_scores = None
-        if prism_adapter is not None and dual_out.primary_hidden is not None:
+        if prism_adapter is not None and _pri_hidden_for_prism is not None:
             with torch.no_grad():
-                q_scores = prism_adapter(dual_out.primary_hidden.float())
+                q_scores = prism_adapter(_pri_hidden_for_prism.float())
+
+        # --- Correct resp_logits at stable positions (stable KV path only) ---
+        # In the stable path, resp_logits is zeros at K_stable positions (we skipped
+        # computing them).  Substituting cached logits there ensures that:
+        #   (a) soft_mask_module produces correct H_t / confidence / weighted_embeds
+        #       at stable positions (needed for policy κ_t/r_t and ω gradient);
+        #   (b) cache_quality_f1 measures real drift, not the artifact of zero logits;
+        #   (c) _prev_H_t stored below reflects true hidden-state proxy at stable positions.
+        # The substitution is exact in expectation: stable KV → same primary attention
+        # output → same logits → same H_t as the last step those positions were active.
+        if use_stable_kv_skip and _can_use_cache:
+            _stable_skip = cache_mgr.stable.get_cached_mask() & ~mask_ind  # [B, L_gen]
+            if _stable_logits_cache is None:
+                # Step 1: all positions were active, resp_logits is fully real.
+                _stable_logits_cache = resp_logits.detach().clone()
+            else:
+                # Update cache at active positions with this step's fresh logits.
+                _active_lc = ~_stable_skip   # [B, L_gen]
+                _stable_logits_cache = torch.where(
+                    _active_lc.unsqueeze(-1).expand_as(_stable_logits_cache),
+                    resp_logits.detach(),
+                    _stable_logits_cache,
+                )
+                # Substitute cached logits at stable positions.
+                resp_logits = torch.where(
+                    _stable_skip.unsqueeze(-1).expand_as(resp_logits),
+                    _stable_logits_cache,
+                    resp_logits,
+                )
 
         # --- Construct soft-masked state from PRIMARY logits ---
-        H_t, confidence, entropy = soft_mask_module(
+        H_t, confidence, entropy, weighted_embeds = soft_mask_module(
             resp_logits, mask_ind, step_frac
         )
 
@@ -294,6 +450,8 @@ def speculative_inference(
                 {k: v.detach() for k, v in policy_out.items()}
             )
             trajectory.H_t_list.append(H_t.detach())
+            trajectory.weighted_embeds_list.append(weighted_embeds.detach())
+            trajectory.entropy_list.append(entropy.detach())
             trajectory.mask_ind_list.append(mask_ind.detach())
             trajectory.quality_scores_list.append(
                 q_scores.detach() if q_scores is not None else None
@@ -355,24 +513,32 @@ def speculative_inference(
                         resp_tokens[b_idx, best_pos] = resp_logits[b_idx, best_pos].argmax()
                         fallback_positions[b_idx, best_pos] = True
 
-        # ====== Phase 3: Cache (agreement positions only) ======
+        # ====== Phase 3a: Speculative Accept (K_spec) ======
+        # Positions where drafter and verifier agree: KV valid for one step.
+        # K_spec is replaced each step (not accumulated).
         if cache_mgr is not None:
-            # Only cache positions where auxiliary and primary agree
-            agreement_cache = kappa_t * agreement.float() * q_exec
-            cache_mgr.commit(agreement_cache)
+            cache_mgr.step_spec(agreement)
+
+        # ====== Phase 3b: Stable Cache (K_stable) ======
+        # Positions the κ_t head predicts will remain stable across future steps.
+        # Accumulated persistently; evicted by r_t (Phase 1 already called invalidate).
+        if cache_mgr is not None:
+            cache_mgr.step_stable(kappa_t, r_t)
 
             if trajectory is not None:
-                trajectory.total_cache_hits += int(agreement_cache.sum().item())
+                trajectory.total_cache_hits += int(
+                    (agreement.float() + kappa_t.float()).clamp(0, 1).sum().item()
+                )
                 trajectory.total_cache_misses += int(
-                    (kappa_t * (~agreement).float()).sum().item()
+                    ((~agreement).float() * (1 - kappa_t.float())).sum().item()
                 )
 
-        # --- Record cached fraction after commit (for compute-aware speed bonus) ---
-        # Stored per-step so compute_reward() can compute mean_cached_fraction and
-        # use it in: effective_flops = (used_steps/T) * (1 - mean_cached_fraction).
-        # Previously absent from speculative path — caused speed bonus to silently
-        # collapse to a step-only term with no credit for within-step caching.
+        # --- Record cached fractions after commit (compute-aware speed bonus) ---
+        # spec_cached_fractions: K_spec (agreement-based, one-step, replaced each step).
+        # cached_fractions:      K_spec ∪ K_stable (combined, for reward computation).
+        # effective_flops = (used_steps/T) * (1 - mean_combined_cached_fraction).
         if trajectory is not None and cache_mgr is not None:
+            trajectory.spec_cached_fractions.append(cache_mgr.spec_cached_fraction().detach())
             trajectory.cached_fractions.append(cache_mgr.cached_fraction().detach())
 
         # --- KV dynamics tracker observation (eval diagnostic only) ---
@@ -381,8 +547,8 @@ def speculative_inference(
         # the single-model path which uses a zeros proxy).
         if _dynamics_tracker is not None:
             _layer_hiddens_for_tracker = (
-                [h.detach() for h in dual_out.primary_hidden_states]
-                if dual_out.primary_hidden_states is not None
+                [h.detach() for h in _pri_hidden_states_for_tracker]
+                if _pri_hidden_states_for_tracker is not None
                 else []
             )
             _q_t_tracked = actions.get("q_t", torch.zeros_like(u_t))

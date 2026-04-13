@@ -668,6 +668,40 @@ class TestGRPOLoss:
         )
         assert has_grad, "No gradients flowing to policy"
 
+    def test_loss_stays_finite_with_extreme_importance_ratio(self, embed_w):
+        from aoae.models.soft_mask import SoftMaskedState
+        from aoae.models.policy import AOAEPolicy
+        from aoae.models.prism import PRISMAdapter
+        from aoae.inference import aoae_inference
+        from aoae.train_grpo import compute_grpo_loss
+
+        sm = SoftMaskedState(DEFAULT_CFG, embed_w)
+        sm.set_mask_embedding(MASK_ID)
+        pol = AOAEPolicy(DEFAULT_CFG, input_dim=DIM)
+        prism = PRISMAdapter(DEFAULT_CFG, hidden_dim=DIM)
+        base = MockBaseModel(VOCAB, DIM, MASK_ID)
+
+        prompt = torch.tensor([[10, 20, 30]])
+        _, traj = aoae_inference(
+            base, pol, sm, prism, prompt, DEFAULT_CFG,
+            record_trajectory=True,
+        )
+
+        traj_data = {
+            "actions_list": traj.actions,
+            "old_log_probs": [lp.clone() - 1000.0 for lp in traj.log_probs],
+            "H_t_list": traj.H_t_list,
+            "mask_ind_list": traj.mask_ind_list,
+            "step_fracs": traj.step_fracs,
+        }
+
+        advantages = torch.tensor([0.5, -0.5])
+        loss = compute_grpo_loss(
+            pol, sm, [traj_data, traj_data], advantages, clip_eps=0.2
+        )
+
+        assert torch.isfinite(loss)
+
 
 # ======================================================================
 # Tests: ComposedPrediction
@@ -1727,6 +1761,20 @@ class TestPolicyAgreement:
         policy = AOAEPolicy(DEFAULT_CFG, input_dim=DIM)
         # input_proj should accept D+4
         assert policy.input_proj.in_features == DIM + 4
+
+    def test_sample_actions_raises_on_invalid_probs(self, embed_w):
+        from aoae.models.policy import AOAEPolicy
+        policy = AOAEPolicy(DEFAULT_CFG, input_dim=DIM)
+        mask = torch.ones(1, 2).bool()
+        bad = torch.tensor([[float("nan"), 0.5]])
+        policy_out = {
+            "unmask_probs": bad,
+            "remask_probs": torch.zeros_like(bad),
+            "cache_probs": torch.zeros_like(bad),
+            "access_probs": torch.zeros_like(bad),
+        }
+        with pytest.raises(RuntimeError, match="unmask_probs"):
+            policy.sample_actions(policy_out, mask)
 
 
 # ======================================================================

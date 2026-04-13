@@ -844,7 +844,7 @@ def run_speculative_inference(
                 agreement=safe_reuse.float(),
             )
         else:
-            H_t, confidence, entropy = soft_mask_module(resp_logits, mask_ind, step_frac)
+            H_t, confidence, entropy, _ = soft_mask_module(resp_logits, mask_ind, step_frac)
             age_feat = None
             last_action_feat = None
             if use_positional_cache:
@@ -1090,7 +1090,7 @@ def run_policy_guided_inference(
                 q_scores = prism_adapter(resp_hidden.float())
 
         # Soft-masked state
-        H_t, confidence, entropy = soft_mask_module(
+        H_t, confidence, entropy, _ = soft_mask_module(
             resp_logits, mask_ind, step_frac
         )
         age_feat = None

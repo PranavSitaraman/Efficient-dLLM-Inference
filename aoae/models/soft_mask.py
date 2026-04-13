@@ -46,7 +46,7 @@ class SoftMaskedState(nn.Module):
         log_probs = F.log_softmax(logits_f, dim=-1)
         probs = log_probs.exp()
         confidence = probs.max(dim=-1).values
-        entropy = -(probs * log_probs).sum(dim=-1)
+        entropy = -(torch.nan_to_num(probs * log_probs, nan=0.0)).sum(dim=-1)
 
         topk_probs, topk_ids = probs.topk(self.top_k, dim=-1)
         topk_probs_norm = topk_probs / topk_probs.sum(dim=-1, keepdim=True).clamp(min=1e-8)
@@ -69,7 +69,32 @@ class SoftMaskedState(nn.Module):
         h_t = lam_exp * mask_embed + (1.0 - lam_exp) * weighted_embeds
         assert h_t.shape[:2] == (bsz, seq_len)
         assert logits.shape[-1] == vocab_size
-        return h_t, confidence, entropy
+        return h_t, confidence, entropy, weighted_embeds
+
+    def recompute_h_t(
+        self,
+        weighted_embeds: torch.Tensor,
+        entropy: torch.Tensor,
+    ) -> torch.Tensor:
+        """Recompute h_t from stored rollout intermediates, with grad through ω scalars.
+
+        During GRPO training, ``weighted_embeds`` and ``entropy`` are detached
+        tensors stored from the rollout.  Recomputing h_t here (rather than
+        using the stored H_t directly) allows autograd to flow through
+        ω_s / ω_a / ω_b, making them genuinely trainable.
+
+        Args:
+            weighted_embeds: [B, L, D] float32 — top-K weighted token embeddings
+                             stored from the forward pass (detached).
+            entropy:         [B, L] float32 — per-position entropy (detached).
+
+        Returns:
+            h_t: [B, L, D] with grad w.r.t. omega parameters.
+        """
+        lam = self.omega_s * torch.sigmoid(
+            self.omega_a * (-entropy - self.omega_b)
+        )
+        return lam.unsqueeze(-1) * self.mask_embed + (1.0 - lam.unsqueeze(-1)) * weighted_embeds
 
     def set_mask_embedding(self, mask_token_id: int):
         self.mask_embed.copy_(self.embedding_weight[mask_token_id].unsqueeze(0))

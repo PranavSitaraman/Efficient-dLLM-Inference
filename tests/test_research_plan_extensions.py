@@ -82,6 +82,29 @@ def test_boundary_head_policy_outputs_and_actions():
     assert torch.isfinite(lp).all()
 
 
+def test_policy_zero_temperature_remains_finite():
+    from aoae.models.policy import AOAEPolicy
+
+    cfg = {
+        "policy": {
+            "d_model": 32,
+            "n_layers": 1,
+            "n_heads": 4,
+            "dropout": 0.0,
+            "use_positional_features": False,
+        }
+    }
+    B, L, D = 1, 6, 16
+    policy = AOAEPolicy(cfg, input_dim=D)
+    H = torch.randn(B, L, D)
+    mask = torch.randint(0, 2, (B, L)).bool()
+    out = policy(H, mask, step_frac=0.5, temperature=0.0)
+    assert torch.isfinite(out["unmask_probs"]).all()
+    assert torch.isfinite(out["remask_probs"]).all()
+    assert torch.isfinite(out["cache_probs"]).all()
+    assert torch.isfinite(out["access_probs"]).all()
+
+
 def test_policy_can_disable_agreement_feature():
     from aoae.models.policy import AOAEPolicy
 

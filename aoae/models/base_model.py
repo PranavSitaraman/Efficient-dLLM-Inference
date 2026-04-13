@@ -280,6 +280,27 @@ def _devices_match(current: Optional[torch.device], target: Optional[torch.devic
     return current.index == target.index
 
 
+def _kspec_find_clusters(non_agreed: torch.BoolTensor) -> list:
+    """Return [(start, end), ...] for each contiguous run of True in non_agreed [L].
+
+    Runs on CPU to avoid a CUDA sync in the cluster-detection loop.
+    """
+    na = non_agreed.cpu().tolist()
+    clusters: list = []
+    L = len(na)
+    i = 0
+    while i < L:
+        if na[i]:
+            j = i + 1
+            while j < L and na[j]:
+                j += 1
+            clusters.append((i, j))
+            i = j
+        else:
+            i += 1
+    return clusters
+
+
 class LLaDABaseModel(nn.Module):
     """Frozen LLaDA wrapper — no gradients flow through this module."""
 
@@ -1030,6 +1051,72 @@ class LLaDABaseModel(nn.Module):
         if hasattr(next_cache, "consolidate"):
             next_cache.consolidate()
         return logits, next_cache
+
+    @torch.no_grad()
+    def forward_with_kspec_cache(
+        self,
+        full_input_ids: torch.LongTensor,
+        resp_slice: slice,
+        aux_past_kv: object,
+        k_spec_mask: torch.BoolTensor,
+    ) -> Tuple[torch.Tensor, object]:
+        """Primary forward with K_spec KV skip.
+
+        Reuses aux_past_kv (K/V from the auxiliary model) at agreed positions
+        (k_spec_mask=True).  For each contiguous cluster of non-agreed response
+        positions the model runs forward_replace_with_cache, so only those tokens
+        incur primary Q/K/V projection cost.
+
+        Under the K_spec hypothesis (aux K/V ≈ pri K/V at agreed positions) this
+        gives a real wall-clock saving proportional to the agreement rate.
+
+        Args:
+            full_input_ids: [B, L_total] — full prompt + response sequence.
+            resp_slice:     slice(P, P+L_gen) — response region in full sequence.
+            aux_past_kv:    KV cache from the auxiliary forward this step.
+                            Used as the starting cache; aux K/V already injected at
+                            ALL positions (prompt + agreed response) by construction.
+            k_spec_mask:    [B, L_gen] bool — True = agreed (reuse aux K/V, skip primary).
+
+        Returns:
+            logits_fresh:  [B, L_gen, V] — primary logits at non-agreed positions;
+                           zeros at agreed positions (caller substitutes aux_logits there).
+            kv_updated:    KV cache updated at non-agreed response positions.
+        """
+        if self._backend not in ("dinfer", "soft_moe"):
+            raise NotImplementedError(
+                "forward_with_kspec_cache requires a dInfer/soft_moe backend."
+            )
+
+        B = full_input_ids.shape[0]
+        P = resp_slice.start
+        L_gen = resp_slice.stop - P
+        dev = full_input_ids.device
+
+        # All positions agreed → skip primary entirely; caller uses aux_logits everywhere.
+        if k_spec_mask.all():
+            return (
+                torch.zeros(B, L_gen, self.vocab_size, dtype=self.dtype, device=dev),
+                aux_past_kv,
+            )
+
+        # Conservative union across batch: position is non-agreed if ANY sample disagrees.
+        # Exact when B=1 (the common training/eval case).
+        non_agreed_pos = ~k_spec_mask.all(dim=0)  # [L_gen]
+        clusters = _kspec_find_clusters(non_agreed_pos)
+
+        logits_out = torch.zeros(B, L_gen, self.vocab_size, dtype=self.dtype, device=dev)
+        current_kv = aux_past_kv
+
+        for c_start, c_end in clusters:
+            span_logits, current_kv = self.forward_replace_with_cache(
+                full_input_ids,
+                slice(P + c_start, P + c_end),
+                current_kv,
+            )
+            logits_out[:, c_start:c_end, :] = span_logits
+
+        return logits_out, current_kv
 
     # ------------------------------------------------------------------
     @torch.no_grad()

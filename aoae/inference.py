@@ -45,6 +45,11 @@ class AOAETrajectory:
     policy_outputs: List[Dict[str, torch.Tensor]] = field(default_factory=list)
     thrash_counts: List[torch.Tensor] = field(default_factory=list)
     H_t_list: List[torch.Tensor] = field(default_factory=list)
+    # Soft-mask intermediates stored for differentiable ω re-computation in GRPO loss.
+    # Storing these (instead of just H_t) lets autograd flow through ω_s/ω_a/ω_b
+    # without re-running the base model or storing full vocab-size logits.
+    weighted_embeds_list: List[torch.Tensor] = field(default_factory=list)
+    entropy_list: List[torch.Tensor] = field(default_factory=list)
     mask_ind_list: List[torch.BoolTensor] = field(default_factory=list)
     quality_scores_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     age_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
@@ -198,7 +203,7 @@ def aoae_inference(
                 q_scores = prism_adapter(resp_hidden.float())  # [B, L_gen]
 
         # --- Construct soft-masked state ---
-        H_t, confidence, entropy = soft_mask_module(
+        H_t, confidence, entropy, weighted_embeds = soft_mask_module(
             resp_logits, mask_ind, step_frac
         )  # H_t: [B, L_gen, D]
 
@@ -290,8 +295,13 @@ def aoae_inference(
             trajectory.policy_outputs.append(
                 {k: v.detach() for k, v in policy_out.items()}
             )
-            # Store states for off-policy importance sampling
+            # Store states for off-policy importance sampling.
+            # weighted_embeds and entropy are the soft-mask intermediates that
+            # allow ω_s/ω_a/ω_b to receive gradients in compute_grpo_loss
+            # via soft_mask_module.recompute_h_t() (no base model re-run needed).
             trajectory.H_t_list.append(H_t.detach())
+            trajectory.weighted_embeds_list.append(weighted_embeds.detach())
+            trajectory.entropy_list.append(entropy.detach())
             trajectory.mask_ind_list.append(mask_ind.detach())
             trajectory.quality_scores_list.append(
                 q_scores.detach() if q_scores is not None else None
