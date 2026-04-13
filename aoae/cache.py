@@ -29,12 +29,14 @@ import torch
 # ---------------------------------------------------------------------------
 
 class SpeculativeKVCache:
-    """K_spec: transient speculative frontier / one-step speculative-accept state.
+    """K_spec: transient speculative frontier of drafted-but-not-yet-verified positions.
 
     Despite the legacy class name, this is not a persistent cache. It stores
     the short-lived speculative state that bridges the drafter and verifier.
-    In the current k=1 runtime this is represented as the previous step's
-    accepted / reusable positions and is replaced entirely each step.
+    In the k>1 draft--validate scheme this is the frontier of positions drafted
+    since the last verifier pass. Once the verifier runs, accepted tokens remain
+    directly in the sequence state ``y``; K_spec is then cleared/replaced by the
+    next batch of newly drafted candidates.
     """
 
     def __init__(self, batch_size: int, seq_len: int, device: torch.device):
@@ -45,9 +47,21 @@ class SpeculativeKVCache:
             batch_size, seq_len, dtype=torch.bool, device=device
         )
 
+    def replace(self, frontier_mask: torch.Tensor):
+        """Replace the speculative frontier mask."""
+        self.cached = frontier_mask.bool()
+
+    def add(self, frontier_mask: torch.Tensor):
+        """Union newly drafted candidates into the current frontier."""
+        self.cached = self.cached | frontier_mask.bool()
+
+    def remove(self, mask: torch.Tensor):
+        """Remove positions from the frontier (e.g. remasked or verified)."""
+        self.cached = self.cached & ~mask.bool()
+
     def accept(self, agreement: torch.Tensor):
-        """Replace the one-step speculative frontier mask (not a union)."""
-        self.cached = agreement.bool()
+        """Backward-compatible alias for the older k=1 frontier-replace API."""
+        self.replace(agreement)
 
     def get_cached_mask(self) -> torch.BoolTensor:
         return self.cached
@@ -169,8 +183,16 @@ class SpeculativeCacheBookkeeper:
     # --- New two-cache API (called from speculative_inference.py Phase 3) ---
 
     def step_spec(self, agreement: torch.Tensor):
-        """Phase 3a: Update the transient K_spec frontier for the next step."""
+        """Backward-compatible helper for the older k=1 frontier-replace API."""
         self.spec.accept(agreement)
+
+    def replace_spec(self, frontier_mask: torch.Tensor):
+        """Replace the speculative frontier after a verifier pass."""
+        self.spec.replace(frontier_mask)
+
+    def add_spec(self, frontier_mask: torch.Tensor):
+        """Accumulate newly drafted candidates before the next verifier pass."""
+        self.spec.add(frontier_mask)
 
     def step_stable(self, kappa_t: torch.Tensor, r_t: torch.Tensor):
         """Phase 3b: Commit κ_t positions to K_stable; evict r_t positions; tick age."""
@@ -183,7 +205,7 @@ class SpeculativeCacheBookkeeper:
     def invalidate(self, edit_mask: torch.Tensor):
         """Evict stable-cached positions that are being edited."""
         self.stable.evict(edit_mask)
-        # K_spec is replaced each step — no persistent eviction needed.
+        self.spec.remove(edit_mask)
 
     def count_thrash(self, r_t: torch.Tensor) -> torch.Tensor:
         """[B] age-weighted count of stable-cached positions that are remasked."""

@@ -45,9 +45,32 @@ prism:
   lr: 1.0e-3
   batch_size: 4
 
+# ---- Verifier backend ---------------------------------------
+# Controls how quality_scores are produced for the policy / speculative loop.
+# Ablations:
+#   - prism + trainable=false  → frozen PRISM sidecar
+#   - prism + trainable=true   → unfrozen PRISM during GRPO
+#   - learned_head             → fresh PRISM-like verifier head
+#   - confidence               → logits-only heuristic verifier
+verifier:
+  enabled: true
+  kind: "prism"
+  trainable: false
+  artifact_name: "prism_adapter.pt"
+  score_mode: "max_prob"
+  hidden_dim: 256
+  threshold: 0.5
+  dropout: 0.0
+
 # ---- dKV-Cache ----------------------------------------------
 cache:
   enabled: true
+  # Legacy name retained for backward compatibility:
+  #   kspec_skip=true enables the speculative draft--validate path, where K_spec
+  #   is the transient drafted frontier awaiting the next verifier pass.
+  kspec_skip: true
+  stable_kv_cache: false
+  prefix_kv_cache: false
 
 # ---- GRPO training ------------------------------------------
 grpo:
@@ -84,6 +107,8 @@ inference:
   temperature: 0.0             # base-model sampling temp (0 = greedy)
   fallback_unmask: true        # unmask highest-confidence when u_t = 0
   disable_remask: false        # ablation: set true to disable remasking
+  primary_every_n: 1           # set >1 for lossy k>1 speculative draft--validate
+  speculative_aux_cost_ratio: 0.15
   positional_cache:
     enabled: true              # enables age_feature and last_action_feature inputs to policy
     horizon: 4                 # next-H window for access prediction

@@ -103,6 +103,7 @@ def build_grpo_config_fingerprint(cfg: Dict[str, object]) -> str:
         "soft_mask": cfg.get("soft_mask", {}),
         "policy": cfg.get("policy", {}),
         "prism": cfg.get("prism", {}),
+        "verifier": cfg.get("verifier", {}),
         "grpo": cfg.get("grpo", {}),
         "inference": cfg.get("inference", {}),
         "data": {

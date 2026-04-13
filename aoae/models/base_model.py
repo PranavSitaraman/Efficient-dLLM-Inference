@@ -1028,6 +1028,40 @@ class LLaDABaseModel(nn.Module):
         return logits, past_key_values
 
     @torch.no_grad()
+    def forward_with_cache_and_hidden(
+        self,
+        input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, object]:
+        """Cached forward returning logits, last hidden states, and KV cache."""
+        if self._backend not in ("dinfer", "soft_moe"):
+            raise NotImplementedError("forward_with_cache_and_hidden is only supported for dInfer-backed models.")
+        if input_ids.device != self.device:
+            input_ids = input_ids.to(self.device)
+        batch_size, seq_len = input_ids.shape
+        attention_mask = self._make_attention_mask(
+            batch_size, seq_len, input_ids.device, block_length=self._block_length,
+        )
+        outputs = self._forward_dinfer_outputs(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=True,
+            use_cache=True,
+        )
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+        hidden = self._extract_hidden_only_tensor(
+            outputs,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            source="dinfer_cached",
+        )
+        past_key_values = getattr(outputs, "past_key_values", None)
+        if past_key_values is None:
+            raise RuntimeError("dInfer cached forward did not return past_key_values.")
+        if hasattr(past_key_values, "consolidate"):
+            past_key_values.consolidate()
+        return logits, hidden, past_key_values
+
+    @torch.no_grad()
     def forward_replace_with_cache(
         self,
         full_input_ids: torch.LongTensor,
@@ -1045,6 +1079,7 @@ class LLaDABaseModel(nn.Module):
             full_input_ids = full_input_ids.to(self.device)
         self._aoae_last_cache_replace_fell_back = False
         self._aoae_last_full_recompute_logits = None
+        self._aoae_last_full_recompute_hidden = None
 
         start = int(replace_slice.start)
         end = int(replace_slice.stop)
@@ -1088,6 +1123,81 @@ class LLaDABaseModel(nn.Module):
         if hasattr(next_cache, "consolidate"):
             next_cache.consolidate()
         return logits, next_cache
+
+    @torch.no_grad()
+    def forward_replace_with_cache_and_hidden(
+        self,
+        full_input_ids: torch.LongTensor,
+        replace_slice: slice,
+        past_key_values: object,
+    ) -> Tuple[torch.Tensor, torch.Tensor, object]:
+        """Recompute a contiguous query span against cached prefix state with hidden states."""
+        if self._backend not in ("dinfer", "soft_moe"):
+            raise NotImplementedError("forward_replace_with_cache_and_hidden is only supported for dInfer-backed models.")
+        if past_key_values is None:
+            raise ValueError("past_key_values must be provided for replace-position forward.")
+        if hasattr(past_key_values, "consolidate"):
+            past_key_values.consolidate()
+        if full_input_ids.device != self.device:
+            full_input_ids = full_input_ids.to(self.device)
+        self._aoae_last_cache_replace_fell_back = False
+        self._aoae_last_full_recompute_logits = None
+        self._aoae_last_full_recompute_hidden = None
+
+        start = int(replace_slice.start)
+        end = int(replace_slice.stop)
+        batch_size, full_seq_len = full_input_ids.shape
+        query_ids = full_input_ids[:, start:end]
+        attention_mask = self._make_query_attention_mask(
+            batch_size,
+            full_seq_len,
+            start,
+            end,
+            full_input_ids.device,
+            block_length=self._block_length,
+        )
+        try:
+            outputs = self._forward_dinfer_outputs(
+                input_ids=query_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+                past_key_values=past_key_values,
+                use_cache=True,
+                replace_position=(start, end),
+            )
+        except (FloatingPointError, RuntimeError) as exc:
+            message = str(exc).lower()
+            if "[aoae][nonfinite" not in message and "incoherent cache" not in message:
+                raise
+            return self._fallback_from_incoherent_cache(
+                full_input_ids=full_input_ids,
+                replace_slice=replace_slice,
+                reason=str(exc),
+                return_hidden=True,
+            )
+        logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+        hidden = self._extract_hidden_only_tensor(
+            outputs,
+            batch_size=batch_size,
+            seq_len=(end - start),
+            source="dinfer_replace_cached",
+        )
+        if not torch.isfinite(logits).all() or not torch.isfinite(hidden).all():
+            reason = _nonfinite_tensor_summary("replace_logits", logits)
+            if not torch.isfinite(hidden).all():
+                reason = f"{reason}; {_nonfinite_tensor_summary('replace_hidden', hidden)}"
+            return self._fallback_from_incoherent_cache(
+                full_input_ids=full_input_ids,
+                replace_slice=replace_slice,
+                reason=reason,
+                return_hidden=True,
+            )
+        next_cache = getattr(outputs, "past_key_values", None)
+        if next_cache is None:
+            raise RuntimeError("dInfer replace-position forward did not return updated past_key_values.")
+        if hasattr(next_cache, "consolidate"):
+            next_cache.consolidate()
+        return logits, hidden, next_cache
 
     @torch.no_grad()
     def forward_with_kspec_cache(
@@ -1167,13 +1277,68 @@ class LLaDABaseModel(nn.Module):
 
         return logits_out, current_kv
 
+    @torch.no_grad()
+    def forward_with_kspec_cache_and_hidden(
+        self,
+        full_input_ids: torch.LongTensor,
+        resp_slice: slice,
+        aux_past_kv: object,
+        k_spec_mask: torch.BoolTensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, object]:
+        """Clustered cached forward that also returns last hidden states."""
+        if self._backend not in ("dinfer", "soft_moe"):
+            raise NotImplementedError(
+                "forward_with_kspec_cache_and_hidden requires a dInfer/soft_moe backend."
+            )
+
+        B = full_input_ids.shape[0]
+        P = resp_slice.start
+        L_gen = resp_slice.stop - P
+        dev = full_input_ids.device
+        hid = int(self.hidden_dim)
+
+        if k_spec_mask.all():
+            return (
+                torch.zeros(B, L_gen, self.vocab_size, dtype=self.dtype, device=dev),
+                torch.zeros(B, L_gen, hid, dtype=self.dtype, device=dev),
+                aux_past_kv,
+            )
+
+        non_agreed_pos = ~k_spec_mask.all(dim=0)
+        clusters = _kspec_find_clusters(non_agreed_pos)
+
+        logits_out = torch.zeros(B, L_gen, self.vocab_size, dtype=self.dtype, device=dev)
+        hidden_out = torch.zeros(B, L_gen, hid, dtype=self.dtype, device=dev)
+        current_kv = aux_past_kv
+
+        for c_start, c_end in clusters:
+            span_logits, span_hidden, current_kv = self.forward_replace_with_cache_and_hidden(
+                full_input_ids,
+                slice(P + c_start, P + c_end),
+                current_kv,
+            )
+            if getattr(self, "_aoae_last_cache_replace_fell_back", False):
+                full_logits = getattr(self, "_aoae_last_full_recompute_logits", None)
+                full_hidden = getattr(self, "_aoae_last_full_recompute_hidden", None)
+                if full_logits is None or full_hidden is None:
+                    raise RuntimeError(
+                        "[AOAE][CACHE FALLBACK BUG] Missing full recompute tensors after cached "
+                        "replace fallback."
+                    )
+                return full_logits[:, resp_slice, :], full_hidden[:, resp_slice, :], current_kv
+            logits_out[:, c_start:c_end, :] = span_logits
+            hidden_out[:, c_start:c_end, :] = span_hidden
+
+        return logits_out, hidden_out, current_kv
+
     def _fallback_from_incoherent_cache(
         self,
         *,
         full_input_ids: torch.LongTensor,
         replace_slice: slice,
         reason: str,
-    ) -> Tuple[torch.Tensor, object]:
+        return_hidden: bool = False,
+    ):
         """Discard hybrid cached state and fully recompute after a non-finite replace pass."""
         start = int(replace_slice.start)
         end = int(replace_slice.stop)
@@ -1211,14 +1376,28 @@ class LLaDABaseModel(nn.Module):
         )
         print(banner, file=sys.stderr, flush=True)
 
-        full_logits, fresh_cache = self.forward_with_cache(full_input_ids)
+        if return_hidden:
+            full_logits, full_hidden, fresh_cache = self.forward_with_cache_and_hidden(full_input_ids)
+        else:
+            full_logits, fresh_cache = self.forward_with_cache(full_input_ids)
+            full_hidden = None
         if not torch.isfinite(full_logits).all():
             raise RuntimeError(
                 "[AOAE][CACHE FALLBACK FAILED] Fresh full recompute also returned non-finite logits. "
                 f"{_nonfinite_tensor_summary('full_logits', full_logits)}"
             )
+        if return_hidden and full_hidden is not None and not torch.isfinite(full_hidden).all():
+            raise RuntimeError(
+                "[AOAE][CACHE FALLBACK FAILED] Fresh full recompute also returned non-finite hidden states. "
+                f"{_nonfinite_tensor_summary('full_hidden', full_hidden)}"
+            )
         self._aoae_last_cache_replace_fell_back = True
         self._aoae_last_full_recompute_logits = full_logits.detach()
+        self._aoae_last_full_recompute_hidden = (
+            full_hidden.detach() if full_hidden is not None else None
+        )
+        if return_hidden:
+            return full_logits[:, start:end, :], full_hidden[:, start:end, :], fresh_cache
         return full_logits[:, start:end, :], fresh_cache
 
     # ------------------------------------------------------------------

@@ -1,8 +1,10 @@
 # Canonical speculative AOAE config — stable KV cache GRPO run.
 #
-# Pivot from K_spec (2026-04-12): K_spec adds a full aux forward every step.
-# Since aux and primary are the SAME model (routing toggled), C_aux ≈ C_pri.
-# Even at 100% agreement cost = C_aux + 0 ≈ C_pri — drafter tax always paid.
+# Pivot from k=1 K_spec (2026-04-13): speculative speedup now comes from a lossy
+# k>1 draft--validate schedule rather than a one-step accepted-mask skip.
+# The auxiliary drafts every step; the soft primary/verifier runs every
+# `primary_every_n` steps. K_spec is the transient drafted frontier awaiting
+# verification, not a persistent cache of already accepted tokens.
 #
 # Stable KV cache (2026-04-12): primary-only, no drafter.
 #   - Maintains stable_primary_kv across steps.
@@ -58,6 +60,16 @@ prism:
   lr: 1.0e-3
   batch_size: 4
 
+verifier:
+  enabled: true
+  kind: "prism"
+  trainable: false
+  artifact_name: "prism_adapter.pt"
+  score_mode: "max_prob"
+  hidden_dim: 256
+  threshold: 0.5
+  dropout: 0.0
+
 cache:
   enabled: true
   # stable_kv_cache: stability-oriented real KV skip — NO drafter needed.
@@ -68,12 +80,13 @@ cache:
   #   Already-unmasked stable positions reuse cached primary KV exactly.
   #   Saving per step ≈ (fraction already unmasked) × (primary response FLOP).
   #   Savings grow as decoding progresses. No drafter tax.
-  #   NOTE: auto-disabled when PRISM adapter or KV dynamics tracker needs hidden states.
+  #   NOTE: now compatible with hidden-state verifiers by caching verifier hidden
+  #   states alongside logits; still disabled only when track_kv_dynamics=true.
   stable_kv_cache: true
-  # kspec_skip: DISABLED — K_spec adds a full aux forward each step (~C_aux ≈ C_pri)
-  #   and saves only when agreement_rate is very high AND aux is much cheaper than pri.
-  #   Since aux and pri are the same model (routing toggled), savings are marginal.
-  #   Even at 100% agreement cost = C_aux ≈ C_pri (drafter tax always paid).
+  # kspec_skip: enables the lossy k>1 speculative draft--validate path.
+  #   Auxiliary drafts every step; the primary/verifier runs every
+  #   inference.primary_every_n steps. K_spec stores drafted-but-not-yet-verified
+  #   positions between those verifier passes.
   kspec_skip: false
   # prefix_kv_cache: cache prompt KVs for the auxiliary. Not applicable in stable path
   #   (no aux); kept false.
@@ -108,7 +121,8 @@ inference:
   temperature: 0.0
   fallback_unmask: true
   disable_remask: false
-  primary_every_n: 6
+  primary_every_n: 6           # speculative verifier cadence when cache.kspec_skip=true
+  speculative_aux_cost_ratio: 0.15  # FLOP proxy for hard auxiliary vs. full soft primary
   primary_agree_threshold: 0.85
   positional_cache:
     enabled: true

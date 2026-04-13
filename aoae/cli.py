@@ -18,6 +18,7 @@ from .checkpoints import resolve_policy_checkpoint
 from .checkpoints import inspect_grpo_artifacts, inspect_grpo_resume_candidate
 from .checkpoints import find_latest_checkpoint
 from .experiment_utils import parse_float_list
+from .models.verifier import verifier_artifact_name, verifier_kind
 from .preflight import run_preflight
 
 
@@ -417,7 +418,9 @@ def run_train_command(args: argparse.Namespace):
 def run_pipeline_command(args: argparse.Namespace):
     cfg = _load_config(args.config)
     output_dir = cfg.get("logging", {}).get("output_dir", "")
-    prism_path = os.path.join(output_dir, "prism_adapter.pt") if output_dir else ""
+    needs_prism_stage = verifier_kind(cfg) == "prism"
+    prism_filename = verifier_artifact_name(cfg) if needs_prism_stage else None
+    prism_path = os.path.join(output_dir, prism_filename) if output_dir and prism_filename else ""
     final_policy_path = os.path.join(output_dir, "policy_final.pt") if output_dir else ""
     latest_policy_ckpt = find_latest_checkpoint(output_dir)
     grpo_status = inspect_grpo_artifacts(output_dir, cfg) if output_dir else {
@@ -447,7 +450,11 @@ def run_pipeline_command(args: argparse.Namespace):
             raise SystemExit(rc)
         return rc
 
-    if not args.skip_prism and prism_path and os.path.exists(prism_path):
+    if not args.skip_prism and not needs_prism_stage:
+        print(
+            f"[Pipeline] verifier.kind={verifier_kind(cfg)!r}; skipping standalone PRISM training stage."
+        )
+    elif not args.skip_prism and prism_path and os.path.exists(prism_path):
         print(f"[Pipeline] Found existing PRISM adapter at {prism_path}; skipping PRISM training.")
     elif not args.skip_prism:
         _run_nested_cli(["train", "--config", args.config, "--stage", "prism"])

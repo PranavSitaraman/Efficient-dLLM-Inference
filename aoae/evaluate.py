@@ -32,7 +32,7 @@ from .checkpoints import (
 from .models.base_model import LLaDABaseModel
 from .models.soft_mask import SoftMaskedState
 from .models.policy import AOAEPolicy, DefaultPolicy
-from .models.prism import PRISMAdapter
+from .models.verifier import create_or_load_verifier, verifier_artifact_name
 from .inference import (
     aoae_inference,
     uniform_decode,
@@ -313,6 +313,7 @@ def evaluate_aoae(
                 policy=policy,
                 soft_mask_module=soft_mask,
                 prism_adapter=prism,
+                verifier=prism,
                 prompt_ids=prompt_ids,
                 cfg=cfg,
                 record_trajectory=False,
@@ -693,6 +694,7 @@ def evaluate_speculative(
                     policy=policy,
                     soft_mask_module=soft_mask,
                     prism_adapter=prism,
+                    verifier=prism,
                     prompt_ids=prompt_ids,
                     cfg=cfg,
                     record_trajectory=False,
@@ -704,8 +706,14 @@ def evaluate_speculative(
                 stats: Dict[str, Any] = {}
                 if _spec_trajectory is not None:
                     traj = _spec_trajectory
-                    stats["primary_steps"] = T
-                    stats["aux_only_steps"] = 0
+                    primary_step_flags = getattr(traj, "primary_step_flags", [])
+                    primary_steps = (
+                        int(sum(float(flag.float().mean().item()) for flag in primary_step_flags))
+                        if primary_step_flags
+                        else T
+                    )
+                    stats["primary_steps"] = primary_steps
+                    stats["aux_only_steps"] = max(len(traj.step_fracs) - primary_steps, 0)
                     stats["total_commits"] = int(traj.total_cache_hits)
                     stats["total_invalidations"] = int(traj.total_cache_misses)
                     stats["draft_accepts"] = int(traj.total_cache_hits)
@@ -1175,6 +1183,9 @@ def _build_run_metadata(
         "positional_cache_refresh_budget": int(cfg.get("inference", {}).get("positional_cache", {}).get("refresh_budget", 0)),
         "boundary_head_enabled": bool(cfg.get("policy", {}).get("boundary_head", {}).get("enabled", False)),
         "boundary_num_bins": int(cfg.get("policy", {}).get("boundary_head", {}).get("num_bins", 0)),
+        "verifier_enabled": bool(cfg.get("verifier", {}).get("enabled", True)),
+        "verifier_kind": str(cfg.get("verifier", {}).get("kind", "prism")),
+        "verifier_trainable": bool(cfg.get("verifier", {}).get("trainable", False)),
         "track_kv_dynamics": bool(cfg.get("analysis", {}).get("track_kv_dynamics", False)),
         "kv_locality_windows": cfg.get("analysis", {}).get("locality_windows", [8, 16, 32]),
         "kv_confidence_threshold": cfg.get("analysis", {}).get("confidence_threshold", 0.9),
@@ -1331,18 +1342,30 @@ def main(
                     load_state_dict_flexible(soft_mask, ckpt["soft_mask"], "soft_mask")
                 policy.eval()
 
-                prism_path = resolve_sidecar_artifact(
-                    checkpoint_path,
-                    cfg["logging"]["output_dir"],
-                    "prism_adapter.pt",
+                verifier_filename = verifier_artifact_name(cfg)
+                verifier_path = (
+                    resolve_sidecar_artifact(
+                        checkpoint_path,
+                        cfg["logging"]["output_dir"],
+                        verifier_filename,
+                    )
+                    if verifier_filename is not None
+                    else None
                 )
-                prism = None
-                if prism_path is not None:
-                    prism = PRISMAdapter(cfg, embed_dim).to(device)
-                    prism.load_state_dict(torch.load(prism_path, map_location=device))
-                    prism.eval()
-                    if is_global_rank_zero():
-                        print(f"  Loaded PRISM adapter from {prism_path}")
+                prism, verifier_info = create_or_load_verifier(
+                    cfg,
+                    hidden_dim=embed_dim,
+                    device=device,
+                    artifact_path=verifier_path,
+                    checkpoint_state=ckpt.get("verifier") if isinstance(ckpt, dict) else None,
+                    allow_fresh_init=False,
+                    verbose=is_global_rank_zero(),
+                )
+                if prism is not None and is_global_rank_zero():
+                    print(
+                        f"  Loaded verifier kind={verifier_info.kind} "
+                        f"from {verifier_info.loaded_from or 'fresh'}"
+                    )
 
                 tau_r = cfg["base_model"].get("routing_temperature", 0.01)
                 if is_global_rank_zero():
@@ -1440,16 +1463,25 @@ def main(
                 policy.eval()
                 soft_mask.eval()
 
-                prism_path = resolve_sidecar_artifact(
-                    checkpoint_path,
-                    cfg["logging"]["output_dir"],
-                    "prism_adapter.pt",
+                verifier_filename = verifier_artifact_name(cfg)
+                verifier_path = (
+                    resolve_sidecar_artifact(
+                        checkpoint_path,
+                        cfg["logging"]["output_dir"],
+                        verifier_filename,
+                    )
+                    if verifier_filename is not None
+                    else None
                 )
-                prism = None
-                if prism_path is not None:
-                    prism = PRISMAdapter(cfg, embed_dim).to(device)
-                    prism.load_state_dict(torch.load(prism_path, map_location=device))
-                    prism.eval()
+                prism, _verifier_info = create_or_load_verifier(
+                    cfg,
+                    hidden_dim=embed_dim,
+                    device=device,
+                    artifact_path=verifier_path,
+                    checkpoint_state=ckpt.get("verifier") if isinstance(ckpt, dict) else None,
+                    allow_fresh_init=False,
+                    verbose=is_global_rank_zero(),
+                )
 
                 if is_global_rank_zero():
                     print("\n====== AOAE Pareto Sweep ======")
