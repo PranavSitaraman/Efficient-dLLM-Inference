@@ -334,13 +334,16 @@ def _plot_reuse_pareto(rows: List[Dict[str, Any]], output_root: Path) -> None:
     fig2, ax2 = plt.subplots(1, 1, figsize=(8, 5.5))
     for method in methods:
         points = [row for row in rows if row["reuse_signal_method"] == method]
-        hit = [float(point["cache_hit_rate"]) for point in points]
+        hit = [
+            float(point.get("combined_cache_fraction", point.get("cache_hit_rate", 0.0)))
+            for point in points
+        ]
         acc = [float(point["accuracy"]) for point in points]
         ax2.scatter(hit, acc, c=[color_map[method]], label=method, s=60, edgecolors="k", linewidths=0.5)
 
-    ax2.set_xlabel("Cache Hit Rate")
+    ax2.set_xlabel("Combined Cache Occupancy")
     ax2.set_ylabel("Accuracy")
-    ax2.set_title("POC 2: Cache Hit Rate vs Accuracy")
+    ax2.set_title("POC 2: Cache Occupancy vs Accuracy")
     ax2.legend(fontsize=7, loc="lower right")
     ax2.grid(True, alpha=0.3)
     fig2.tight_layout()
@@ -497,6 +500,9 @@ def _build_reuse_row_from_trial_artifacts(
         "avg_nfe": f"{_safe_float(result.get('avg_nfe', 0.0)):.1f}",
         "agreement_rate": f"{_safe_float(result.get('agreement_rate', 0.0)):.6f}",
         "cache_hit_rate": f"{_safe_float(result.get('cache_hit_rate', 0.0)):.6f}",
+        "stable_cache_fraction": f"{_safe_float(result.get('stable_cache_fraction', 0.0)):.6f}",
+        "spec_cache_fraction": f"{_safe_float(result.get('spec_cache_fraction', 0.0)):.6f}",
+        "combined_cache_fraction": f"{_safe_float(result.get('combined_cache_fraction', 0.0)):.6f}",
         "draft_accept_rate": f"{_safe_float(result.get('draft_accept_rate', 0.0)):.6f}",
         "mean_safe_reuse": f"{_safe_float(result.get('reuse_mean_safe', 0.0)):.6f}",
         "mean_js_divergence": f"{_safe_float(result.get('reuse_mean_js', 0.0)):.6f}",
@@ -862,6 +868,9 @@ def _build_tau_summary_row(
         "avg_nfe": f"{row.avg_nfe:.1f}",
         "agreement_rate": f"{row.agreement_rate:.6f}",
         "cache_hit_rate": f"{row.cache_hit_rate:.6f}",
+        "stable_cache_fraction": f"{row.stable_cache_fraction:.6f}",
+        "spec_cache_fraction": f"{row.spec_cache_fraction:.6f}",
+        "combined_cache_fraction": f"{row.combined_cache_fraction:.6f}",
         "draft_accept_rate": f"{row.draft_accept_rate:.6f}",
         "reuse_mean_safe": f"{row.reuse_mean_safe:.6f}",
         "reuse_mean_js": f"{row.reuse_mean_js:.6f}",
@@ -966,6 +975,9 @@ def _result_to_routing_row(
         "tps": f"{result.avg_tokens_per_sec:.3f}",
         "avg_nfe": f"{result.avg_nfe:.1f}",
         "cache_hit_rate": f"{result.cache_hit_rate:.6f}",
+        "stable_cache_fraction": f"{result.stable_cache_fraction:.6f}",
+        "spec_cache_fraction": f"{result.spec_cache_fraction:.6f}",
+        "combined_cache_fraction": f"{result.combined_cache_fraction:.6f}",
         "agreement_rate": f"{result.agreement_rate:.6f}",
         "draft_accept_rate": f"{result.draft_accept_rate:.6f}",
         "access_effective_budget": f"{result.access_effective_budget:.6f}",
@@ -1554,6 +1566,9 @@ def reuse_signal_sweep_main(argv: Optional[List[str]] = None) -> None:
                 "avg_nfe": f"{result.avg_nfe:.1f}",
                 "agreement_rate": f"{result.agreement_rate:.6f}",
                 "cache_hit_rate": f"{result.cache_hit_rate:.6f}",
+                "stable_cache_fraction": f"{result.stable_cache_fraction:.6f}",
+                "spec_cache_fraction": f"{result.spec_cache_fraction:.6f}",
+                "combined_cache_fraction": f"{result.combined_cache_fraction:.6f}",
                 "draft_accept_rate": f"{result.draft_accept_rate:.6f}",
                 "mean_safe_reuse": f"{result.reuse_mean_safe:.6f}",
                 "mean_js_divergence": f"{result.reuse_mean_js:.6f}",
@@ -1712,6 +1727,9 @@ def ablation_matrix_main(argv: Optional[List[str]] = None) -> None:
                 "tps": f"{row.avg_tokens_per_sec:.3f}",
                 "avg_nfe": f"{row.avg_nfe:.1f}",
                 "cache_hit_rate": f"{row.cache_hit_rate:.6f}",
+                "stable_cache_fraction": f"{row.stable_cache_fraction:.6f}",
+                "spec_cache_fraction": f"{row.spec_cache_fraction:.6f}",
+                "combined_cache_fraction": f"{row.combined_cache_fraction:.6f}",
                 "agreement_rate": f"{row.agreement_rate:.6f}",
                 "draft_accept_rate": f"{row.draft_accept_rate:.6f}",
                 "access_effective_budget": f"{row.access_effective_budget:.6f}",

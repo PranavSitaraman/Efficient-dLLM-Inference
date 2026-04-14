@@ -180,6 +180,7 @@ aoae eval --config configs/default.yaml --checkpoint outputs/default/policy_fina
 aoae pipeline --config configs/default.yaml
 
 aoae pipeline --config configs/paper.yaml --mode speculative
+aoae eval --config configs/paper.yaml --checkpoint outputs/paper/policy_best.pt --mode speculative
 aoae tau-sweep --config configs/poc1.yaml
 aoae reuse-sweep --config configs/poc2.yaml
 aoae routing-sweep --hard_config configs/llada21_hard.yaml --soft_config configs/llada21_soft.yaml
@@ -198,6 +199,8 @@ Single eval runs write:
 - `outputs/<run>/eval_tps_vs_accuracy.png`
 - `outputs/<run>/eval_predictions.json` when prediction saving is enabled
 - `outputs/<run>/kv_dynamics_*.json|png` when KV tracking is enabled
+
+For speculative runs, `configs/paper.yaml` defines `evaluation.speculative_sweep.points`: named operating points that sweep verifier cadence, agreement threshold, unmask budget, remasking, and `tau_pi`. Passing `--policy_temperatures 0.5,1.0,1.5` intentionally overrides this with a temperature-only sweep for focused ablations. `cache_hit_rate` in eval artifacts is the stable-cache commit survival rate; `stable_cache_fraction`, `spec_cache_fraction`, and `combined_cache_fraction` report actual occupancy of the persistent stable cache, transient speculative frontier, and their union.
 
 Paper/POC workflows additionally write sweep summaries under:
 
@@ -379,6 +382,8 @@ aoae eval --config configs/default.yaml --checkpoint outputs/default/policy_fina
 | **τ_π** (policy temp) | `grpo.policy_temperature` | 1.0 | < 1 = more deterministic; > 1 = more exploration |
 | **T** (rollout steps) | `grpo.rollout_steps` | 16 | Training-time diffusion horizon (eval uses `inference.steps`) |
 | **L_gen** (rollout length) | `grpo.rollout_gen_length` | 128 | Training-time decode budget (eval uses `inference.gen_length`) |
+
+Eval-time Pareto points use the same trained policy but vary inference controls: `inference.primary_every_n`, `inference.primary_agree_threshold`, `inference.max_unmask_fraction_per_step` or `inference.max_unmask_tokens_per_step`, `inference.disable_remask`, positional-cache settings, and `policy_temperature` per point under `evaluation.speculative_sweep.points`.
 
 ### Hyperparameter Sweep
 

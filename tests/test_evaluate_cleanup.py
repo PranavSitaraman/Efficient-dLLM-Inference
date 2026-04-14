@@ -138,6 +138,75 @@ def test_main_does_not_close_preloaded_dual_model(monkeypatch, tmp_path):
     assert closed["value"] is False
 
 
+def test_speculative_eval_points_come_from_config_sweep(tmp_path):
+    import aoae.evaluate as mod
+
+    cfg = _base_cfg(tmp_path)
+    cfg["grpo"] = {"policy_temperature": 1.0}
+    cfg["evaluation"]["speculative_sweep"] = {
+        "enabled": True,
+        "points": [
+            {
+                "name": "quality",
+                "policy_temperature": 0.7,
+                "overrides": {
+                    "inference.primary_every_n": 1,
+                    "inference.primary_agree_threshold": 0.98,
+                    "inference.max_unmask_fraction_per_step": 0.0625,
+                },
+            },
+            {
+                "name": "fast",
+                "tau_pi": 1.5,
+                "primary_every_n": 8,
+                "disable_remask": True,
+            },
+        ],
+    }
+
+    points = mod._build_speculative_eval_points(cfg, explicit_policy_temperatures=None)
+
+    assert [point["name"] for point in points] == ["quality", "fast"]
+    assert points[0]["policy_temperature"] == 0.7
+    assert points[0]["overrides"]["inference.primary_every_n"] == 1
+    assert points[1]["policy_temperature"] == 1.5
+    assert points[1]["overrides"]["inference.primary_every_n"] == 8
+    assert points[1]["overrides"]["inference.disable_remask"] is True
+
+    point_cfg = mod._apply_speculative_eval_point(cfg, points[0])
+    assert point_cfg["_active_speculative_eval_point"] == "quality"
+    assert point_cfg["inference"]["primary_every_n"] == 1
+    assert point_cfg["inference"]["primary_agree_threshold"] == 0.98
+    assert "primary_every_n" not in cfg["inference"]
+
+
+def test_explicit_policy_temperatures_override_config_sweep(tmp_path):
+    import aoae.evaluate as mod
+
+    cfg = _base_cfg(tmp_path)
+    cfg["evaluation"]["speculative_sweep"] = {
+        "enabled": True,
+        "points": [{"name": "quality", "policy_temperature": 0.7, "primary_every_n": 1}],
+    }
+
+    points = mod._build_speculative_eval_points(cfg, explicit_policy_temperatures=[0.4, 1.2])
+
+    assert [point["name"] for point in points] == ["tau_pi_0.4", "tau_pi_1.2"]
+    assert [point["policy_temperature"] for point in points] == [0.4, 1.2]
+    assert all(point["overrides"] == {} for point in points)
+
+
+def test_mean_fraction_series_averages_step_fractions():
+    import aoae.evaluate as mod
+
+    value = mod._mean_fraction_series([
+        torch.tensor([0.0, 1.0]),
+        torch.tensor([1.0, 1.0]),
+    ])
+
+    assert value == 0.75
+
+
 def test_main_reuses_preloaded_base_model_and_updates_soft_routing(monkeypatch, tmp_path):
     import aoae.evaluate as mod
 

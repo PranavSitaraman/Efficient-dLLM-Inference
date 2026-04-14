@@ -85,6 +85,7 @@ A fast \emph{hard-routed auxiliary} runs in an aggressive low-cost mode---for ex
 The verifier accepts easy auxiliary drafts, rejects or remasks stale regions, and can reset the auxiliary cache when disagreement grows.
 AOAE separates transient speculative acceptance from persistent stability caching, and optionally learns a cache/access policy with GRPO.
 This yields a tunable speed--quality frontier: conservative settings recover verifier-quality decoding, while more aggressive settings trade quality for speed through controlled verifier rejection.
+In implementation, this frontier is swept with named operating points over verifier cadence, agreement threshold, unmask budget, remasking, and policy temperature rather than by changing policy temperature alone.
 \end{abstract}
 
 % ======================================================================
@@ -236,7 +237,7 @@ Both modes share frozen weights; routing is toggled in-place, avoiding two full 
 The primary runs the original high-quality inference mode and acts as verifier/corrector: it scores the drafted state, emits verifier logits, supplies a PRISM-style keep/remask score, and can clear $\cC_{\text{aux}}$ when the fast path drifts too far.
 Conceptually, $\cK_{\text{spec}}$ is a short-lived frontier of drafted candidates awaiting validation, while only $\cK_{\text{stable}}$ is a persistent cache.
 
-The operating frontier is controlled by the verifier mode, the drafter shortcut, the draft horizon $K_{\text{draft}}$, and the composition strength $\gamma$.
+The operating frontier is controlled by the verifier mode, the verifier cadence, agreement threshold, unmask budget, remasking policy, drafter shortcut, draft horizon $K_{\text{draft}}$, policy temperature $\tau_\pi$, and composition strength $\gamma$.
 At conservative settings, the verifier dominates and quality is preserved; at aggressive settings, the cached drafter runs farther ahead and the verifier rejects more often.
 
 \subsection{State: Soft-Masked Representations}
@@ -348,6 +349,7 @@ Conflating the two would train $\kappa_t$ on a corrupted target, so AOAE maintai
     \item $\cK_{\text{stable}}$: persistent stable cache; populated by $\kappa_t^k = 1$ and evicted by explicit remask $r_t^k = 1$.
 \end{itemize}
 In the current $K_{\text{draft}}{=}1$ implementation, $\cK_{\text{spec}}$ can be materialized as a one-step accepted/reusable mask; for $K_{\text{draft}}{>}1$, it should be interpreted only as a verifier frontier, not a persistent cache.
+Accordingly, the evaluation reports stable-cache occupancy, speculative-frontier occupancy, and their union separately from the stable-cache commit survival rate.
 During initial experimentation, the unmasking and remasking heads can be frozen while cache/access heads are trained.
 \paragraph{Prefix and drafter cache reuse.}
 In practice, the prompt tokens $\bx$ are static for the entire generation.
@@ -475,7 +477,7 @@ LLaDA~2.1-mini (16B MoE, frozen) in dual-model configuration.
 Policy: 1-layer transformer (${\sim}$500K parameters, input dimension $D{+}5$ including age and last-action features).
 PRISM adapter fine-tuned on 10K samples.
 Hyperparameters: $K{=}5$ (soft-masking), $G{=}8$, $\alpha{=}1.0$, $\beta{=}0.1$, $\epsilon{=}0.2$, $\gamma{=}0.5$, $w_{F1}{=}0.02$, $w_u{=}0.25$, and initially $w_q{=}0$ until the stable-cache head converges.
-We sweep routing/verifier settings, drafter cache aggressiveness, draft horizon $K_{\text{draft}}$, and policy temperature $\tau_\pi$.
+We sweep routing/verifier settings, verifier cadence, agreement threshold, unmask budget, remasking, drafter cache aggressiveness, draft horizon $K_{\text{draft}}$, and policy temperature $\tau_\pi$.
 All evaluations run through the dInfer \cite{dinfer} integration when possible.
 
 \paragraph{Datasets.}
@@ -483,7 +485,7 @@ GSM8K~\cite{cobbe2021gsm8k} and MATH~\cite{hendrycks2021math} for mathematical r
 Policy training uses 50K prompts from OpenMathInstruct-2.
 
 \paragraph{Metrics.}
-Accuracy (exact match / pass@1), throughput (tokens/sec), NFEs, verifier agreement $\bar{\alpha}$, stable-cache fraction $\bar{\kappa}$, drafter-cache reset rate, cache invalidation/thrashing, effective speedup vs.\ verifier-only decoding, and refresh ratio $\frac{1}{T}\sum_t |\cQ_t|/L$.
+Accuracy (exact match / pass@1), throughput (tokens/sec), NFEs, verifier agreement $\bar{\alpha}$, stable-cache occupancy, speculative-frontier occupancy, combined cache occupancy, stable-cache commit survival, drafter-cache reset rate, cache invalidation/thrashing, effective speedup vs.\ verifier-only decoding, and refresh ratio $\frac{1}{T}\sum_t |\cQ_t|/L$.
 
 \paragraph{Ablations.}
 We use four ablation groups.

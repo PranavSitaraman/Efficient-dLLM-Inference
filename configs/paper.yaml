@@ -143,6 +143,43 @@ data:
 
 evaluation:
   task_type: "math"
+  # The learned-policy Pareto frontier is not a scalar tau_pi sweep. The
+  # verifier cadence, agreement threshold, remasking pressure, and unmask
+  # budget are first-order quality/speed controls, so the default paper eval
+  # runs named operating points across those knobs. Passing
+  # --policy_temperatures keeps the old temperature-only override for focused
+  # sweeps.
+  speculative_sweep:
+    enabled: true
+    points:
+      - name: "quality"
+        policy_temperature: 0.7
+        overrides:
+          "inference.primary_every_n": 1
+          "inference.primary_agree_threshold": 0.98
+          "inference.max_unmask_fraction_per_step": 0.0625
+          "inference.disable_remask": false
+      - name: "balanced"
+        policy_temperature: 1.0
+        overrides:
+          "inference.primary_every_n": 3
+          "inference.primary_agree_threshold": 0.92
+          "inference.max_unmask_fraction_per_step": 0.125
+          "inference.disable_remask": false
+      - name: "fast"
+        policy_temperature: 1.25
+        overrides:
+          "inference.primary_every_n": 6
+          "inference.primary_agree_threshold": 0.85
+          "inference.max_unmask_fraction_per_step": 0.1875
+          "inference.disable_remask": false
+      - name: "fastest"
+        policy_temperature: 1.5
+        overrides:
+          "inference.primary_every_n": 8
+          "inference.primary_agree_threshold": 0.75
+          "inference.max_unmask_fraction_per_step": 0.25
+          "inference.disable_remask": true
   code:
     timeout_sec: 3.0
     cpu_time_limit_sec: 2

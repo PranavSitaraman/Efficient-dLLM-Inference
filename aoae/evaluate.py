@@ -4,7 +4,7 @@ Evaluation Script for AOAE and Baselines (paper §3.7).
 Runs inference on GSM8K / MATH benchmarks and computes:
   - Accuracy (exact match)
   - Throughput (tokens/sec, NFEs)
-  - Pareto curves by sweeping policy temperature tau_pi
+  - Pareto curves from config-defined speculative operating points
 
 Usage:
     python3 -m aoae.evaluate --config configs/default.yaml --checkpoint outputs/default/policy_final.pt
@@ -14,6 +14,7 @@ import os
 import json
 import time
 import collections
+import copy
 import yaml
 import torch
 import numpy as np
@@ -42,12 +43,12 @@ from .inference import (
 )
 from .dinfer_integration import (
     run_blockwise_speculative_inference,
-    run_speculative_inference,
 )
 from .speculative_inference import speculative_inference as _aoae_speculative_inference
 from .runtime_checks import collect_runtime_info, set_global_seed, is_global_rank_zero
 from .evaluators import build_evaluator
 from .tasks import extract_answer, extract_prompt_and_reference
+from .experiment_utils import set_nested
 
 
 _MAX_SAVED_PREDICTIONS = 50
@@ -80,6 +81,9 @@ class EvalResult:
     avg_gen_time_sec: float
     config_note: str = ""   # e.g., "tau_pi=0.5" or "tau_mask=0.9"
     cache_hit_rate: float = 0.0
+    stable_cache_fraction: float = 0.0
+    spec_cache_fraction: float = 0.0
+    combined_cache_fraction: float = 0.0
     cache_commits: int = 0
     cache_invalidations: int = 0
     agreement_rate: float = 0.0
@@ -115,6 +119,35 @@ _DEFAULT_BASELINE_METHODS = [
     "confidence_q_mode",
     "fast_dllm",
 ]
+
+
+_DEFAULT_SPECULATIVE_POLICY_TEMPERATURES = [0.5, 1.0, 1.5]
+
+
+_SPECULATIVE_POINT_OVERRIDE_ALIASES = {
+    "routing_temperature": "base_model.routing_temperature",
+    "soft_topk": "base_model.soft_topk",
+    "stable_kv_cache": "cache.stable_kv_cache",
+    "kspec_skip": "cache.kspec_skip",
+    "prefix_kv_cache": "cache.prefix_kv_cache",
+    "speculative_schedule": "inference.speculative_schedule",
+    "steps": "inference.steps",
+    "gen_length": "inference.gen_length",
+    "primary_every_n": "inference.primary_every_n",
+    "primary_agree_threshold": "inference.primary_agree_threshold",
+    "aux_cache_reset_threshold": "inference.aux_cache_reset_threshold",
+    "max_unmask_fraction_per_step": "inference.max_unmask_fraction_per_step",
+    "max_unmask_tokens_per_step": "inference.max_unmask_tokens_per_step",
+    "disable_remask": "inference.disable_remask",
+    "compose_gamma": "inference.compose_gamma",
+    "reuse_signal_method": "inference.reuse_signal.method",
+    "reuse_signal_threshold": "inference.reuse_signal.threshold",
+    "positional_cache_enabled": "inference.positional_cache.enabled",
+    "positional_cache_horizon": "inference.positional_cache.horizon",
+    "positional_cache_refresh_budget": "inference.positional_cache.refresh_budget",
+    "positional_cache_candidate_policy": "inference.positional_cache.candidate_policy",
+    "candidate_policy": "inference.positional_cache.candidate_policy",
+}
 
 
 _BASELINE_TITLES = {
@@ -251,6 +284,187 @@ def _remask_note(cfg: dict) -> str:
 
 def _append_note(note: str, extra: str) -> str:
     return f"{note},{extra}" if note else extra
+
+
+def _note_value(note: str, key: str) -> Optional[str]:
+    prefix = f"{key}="
+    for part in str(note).split(","):
+        part = part.strip()
+        if part.startswith(prefix):
+            return part[len(prefix):]
+    return None
+
+
+def _iter_dotted_items(mapping: Dict[str, Any], prefix: str = ""):
+    for key, value in mapping.items():
+        dotted = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(value, dict):
+            yield from _iter_dotted_items(value, dotted)
+        else:
+            yield dotted, value
+
+
+def _canonical_speculative_override_key(key: str) -> str:
+    return _SPECULATIVE_POINT_OVERRIDE_ALIASES.get(key, key)
+
+
+def _temperature_only_speculative_points(temperatures: List[float]) -> List[Dict[str, Any]]:
+    if not temperatures:
+        raise ValueError("Expected at least one speculative policy temperature.")
+    return [
+        {
+            "name": f"tau_pi_{float(tau):g}",
+            "policy_temperature": float(tau),
+            "overrides": {},
+        }
+        for tau in temperatures
+    ]
+
+
+def _normalize_speculative_eval_point(
+    cfg: Dict[str, Any],
+    raw_point: Dict[str, Any],
+    index: int,
+) -> Dict[str, Any]:
+    if not isinstance(raw_point, dict):
+        return {
+            "name": f"tau_pi_{float(raw_point):g}",
+            "policy_temperature": float(raw_point),
+            "overrides": {},
+        }
+
+    default_temperature = float(cfg.get("grpo", {}).get("policy_temperature", 1.0))
+    name = str(raw_point.get("name") or raw_point.get("label") or f"spec_point_{index + 1:02d}")
+    policy_temperature = float(
+        raw_point.get("policy_temperature", raw_point.get("tau_pi", default_temperature))
+    )
+    overrides: Dict[str, Any] = {}
+
+    raw_overrides = raw_point.get("overrides", {})
+    if raw_overrides is not None:
+        if not isinstance(raw_overrides, dict):
+            raise ValueError(f"Speculative sweep point {name!r} overrides must be a mapping.")
+        for key, value in _iter_dotted_items(raw_overrides):
+            overrides[_canonical_speculative_override_key(key)] = value
+
+    metadata_keys = {"name", "label", "description", "note", "policy_temperature", "tau_pi", "overrides"}
+    config_section_keys = {"base_model", "cache", "inference", "analysis", "data", "evaluation"}
+    for key, value in raw_point.items():
+        if key in metadata_keys:
+            continue
+        if key in config_section_keys and isinstance(value, dict):
+            for dotted, nested_value in _iter_dotted_items({key: value}):
+                overrides[dotted] = nested_value
+            continue
+        target = _SPECULATIVE_POINT_OVERRIDE_ALIASES.get(str(key))
+        if target is None:
+            if "." in str(key):
+                target = str(key)
+            else:
+                raise ValueError(
+                    f"Unknown speculative sweep point key {key!r} in {name!r}. "
+                    "Put arbitrary config paths under overrides using dotted keys."
+                )
+        overrides[target] = value
+
+    return {"name": name, "policy_temperature": policy_temperature, "overrides": overrides}
+
+
+def _build_speculative_eval_points(
+    cfg: Dict[str, Any],
+    explicit_policy_temperatures: Optional[List[float]],
+) -> List[Dict[str, Any]]:
+    if explicit_policy_temperatures is not None:
+        return _temperature_only_speculative_points([float(t) for t in explicit_policy_temperatures])
+
+    sweep_cfg = cfg.get("evaluation", {}).get("speculative_sweep", {})
+    if bool(sweep_cfg.get("enabled", False)):
+        points = sweep_cfg.get("points", [])
+        if not points:
+            raise ValueError("evaluation.speculative_sweep.enabled=true but no points were provided.")
+        return [
+            _normalize_speculative_eval_point(cfg, point, idx)
+            for idx, point in enumerate(points)
+        ]
+
+    return _temperature_only_speculative_points(_DEFAULT_SPECULATIVE_POLICY_TEMPERATURES)
+
+
+def _apply_speculative_eval_point(cfg: Dict[str, Any], point: Dict[str, Any]) -> Dict[str, Any]:
+    point_cfg = copy.deepcopy(cfg)
+    for key, value in point.get("overrides", {}).items():
+        set_nested(point_cfg, str(key), value)
+    point_cfg["_active_speculative_eval_point"] = str(point.get("name", ""))
+    point_cfg["_active_speculative_eval_overrides"] = dict(point.get("overrides", {}))
+    return point_cfg
+
+
+def _configure_dual_model_for_eval_cfg(dual_model, cfg: Dict[str, Any]) -> None:
+    tau_r = cfg.get("base_model", {}).get("routing_temperature")
+    if tau_r is not None:
+        set_tau = getattr(dual_model, "set_tau_r", None)
+        if callable(set_tau):
+            set_tau(float(tau_r))
+    soft_topk = cfg.get("base_model", {}).get("soft_topk")
+    if soft_topk is not None:
+        set_topk = getattr(dual_model, "set_soft_topk", None)
+        if callable(set_topk):
+            set_topk(int(soft_topk))
+
+
+def _summarize_speculative_point(point: Dict[str, Any], cfg: Dict[str, Any]) -> str:
+    inf_cfg = cfg.get("inference", {})
+    unmask = inf_cfg.get(
+        "max_unmask_tokens_per_step",
+        inf_cfg.get("max_unmask_fraction_per_step", ""),
+    )
+    return (
+        f"{point.get('name', '')}: tau_pi={float(point.get('policy_temperature', 1.0))}, "
+        f"primary_every_n={inf_cfg.get('primary_every_n', 1)}, "
+        f"agree={inf_cfg.get('primary_agree_threshold', 0.0)}, "
+        f"unmask={unmask}, {_remask_note(cfg)}"
+    )
+
+
+def _mean_fraction_series(values: List[Any]) -> float:
+    if not values:
+        return 0.0
+    total = 0.0
+    count = 0
+    for value in values:
+        if value is None:
+            continue
+        tensor = torch.as_tensor(value, dtype=torch.float32)
+        if tensor.numel() == 0:
+            continue
+        total += float(tensor.mean().item())
+        count += 1
+    return total / max(count, 1)
+
+
+def _speculative_note(
+    cfg: dict,
+    *,
+    tau_r: float,
+    policy_temperature: float,
+    reuse_method: str,
+    pc_note: str,
+    schedule: str,
+) -> str:
+    inf_cfg = cfg.get("inference", {})
+    point_name = cfg.get("_active_speculative_eval_point")
+    unmask = inf_cfg.get(
+        "max_unmask_tokens_per_step",
+        inf_cfg.get("max_unmask_fraction_per_step", ""),
+    )
+    prefix = f"point={point_name}," if point_name else ""
+    note = (
+        f"{prefix}tau_r={tau_r},tau_pi={policy_temperature},"
+        f"primary_n={inf_cfg.get('primary_every_n', 1)},"
+        f"agree_thr={inf_cfg.get('primary_agree_threshold', 0.0)},"
+        f"unmask={unmask},reuse={reuse_method},{pc_note},sched={schedule}"
+    )
+    return _append_note(note, _remask_note(cfg))
 
 
 def evaluate_aoae(
@@ -596,6 +810,9 @@ def evaluate_speculative(
     total_agreement_obs = 0
     total_cache_commits = 0
     total_cache_invalidations = 0
+    total_stable_cache_fraction = 0.0
+    total_spec_cache_fraction = 0.0
+    total_combined_cache_fraction = 0.0
     total_draft_accepts = 0
     total_draft_rejects = 0
     total_reuse_safe = 0.0
@@ -632,6 +849,14 @@ def evaluate_speculative(
         f"pc=on(H={int(pc_cfg.get('horizon', 4))},B={int(pc_cfg.get('refresh_budget', 0))})"
         if pc_cfg.get("enabled", False)
         else "pc=off"
+    )
+    note = _speculative_note(
+        cfg,
+        tau_r=tau_r,
+        policy_temperature=policy_temperature,
+        reuse_method=reuse_method,
+        pc_note=pc_note,
+        schedule=schedule,
     )
 
     # Warm-up with realistic input size to trigger Triton kernel compilation
@@ -711,6 +936,15 @@ def evaluate_speculative(
                     stats["primary_skip_ratio"] = stats["aux_only_steps"] / max(total_steps, 1)
                     stats["total_commits"] = int(getattr(traj, "total_stable_commits", 0))
                     stats["total_invalidations"] = int(getattr(traj, "total_stable_invalidations", 0))
+                    stats["stable_cache_fraction"] = _mean_fraction_series(
+                        getattr(traj, "stable_cached_fractions", [])
+                    )
+                    stats["spec_cache_fraction"] = _mean_fraction_series(
+                        getattr(traj, "spec_cached_fractions", [])
+                    )
+                    stats["combined_cache_fraction"] = _mean_fraction_series(
+                        getattr(traj, "cached_fractions", [])
+                    )
                     stats["draft_accepts"] = int(getattr(traj, "draft_accepts", 0))
                     stats["draft_rejects"] = int(getattr(traj, "draft_rejects", 0))
                     stats["mean_agreement"] = float(traj.mean_agreement_rate)
@@ -761,10 +995,7 @@ def evaluate_speculative(
             generated_text=gen_text,
             is_correct=is_correct,
             generated_tokens=n_gen,
-            note=_append_note(
-                f"tau_r={tau_r},tau_pi={policy_temperature},reuse={reuse_method},{pc_note},sched={schedule}",
-                _remask_note(cfg),
-            ),
+            note=note,
         )
 
         elapsed = t1 - t0
@@ -781,6 +1012,9 @@ def evaluate_speculative(
         total_nfe += pri_steps * primary_step_cost + aux_steps
         total_cache_commits += int(stats.get("total_commits", 0))
         total_cache_invalidations += int(stats.get("total_invalidations", 0))
+        total_stable_cache_fraction += float(stats.get("stable_cache_fraction", 0.0))
+        total_spec_cache_fraction += float(stats.get("spec_cache_fraction", 0.0))
+        total_combined_cache_fraction += float(stats.get("combined_cache_fraction", 0.0))
         total_draft_accepts += int(stats.get("draft_accepts", 0))
         total_draft_rejects += int(stats.get("draft_rejects", 0))
         agreement_obs = int(stats.get("agreement_observations", 0))
@@ -841,6 +1075,9 @@ def evaluate_speculative(
     avg_tps = total_gen_tokens / max(total_time, 1e-6)
     total_cache_ops = total_cache_commits + total_cache_invalidations
     cache_hit_rate = total_cache_commits / max(total_cache_ops, 1)
+    stable_cache_fraction = total_stable_cache_fraction / max(total, 1)
+    spec_cache_fraction = total_spec_cache_fraction / max(total, 1)
+    combined_cache_fraction = total_combined_cache_fraction / max(total, 1)
     draft_accept_rate = total_draft_accepts / max(total_draft_accepts + total_draft_rejects, 1)
     agreement_rate = total_agreement / max(total_agreement_obs, 1)
     reuse_mean_safe = total_reuse_safe / max(total_reuse_safe_obs, 1)
@@ -875,11 +1112,11 @@ def evaluate_speculative(
         avg_nfe=avg_nfe,
         avg_tokens_per_sec=avg_tps,
         avg_gen_time_sec=avg_time,
-        config_note=_append_note(
-            f"tau_r={tau_r},tau_pi={policy_temperature},reuse={reuse_method},{pc_note},sched={schedule}",
-            _remask_note(cfg),
-        ),
+        config_note=note,
         cache_hit_rate=cache_hit_rate,
+        stable_cache_fraction=stable_cache_fraction,
+        spec_cache_fraction=spec_cache_fraction,
+        combined_cache_fraction=combined_cache_fraction,
         cache_commits=total_cache_commits,
         cache_invalidations=total_cache_invalidations,
         agreement_rate=agreement_rate,
@@ -1115,6 +1352,15 @@ def _save_eval_plots(all_results: List[EvalResult], output_dir: str) -> None:
     for r in all_results:
         label = r.method
         ax.scatter(r.avg_tokens_per_sec, r.accuracy, s=80, alpha=0.8, label=label)
+        point_label = _note_value(r.config_note, "point")
+        if point_label:
+            ax.annotate(
+                point_label,
+                (r.avg_tokens_per_sec, r.accuracy),
+                textcoords="offset points",
+                xytext=(5, 5),
+                fontsize=7,
+            )
     ax.set_xlabel("Tokens / sec")
     ax.set_ylabel("Accuracy")
     ax.set_title("Eval: Accuracy vs Throughput")
@@ -1184,6 +1430,13 @@ def _build_run_metadata(
         "positional_cache_enabled": bool(cfg.get("inference", {}).get("positional_cache", {}).get("enabled", False)),
         "positional_cache_horizon": int(cfg.get("inference", {}).get("positional_cache", {}).get("horizon", 4)),
         "positional_cache_refresh_budget": int(cfg.get("inference", {}).get("positional_cache", {}).get("refresh_budget", 0)),
+        "speculative_sweep_enabled": bool(eval_cfg.get("speculative_sweep", {}).get("enabled", False)),
+        "speculative_sweep_point_count": len(eval_cfg.get("speculative_sweep", {}).get("points", []) or []),
+        "speculative_sweep_points": [
+            str(point.get("name", point.get("label", idx)))
+            for idx, point in enumerate(eval_cfg.get("speculative_sweep", {}).get("points", []) or [])
+            if isinstance(point, dict)
+        ],
         "boundary_head_enabled": bool(cfg.get("policy", {}).get("boundary_head", {}).get("enabled", False)),
         "boundary_num_bins": int(cfg.get("policy", {}).get("boundary_head", {}).get("num_bins", 0)),
         "track_kv_dynamics": bool(cfg.get("analysis", {}).get("track_kv_dynamics", False)),
@@ -1270,8 +1523,7 @@ def main(
         eval_ds = _load_eval_dataset(dc)
     if max_samples is None:
         max_samples = dc.get("eval_max_samples")
-    if speculative_policy_temperatures is None:
-        speculative_policy_temperatures = [0.5, 1.0, 1.5]
+    speculative_eval_points = _build_speculative_eval_points(cfg, speculative_policy_temperatures)
     prediction_limit = _get_prediction_save_limit(cfg)
     checkpoint_path = _resolve_valid_auto_policy_checkpoint(checkpoint_path, cfg)
 
@@ -1287,11 +1539,7 @@ def main(
 
             if preloaded_dual_model is not None:
                 dual_model = preloaded_dual_model
-                tau_r = cfg["base_model"].get("routing_temperature", 0.01)
-                dual_model.set_tau_r(tau_r)
-                soft_topk = cfg["base_model"].get("soft_topk")
-                if soft_topk is not None:
-                    dual_model.set_soft_topk(soft_topk)
+                _configure_dual_model_for_eval_cfg(dual_model, cfg)
             else:
                 if is_global_rank_zero():
                     print("Loading dual model (hard auxiliary + soft primary)...")
@@ -1358,12 +1606,15 @@ def main(
                 tau_r = cfg["base_model"].get("routing_temperature", 0.01)
                 if is_global_rank_zero():
                     print(f"\n====== Speculative AOAE — Trained Policy (tau_r={tau_r}) ======")
-                for tau_pi in speculative_policy_temperatures:
+                for point in speculative_eval_points:
+                    point_cfg = _apply_speculative_eval_point(cfg, point)
+                    _configure_dual_model_for_eval_cfg(dual_model, point_cfg)
+                    point_tau = float(point["policy_temperature"])
                     if is_global_rank_zero():
-                        print(f"\n--- tau_pi = {tau_pi} ---")
+                        print(f"\n--- {_summarize_speculative_point(point, point_cfg)} ---")
                     r = evaluate_speculative(
-                        dual_model, policy, soft_mask, prism, eval_ds, tokenizer, cfg,
-                        policy_temperature=tau_pi,
+                        dual_model, policy, soft_mask, prism, eval_ds, tokenizer, point_cfg,
+                        policy_temperature=point_tau,
                         max_samples=max_samples,
                         dynamics_sink=kv_dynamics_records,
                         predictions_sink=saved_predictions,
@@ -1524,22 +1775,23 @@ def main(
             _save_eval_plots(all_results, cfg["logging"]["output_dir"])
 
         if is_global_rank_zero():
-            print("\n" + "=" * 196)
+            print("\n" + "=" * 220)
             print(
                 f"{'Method':<25} {'Accuracy':>10} {'TPS':>10} {'NFE':>8} "
-                f"{'CacheKeep':>10} {'Agree':>8} {'DraftAcc':>10} {'Reuse':>8} {'ReuseJS':>9} "
+                f"{'CacheHit':>9} {'StableK':>8} {'SpecK':>8} {'Agree':>8} {'DraftAcc':>10} {'Reuse':>8} {'ReuseJS':>9} "
                 f"{'AccF1':>8} {'SpecF1':>8} {'Note':<40}"
             )
-            print("-" * 196)
+            print("-" * 220)
             for r in all_results:
                 print(
                     f"{r.method:<25} {r.accuracy:>10.4f} {r.avg_tokens_per_sec:>10.1f} "
-                    f"{r.avg_nfe:>8.0f} {r.cache_hit_rate:>10.4f} "
+                    f"{r.avg_nfe:>8.0f} {r.cache_hit_rate:>9.4f} "
+                    f"{r.stable_cache_fraction:>8.4f} {r.spec_cache_fraction:>8.4f} "
                     f"{r.agreement_rate:>8.4f} {r.draft_accept_rate:>10.4f} "
                     f"{r.reuse_mean_safe:>8.4f} {r.reuse_mean_js:>9.4f} "
                     f"{r.access_next_h_f1:>8.4f} {r.access_next_h_spec_f1:>8.4f} {r.config_note:<40}"
                 )
-            print("=" * 196)
+            print("=" * 220)
 
         return all_results
     finally:
@@ -1588,7 +1840,11 @@ if __name__ == "__main__":
     parser.add_argument("--positional_cache_refresh_budget", type=int, default=None,
                         help="Override inference.positional_cache.refresh_budget.")
     parser.add_argument("--policy_temperatures", type=str, default=None,
-                        help="Comma-separated tau_pi values for speculative runs.")
+                        help=(
+                            "Comma-separated tau_pi values for speculative runs. "
+                            "When provided, overrides evaluation.speculative_sweep.points "
+                            "with a temperature-only sweep."
+                        ))
     parser.add_argument("--skip_baselines", action="store_true",
                         help="Skip baseline decoding methods.")
     parser.add_argument("--eval_dataset", type=str, default=None,
