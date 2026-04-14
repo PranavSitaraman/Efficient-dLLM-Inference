@@ -3,8 +3,8 @@ __pycache__/
 *.egg-info/
 external/
 .pytest_cache/
-# outputs/
-# results/
+outputs/
+results/
 logs/
 
 # Development artifacts

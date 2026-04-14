@@ -32,7 +32,7 @@ from .checkpoints import (
 from .models.base_model import LLaDABaseModel
 from .models.soft_mask import SoftMaskedState
 from .models.policy import AOAEPolicy, DefaultPolicy
-from .models.verifier import create_or_load_verifier, verifier_artifact_name
+from .models.prism import PRISMAdapter
 from .inference import (
     aoae_inference,
     uniform_decode,
@@ -313,7 +313,6 @@ def evaluate_aoae(
                 policy=policy,
                 soft_mask_module=soft_mask,
                 prism_adapter=prism,
-                verifier=prism,
                 prompt_ids=prompt_ids,
                 cfg=cfg,
                 record_trajectory=False,
@@ -694,35 +693,32 @@ def evaluate_speculative(
                     policy=policy,
                     soft_mask_module=soft_mask,
                     prism_adapter=prism,
-                    verifier=prism,
                     prompt_ids=prompt_ids,
                     cfg=cfg,
                     record_trajectory=False,
                     policy_temperature=policy_temperature,
                     track_kv_dynamics=_do_track_kv,
+                    collect_stats=True,
                 )
                 # Build a stats-like dict from SpeculativeTrajectory for the
                 # metric accumulators below (mirrors the dinfer stats contract).
                 stats: Dict[str, Any] = {}
                 if _spec_trajectory is not None:
                     traj = _spec_trajectory
-                    primary_step_flags = getattr(traj, "primary_step_flags", [])
-                    primary_steps = (
-                        int(sum(float(flag.float().mean().item()) for flag in primary_step_flags))
-                        if primary_step_flags
-                        else T
-                    )
-                    stats["primary_steps"] = primary_steps
-                    stats["aux_only_steps"] = max(len(traj.step_fracs) - primary_steps, 0)
-                    stats["total_commits"] = int(traj.total_cache_hits)
-                    stats["total_invalidations"] = int(traj.total_cache_misses)
-                    stats["draft_accepts"] = int(traj.total_cache_hits)
-                    stats["draft_rejects"] = int(traj.total_cache_misses)
+                    stats["primary_steps"] = int(getattr(traj, "primary_steps", 0) or T)
+                    stats["aux_only_steps"] = int(getattr(traj, "aux_only_steps", 0))
+                    total_steps = stats["primary_steps"] + stats["aux_only_steps"]
+                    stats["primary_skip_ratio"] = stats["aux_only_steps"] / max(total_steps, 1)
+                    stats["total_commits"] = int(getattr(traj, "total_stable_commits", 0))
+                    stats["total_invalidations"] = int(getattr(traj, "total_stable_invalidations", 0))
+                    stats["draft_accepts"] = int(getattr(traj, "draft_accepts", 0))
+                    stats["draft_rejects"] = int(getattr(traj, "draft_rejects", 0))
                     stats["mean_agreement"] = float(traj.mean_agreement_rate)
-                    stats["agreement_observations"] = len(traj.agreement_list)
+                    stats["agreement_observations"] = int(getattr(traj, "agreement_observations", 0))
                     stats["reuse_mean_safe_reuse"] = float(traj.mean_agreement_rate)
-                    stats["safe_reuse_observations"] = len(traj.agreement_list)
+                    stats["safe_reuse_observations"] = int(getattr(traj, "agreement_observations", 0))
                     stats["reuse_mean_js_divergence"] = 0.0
+                    stats["drafter_cache_resets"] = int(getattr(traj, "drafter_cache_resets", 0))
                     am = traj.access_metrics
                     stats["access_access_rate"] = float(am.get("access_rate", 0.0))
                     stats["access_access_mandatory_rate"] = float(am.get("access_mandatory_rate", 0.0))
@@ -775,7 +771,14 @@ def evaluate_speculative(
         total_time += elapsed
         pri_steps = int(stats.get("primary_steps", T))
         aux_steps = int(stats.get("aux_only_steps", 0))
-        total_nfe += pri_steps * 2 + aux_steps  # 2 fwd per primary step, 1 per aux-only
+        cache_cfg = cfg.get("cache", {})
+        primary_step_cost = (
+            1
+            if bool(cache_cfg.get("stable_kv_cache", False))
+            and not bool(cache_cfg.get("kspec_skip", True))
+            else 2
+        )
+        total_nfe += pri_steps * primary_step_cost + aux_steps
         total_cache_commits += int(stats.get("total_commits", 0))
         total_cache_invalidations += int(stats.get("total_invalidations", 0))
         total_draft_accepts += int(stats.get("draft_accepts", 0))
@@ -1183,9 +1186,6 @@ def _build_run_metadata(
         "positional_cache_refresh_budget": int(cfg.get("inference", {}).get("positional_cache", {}).get("refresh_budget", 0)),
         "boundary_head_enabled": bool(cfg.get("policy", {}).get("boundary_head", {}).get("enabled", False)),
         "boundary_num_bins": int(cfg.get("policy", {}).get("boundary_head", {}).get("num_bins", 0)),
-        "verifier_enabled": bool(cfg.get("verifier", {}).get("enabled", True)),
-        "verifier_kind": str(cfg.get("verifier", {}).get("kind", "prism")),
-        "verifier_trainable": bool(cfg.get("verifier", {}).get("trainable", False)),
         "track_kv_dynamics": bool(cfg.get("analysis", {}).get("track_kv_dynamics", False)),
         "kv_locality_windows": cfg.get("analysis", {}).get("locality_windows", [8, 16, 32]),
         "kv_confidence_threshold": cfg.get("analysis", {}).get("confidence_threshold", 0.9),
@@ -1342,30 +1342,18 @@ def main(
                     load_state_dict_flexible(soft_mask, ckpt["soft_mask"], "soft_mask")
                 policy.eval()
 
-                verifier_filename = verifier_artifact_name(cfg)
-                verifier_path = (
-                    resolve_sidecar_artifact(
-                        checkpoint_path,
-                        cfg["logging"]["output_dir"],
-                        verifier_filename,
-                    )
-                    if verifier_filename is not None
-                    else None
+                prism_path = resolve_sidecar_artifact(
+                    checkpoint_path,
+                    cfg["logging"]["output_dir"],
+                    "prism_adapter.pt",
                 )
-                prism, verifier_info = create_or_load_verifier(
-                    cfg,
-                    hidden_dim=embed_dim,
-                    device=device,
-                    artifact_path=verifier_path,
-                    checkpoint_state=ckpt.get("verifier") if isinstance(ckpt, dict) else None,
-                    allow_fresh_init=False,
-                    verbose=is_global_rank_zero(),
-                )
-                if prism is not None and is_global_rank_zero():
-                    print(
-                        f"  Loaded verifier kind={verifier_info.kind} "
-                        f"from {verifier_info.loaded_from or 'fresh'}"
-                    )
+                prism = None
+                if prism_path is not None:
+                    prism = PRISMAdapter(cfg, embed_dim).to(device)
+                    prism.load_state_dict(torch.load(prism_path, map_location=device))
+                    prism.eval()
+                    if is_global_rank_zero():
+                        print(f"  Loaded PRISM adapter from {prism_path}")
 
                 tau_r = cfg["base_model"].get("routing_temperature", 0.01)
                 if is_global_rank_zero():
@@ -1463,25 +1451,16 @@ def main(
                 policy.eval()
                 soft_mask.eval()
 
-                verifier_filename = verifier_artifact_name(cfg)
-                verifier_path = (
-                    resolve_sidecar_artifact(
-                        checkpoint_path,
-                        cfg["logging"]["output_dir"],
-                        verifier_filename,
-                    )
-                    if verifier_filename is not None
-                    else None
+                prism_path = resolve_sidecar_artifact(
+                    checkpoint_path,
+                    cfg["logging"]["output_dir"],
+                    "prism_adapter.pt",
                 )
-                prism, _verifier_info = create_or_load_verifier(
-                    cfg,
-                    hidden_dim=embed_dim,
-                    device=device,
-                    artifact_path=verifier_path,
-                    checkpoint_state=ckpt.get("verifier") if isinstance(ckpt, dict) else None,
-                    allow_fresh_init=False,
-                    verbose=is_global_rank_zero(),
-                )
+                prism = None
+                if prism_path is not None:
+                    prism = PRISMAdapter(cfg, embed_dim).to(device)
+                    prism.load_state_dict(torch.load(prism_path, map_location=device))
+                    prism.eval()
 
                 if is_global_rank_zero():
                     print("\n====== AOAE Pareto Sweep ======")

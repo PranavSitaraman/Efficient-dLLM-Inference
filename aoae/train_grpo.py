@@ -5,7 +5,7 @@ Implements Group Relative Policy Optimization following Jazbec et al. (2025)
 and Shao et al. (2024, DeepSeekMath), extended to the unified action space.
 
 Key design choices:
-  - Multiplicative reward: correctness * speed_penalty - beta * thrashing
+  - Multiplicative reward: correctness * speed_penalty - beta * normalized thrashing
   - Group-mean advantage normalization (no std normalization)
   - Clipped surrogate objective with importance sampling
   - No KL regularization (policy trained from scratch)
@@ -38,13 +38,6 @@ from .inference import aoae_inference, AOAETrajectory
 from .speculative_inference import speculative_inference, SpeculativeTrajectory
 from .tasks import check_math_correctness, extract_answer, extract_prompt_and_reference
 from .runtime_checks import collect_runtime_info
-from .models.verifier import (
-    create_or_load_verifier,
-    export_verifier_state,
-    run_verifier,
-    verifier_artifact_name,
-    verifier_trainable,
-)
 
 # Both trajectory types share the same reward-relevant attributes; Union lets
 # type checkers verify this without forcing a common base class.
@@ -147,18 +140,18 @@ def compute_reward(
     Compute multiplicative reward (Eq. reward) and return a component breakdown.
 
       R = r(y*, y_hat) * speed_factor
-          - beta * sum_t Thrash(t)
+          - beta * normalized_thrash
           - unresolved_penalty_weight * unresolved_fraction
           + cache_quality_weight * mean_cache_F1
           + access_reward_weight * access_F1
 
     Speed factor (compute-aware):
-      Standard / stable-cache path:
-        effective_flops = (used_steps / T) * (1 - mean_cached_fraction)
-      Speculative k>1 path:
-        effective_flops = (used_steps / T) *
-                          (aux_cost_ratio + mean(primary_step_flag * (1 - stable_cached_fraction)))
+      effective_flops = (used_steps / T) * (1 - mean_cache_for_speed)
       speed_factor    = (1 - effective_flops)^alpha
+
+    By default, transient K_spec agreement is logged but not credited as free
+    persistent cache. This keeps GRPO from treating broad auxiliary-primary
+    agreement as zero compute and collapsing to one-step all-unmask decoding.
 
     Args:
         generated_tokens: [B, L_gen] generated response tokens.
@@ -172,7 +165,9 @@ def compute_reward(
         rewards:    [B] per-sample total scalar reward.
         components: dict of [B] per-sample component tensors, containing:
                     correctness, speed_factor, effective_flops, used_steps_frac,
-                    mean_cached_fraction, thrash_penalty, total_thrash,
+                    mean_cached_fraction, mean_combined_cached_fraction,
+                    mean_stable_cached_fraction, mean_spec_cached,
+                    thrash_penalty, total_thrash, thrash_rate, thrash_denominator,
                     unresolved_penalty, cache_f1_reward, access_reward.
                     All on the same device as generated_tokens.
     """
@@ -192,20 +187,10 @@ def compute_reward(
 
     # --- Speed factor (compute-aware proxy for wall-time speedup) ---
     #
-    # Old formula: speed_factor = (T_hat / T)^alpha
-    #   Only rewards finishing in fewer *steps*, ignoring within-step savings
-    #   from caching.  A policy that caches 80% of positions per step but uses
-    #   all T steps gets zero credit for the 80% FLOP reduction.
-    #
-    # New formula: effective_flops = (used_steps / T) * (1 - mean_cached_fraction)
-    #              speed_factor    = (1 - effective_flops)^alpha
-    #
-    #   Derivation: dLLM cost per step ∝ (L - |K_t|) / L, where |K_t| is the
-    #   number of cached positions.  Total effective compute ∝ Σ_t (1 - cached_t)/T.
-    #   Multiplied by (used_steps/T) for early termination credit.  Result is
-    #   hardware-independent and dimensionless in [0, 1]:
-    #     0 → everything cached + zero steps (free)
-    #     1 → nothing cached + all T steps (full cost)
+    # K_spec is a transient agreement frontier, not a learned persistent cache.
+    # Crediting it directly made broad argmax agreement look like zero compute.
+    # Cache-speed credit is therefore opt-in and source-specific; the paper
+    # config keeps it disabled while stable KV reuse is still an ablation.
     if getattr(trajectory, "completion_step", None) is not None:
         used_steps = trajectory.completion_step.to(device).float().clamp(min=1.0, max=float(T))
     else:
@@ -215,46 +200,65 @@ def compute_reward(
         )
         used_steps = torch.full((B,), float(max(n_active_steps, 1)), device=device)
 
-    # cached_fractions = persistent K_stable fraction (single-model path uses the
-    # same field for its only cache). In the k>1 speculative path, K_spec is a
-    # transient frontier and is tracked separately in spec_cached_fractions.
-    cached_fracs = getattr(trajectory, "cached_fractions", [])
-    if cached_fracs:
-        mean_cached = torch.stack([cf.to(device) for cf in cached_fracs]).mean(dim=0)  # [B]
+    def _mean_fraction(name: str) -> torch.Tensor:
+        values = getattr(trajectory, name, [])
+        if values:
+            return torch.stack([v.to(device) for v in values]).mean(dim=0)
+        return torch.zeros(B, device=device)
+
+    mean_combined_cached = _mean_fraction("cached_fractions")
+    mean_spec_cached = _mean_fraction("spec_cached_fractions")
+    mean_stable_cached = _mean_fraction("stable_cached_fractions")
+    if not getattr(trajectory, "stable_cached_fractions", []):
+        # Single-cache trajectories predate the two-cache split; their cached
+        # fraction corresponds to the only operational cache-like set they have.
+        mean_stable_cached = mean_combined_cached
+
+    cache_speed_source = str(gc.get("cache_speed_source", "none")).lower()
+    if cache_speed_source in ("stable", "k_stable", "persistent"):
+        mean_cached = mean_stable_cached
+    elif cache_speed_source in ("spec", "k_spec", "transient"):
+        mean_cached = mean_spec_cached
+    elif cache_speed_source in ("combined", "union", "all"):
+        mean_cached = mean_combined_cached
     else:
         mean_cached = torch.zeros(B, device=device)
 
-    # spec_cached_fractions tracks K_spec only (agreement-based, one-step).
-    spec_cached_fracs = getattr(trajectory, "spec_cached_fractions", [])
-    if spec_cached_fracs:
-        mean_spec_cached = torch.stack([cf.to(device) for cf in spec_cached_fracs]).mean(dim=0)
-    else:
-        mean_spec_cached = torch.zeros(B, device=device)
+    cache_speed_credit_cap = float(gc.get("cache_speed_credit_cap", 1.0))
+    mean_cached = mean_cached.clamp(0.0, max(0.0, min(cache_speed_credit_cap, 1.0)))
 
     used_steps_frac = used_steps / float(T)                                   # [B] in [0,1]
-    primary_step_flags = getattr(trajectory, "primary_step_flags", [])
-    if primary_step_flags:
-        aux_cost_ratio = float(cfg.get("inference", {}).get("speculative_aux_cost_ratio", 0.15))
-        if cached_fracs and len(cached_fracs) == len(primary_step_flags):
-            _per_step_primary_cost = torch.stack([
-                pf.to(device) * (1.0 - cf.to(device))
-                for pf, cf in zip(primary_step_flags, cached_fracs)
-            ]).mean(dim=0)
-        else:
-            _per_step_primary_cost = torch.stack([
-                pf.to(device) for pf in primary_step_flags
-            ]).mean(dim=0)
-        effective_flops = used_steps_frac * (aux_cost_ratio + _per_step_primary_cost)
-        used_steps_frac = torch.stack([pf.to(device) for pf in primary_step_flags]).mean(dim=0)
-    else:
-        effective_flops = used_steps_frac * (1.0 - mean_cached)               # [B] in [0,1]
+    effective_flops = used_steps_frac * (1.0 - mean_cached)                   # [B] in [0,1]
     speed_factor = (1.0 - effective_flops.clamp(0.0, 1.0)).pow(alpha)         # [B] in [0,1]
 
     # --- Cache thrashing penalty ---
     total_thrash = torch.zeros(B, device=device)
     for thrash_t in trajectory.thrash_counts:
         total_thrash += thrash_t.to(device)
-    thrash_penalty = beta * total_thrash                                       # [B]
+    # Normalize raw invalidation counts before mixing them with bounded terms
+    # such as correctness and speed_factor. The raw count remains logged as
+    # total_thrash for diagnostics; the reward uses a per-response-token rate by
+    # default, so beta has a stable interpretation across sequence lengths.
+    norm_mode = gc.get("thrash_normalization", "response_length")
+    response_len = max(int(generated_tokens.shape[-1]), 1)
+    if isinstance(norm_mode, (int, float)):
+        thrash_denominator = torch.full(
+            (B,), max(float(norm_mode), 1.0), device=device
+        )
+    elif str(norm_mode).lower() in ("none", "raw", "count"):
+        thrash_denominator = torch.ones(B, device=device)
+    elif str(norm_mode).lower() in ("token_steps", "step_tokens", "tl"):
+        thrash_denominator = torch.full(
+            (B,), max(float(T * response_len), 1.0), device=device
+        )
+    elif str(norm_mode).lower() in ("used_token_steps", "used_tl"):
+        thrash_denominator = (used_steps * float(response_len)).clamp(min=1.0)
+    else:
+        thrash_denominator = torch.full(
+            (B,), float(response_len), device=device
+        )
+    thrash_rate = total_thrash / thrash_denominator
+    thrash_penalty = beta * thrash_rate                                        # [B]
 
     # --- Reward (base) ---
     reward = correctness * speed_factor - thrash_penalty
@@ -303,8 +307,12 @@ def compute_reward(
         "effective_flops":     effective_flops,
         "used_steps_frac":     used_steps_frac,
         "mean_cached_fraction": mean_cached,
+        "mean_combined_cached_fraction": mean_combined_cached,
+        "mean_stable_cached_fraction": mean_stable_cached,
         "thrash_penalty":       thrash_penalty,
         "total_thrash":         total_thrash,
+        "thrash_rate":          thrash_rate,
+        "thrash_denominator":   thrash_denominator,
         "unresolved_penalty":   unresolved_penalty,
         "cache_f1_reward":      cache_f1_reward,
         "access_reward":        access_reward,
@@ -324,7 +332,6 @@ def compute_grpo_loss(
     trajectories: List[Dict],
     advantages: torch.Tensor,
     clip_eps: float,
-    verifier=None,
 ) -> torch.Tensor:
     """
     Compute clipped GRPO surrogate loss.
@@ -363,9 +370,16 @@ def compute_grpo_loss(
             # Recompute h_t from stored intermediates so that ω_s/ω_a/ω_b receive
             # gradients.  weighted_embeds and entropy are detached rollout data;
             # autograd flows through the live ω parameters in recompute_h_t().
-            weighted_embeds = traj["weighted_embeds_list"][t_idx]  # [1, L, D]
-            entropy_t       = traj["entropy_list"][t_idx]          # [1, L]
-            H_t = sm_inner.recompute_h_t(weighted_embeds, entropy_t)
+            # Fall back to H_t_list for legacy/manual trajectory views that
+            # predate the lightweight omega-gradient storage path.
+            weighted_list = traj.get("weighted_embeds_list") or []
+            entropy_list = traj.get("entropy_list") or []
+            if t_idx < len(weighted_list) and t_idx < len(entropy_list):
+                weighted_embeds = weighted_list[t_idx]  # [1, L, D]
+                entropy_t = entropy_list[t_idx]         # [1, L]
+                H_t = sm_inner.recompute_h_t(weighted_embeds, entropy_t)
+            else:
+                H_t = traj["H_t_list"][t_idx]
             mask_ind = traj["mask_ind_list"][t_idx]  # [1, L]
             step_frac = traj["step_fracs"][t_idx]
             actions = traj["actions_list"][t_idx]     # dict of [1, L]
@@ -374,26 +388,13 @@ def compute_grpo_loss(
             # Recompute log prob under current policy
             # policy() goes through DDP forward hook for gradient sync;
             # log_prob is a non-forward method, access via .module if DDP-wrapped
+            q_scores = traj.get("quality_scores_list", [None] * n_steps)[t_idx]
             age_list = traj.get("age_feature_list", None)
             age_feat = age_list[t_idx] if age_list else None
             last_action_list = traj.get("last_action_feature_list", None)
             last_action_feat = last_action_list[t_idx] if last_action_list else None
             agreement_list = traj.get("agreement_list", None)
             agreement = agreement_list[t_idx].float() if agreement_list else None
-            q_scores = traj.get("quality_scores_list", [None] * n_steps)[t_idx]
-            if verifier is not None and any(p.requires_grad for p in verifier.parameters()):
-                ver_hidden_list = traj.get("verifier_hidden_list", None)
-                ver_hidden = ver_hidden_list[t_idx] if ver_hidden_list else None
-                ver_logits_list = traj.get("verifier_logits_list", None)
-                ver_logits = ver_logits_list[t_idx] if ver_logits_list else None
-                q_scores = run_verifier(
-                    verifier,
-                    hidden_states=ver_hidden,
-                    logits=ver_logits,
-                    agreement=agreement,
-                    mask_indicator=mask_ind,
-                    step_frac=step_frac,
-                )
             policy_out = policy(
                 H_t, mask_ind, step_frac,
                 quality_scores=q_scores,
@@ -496,14 +497,6 @@ def split_group_trajectory(trajectory: Any, group_size: int) -> List[Dict[str, A
             "quality_scores_list": [
                 _slice_tensor(q_scores, g) for q_scores in trajectory.quality_scores_list
             ],
-            "verifier_hidden_list": [
-                _slice_tensor(ver_hidden, g)
-                for ver_hidden in getattr(trajectory, "verifier_hidden_list", [])
-            ],
-            "verifier_logits_list": [
-                _slice_tensor(ver_logits, g)
-                for ver_logits in getattr(trajectory, "verifier_logits_list", [])
-            ],
             "age_feature_list": [
                 _slice_tensor(age_feat, g) for age_feat in getattr(trajectory, "age_feature_list", [])
             ],
@@ -512,9 +505,6 @@ def split_group_trajectory(trajectory: Any, group_size: int) -> List[Dict[str, A
                 for last_action_feat in getattr(trajectory, "last_action_feature_list", [])
             ],
             "step_fracs": list(trajectory.step_fracs),
-            "primary_step_flags": [
-                _slice_tensor(flag, g) for flag in getattr(trajectory, "primary_step_flags", [])
-            ],
             "access_metrics": dict(getattr(trajectory, "access_metrics", {})),
         }
         agreement_list = getattr(trajectory, "agreement_list", None)
@@ -543,7 +533,6 @@ def collect_rollout_group(
     tokenizer,
     dual_model=None,
     rollout_cfg: Optional[dict] = None,
-    verifier=None,
 ) -> Tuple[List[Dict], torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
     """
     Collect G rollout trajectories for a single prompt batch.
@@ -576,7 +565,6 @@ def collect_rollout_group(
             policy=policy,
             soft_mask_module=soft_mask_module,
             prism_adapter=prism_adapter,
-            verifier=verifier,
             prompt_ids=repeated_prompt_ids,
             cfg=rollout_cfg,
             record_trajectory=True,
@@ -588,7 +576,6 @@ def collect_rollout_group(
             policy=policy,
             soft_mask_module=soft_mask_module,
             prism_adapter=prism_adapter,
-            verifier=verifier,
             prompt_ids=repeated_prompt_ids,
             cfg=rollout_cfg,
             record_trajectory=True,
@@ -626,7 +613,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
     """
     Main GRPO training entrypoint.
 
-    1. Load base model (frozen), tokenizer, policy, soft-mask, and verifier.
+    1. Load base model (frozen), tokenizer, policy, soft-mask, PRISM.
     2. Load training data (prompts + reference answers).
     3. For each epoch:
        a. For each prompt batch:
@@ -638,6 +625,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
     from .models.base_model import LLaDABaseModel
     from .models.soft_mask import SoftMaskedState
     from .models.policy import AOAEPolicy
+    from .models.prism import PRISMAdapter
     from datasets import load_dataset
 
     gc = cfg["grpo"]
@@ -673,8 +661,6 @@ def train(cfg: dict, resume_from: Optional[str] = None):
     base_model = None
 
     prism = None
-    verifier = None
-    verifier_info = None
     policy = None
     soft_mask = None
     optimizer = None
@@ -699,9 +685,6 @@ def train(cfg: dict, resume_from: Optional[str] = None):
             "accum_step": accum_value,
             "epoch": epoch_idx,
         }
-        ver_sd = export_verifier_state(verifier, for_artifact=False)
-        if ver_sd is not None:
-            payload["verifier"] = ver_sd
         if best_value is not None:
             payload["best_reward"] = best_value
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -769,39 +752,21 @@ def train(cfg: dict, resume_from: Optional[str] = None):
             # soft_mask has learnable gating params too
             soft_mask = DDP(soft_mask, device_ids=[local_rank])
 
-        verifier_path = None
-        verifier_artifact = verifier_artifact_name(cfg)
-        if verifier_artifact:
-            verifier_path = os.path.join(lc["output_dir"], verifier_artifact)
-        verifier, verifier_info = create_or_load_verifier(
-            cfg,
-            hidden_dim=embed_dim,
-            device=device,
-            artifact_path=verifier_path,
-            checkpoint_state=None,
-            allow_fresh_init=verifier_trainable(cfg),
-            verbose=is_main,
-        )
-        prism = verifier
-        if is_main:
-            if verifier is None:
-                print("Verifier disabled — policy will not receive verifier quality scores.")
-            else:
-                print(
-                    f"Verifier: kind={verifier_info.kind} "
-                    f"trainable={verifier_info.trainable} "
-                    f"loaded_from={verifier_info.loaded_from or 'fresh'}"
-                )
-        if is_distributed and verifier is not None and verifier_trainable(cfg):
-            from torch.nn.parallel import DistributedDataParallel as DDP
-
-            verifier = DDP(verifier, device_ids=[local_rank])
-            prism = verifier
+        # PRISM adapter (optional — load if checkpoint exists, else skip)
+        prism_path = os.path.join(lc["output_dir"], "prism_adapter.pt")
+        if os.path.exists(prism_path):
+            if is_main:
+                print(f"Loading PRISM adapter from {prism_path}")
+            prism = PRISMAdapter(cfg, embed_dim).to(device)
+            prism.load_state_dict(torch.load(prism_path, map_location=device))
+            prism.eval()
+        else:
+            if is_main:
+                print("No PRISM adapter found — policy will not receive quality scores.")
+            prism = None
 
         # --- Optimizer (over all trainable params including DDP wrappers) ---
         trainable_params = list(policy.parameters()) + list(soft_mask.parameters())
-        if verifier is not None and verifier_trainable(cfg):
-            trainable_params.extend(list(verifier.parameters()))
         optimizer = AdamW(
             trainable_params,
             lr=gc["lr"],
@@ -864,16 +829,6 @@ def train(cfg: dict, resume_from: Optional[str] = None):
             load_state_dict_flexible(pol_inner, ckpt["policy"], "policy")
             sm_inner = soft_mask.module if hasattr(soft_mask, 'module') else soft_mask
             load_state_dict_flexible(sm_inner, ckpt["soft_mask"], "soft_mask")
-            if verifier is not None and "verifier" in ckpt:
-                ver_inner = verifier.module if hasattr(verifier, "module") else verifier
-                ver_state = ckpt["verifier"]
-                if hasattr(ver_inner, "adapter") and isinstance(ver_state, dict):
-                    own = ver_inner.state_dict()
-                    if not any(key in own for key in ver_state):
-                        prefixed = {f"adapter.{key}": value for key, value in ver_state.items()}
-                        if any(key in own for key in prefixed):
-                            ver_state = prefixed
-                load_state_dict_flexible(ver_inner, ver_state, "verifier")
 
             # Restore optimizer
             if "optimizer" in ckpt:
@@ -974,7 +929,6 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         policy=policy,
                         soft_mask_module=soft_mask,
                         prism_adapter=prism,
-                        verifier=verifier,
                         prompt_ids=prompt_ids,
                         reference_answers=[reference],
                         cfg=cfg,
@@ -996,7 +950,6 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                     grpo_loss = compute_grpo_loss(
                         policy=policy,
                         soft_mask_module=soft_mask,
-                        verifier=verifier,
                         trajectories=trajectories,
                         advantages=advantages.to(device),
                         clip_eps=gc["clip_eps"],
@@ -1060,10 +1013,13 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             f"speed={_buf_mean('speed_factor'):.3f}  "
                             f"eff_flops={_buf_mean('effective_flops'):.3f}  "
                             f"steps_frac={_buf_mean('used_steps_frac'):.3f}  "
-                            f"cached={_buf_mean('mean_cached_fraction'):.3f}"
+                            f"speed_cache={_buf_mean('mean_cached_fraction'):.3f}  "
+                            f"stable={_buf_mean('mean_stable_cached_fraction'):.3f}  "
+                            f"spec={_buf_mean('mean_spec_cached'):.3f}"
                         )
                         print(
                             f"    thrash_pen={_buf_mean('thrash_penalty'):.4f}  "
+                            f"thrash_rate={_buf_mean('thrash_rate'):.3f}  "
                             f"thrash_cnt={_buf_mean('total_thrash'):.1f}  "
                             f"cacheF1_rew={_buf_mean('cache_f1_reward'):.4f}  "
                             f"unresolved_pen={_buf_mean('unresolved_penalty'):.4f}"
@@ -1084,11 +1040,15 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             "reward/effective_flops": _buf_mean("effective_flops"),
                             "reward/used_steps_frac": _buf_mean("used_steps_frac"),
                             "reward/thrash_penalty": _buf_mean("thrash_penalty"),
+                            "reward/thrash_rate": _buf_mean("thrash_rate"),
                             "reward/cache_f1_reward": _buf_mean("cache_f1_reward"),
                             "reward/unresolved_penalty": _buf_mean("unresolved_penalty"),
                             "reward/access_reward": _buf_mean("access_reward"),
                             # Cache metrics (useful for WandB curves)
-                            "cache/mean_cached_fraction": _buf_mean("mean_cached_fraction"),
+                            "cache/speed_credit_fraction": _buf_mean("mean_cached_fraction"),
+                            "cache/mean_stable_fraction": _buf_mean("mean_stable_cached_fraction"),
+                            "cache/mean_spec_fraction": _buf_mean("mean_spec_cached"),
+                            "cache/mean_combined_fraction": _buf_mean("mean_combined_cached_fraction"),
                             "cache/total_thrash_count": _buf_mean("total_thrash"),
                             "cache/cache_f1": (
                                 _buf_mean("cache_f1_reward") / max(float(gc.get("cache_quality_weight", 1e-8)), 1e-8)
@@ -1145,19 +1105,11 @@ def train(cfg: dict, resume_from: Optional[str] = None):
         if is_main:
             pol_sd = policy.module.state_dict() if hasattr(policy, 'module') else policy.state_dict()
             sm_sd = soft_mask.module.state_dict() if hasattr(soft_mask, 'module') else soft_mask.state_dict()
-            ver_sd = export_verifier_state(verifier, for_artifact=False)
             final_path = os.path.join(lc["output_dir"], "policy_final.pt")
-            final_payload = {
+            torch.save({
                 "policy": pol_sd,
                 "soft_mask": sm_sd,
-            }
-            if ver_sd is not None:
-                final_payload["verifier"] = ver_sd
-            torch.save(final_payload, final_path)
-            verifier_sidecar = verifier_artifact_name(cfg)
-            if verifier is not None and verifier_sidecar:
-                verifier_sidecar_path = os.path.join(lc["output_dir"], verifier_sidecar)
-                torch.save(export_verifier_state(verifier, for_artifact=True), verifier_sidecar_path)
+            }, final_path)
             metadata_path = os.path.join(lc["output_dir"], "grpo_training_metadata.json")
             with open(metadata_path, "w") as f:
                 json.dump(
@@ -1166,10 +1118,6 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         "output_dir": lc["output_dir"],
                         "backend": cfg["base_model"].get("backend", ""),
                         "used_dual_model": bool(use_dual),
-                        "verifier_enabled": bool(verifier is not None),
-                        "verifier_kind": None if verifier_info is None else verifier_info.kind,
-                        "verifier_trainable": bool(verifier_trainable(cfg)),
-                        "verifier_artifact": verifier_sidecar,
                         "train_dataset": dc["train_dataset"],
                         "train_split": dc["train_split"],
                         "train_max_samples": dc.get("train_max_samples"),

@@ -348,6 +348,44 @@ class TestAOAEPolicy:
         assert lp.shape == (2,)
         assert torch.isfinite(lp).all()
 
+    def test_policy_initializes_cache_and_remask_conservatively(self):
+        from aoae.models.policy import AOAEPolicy
+
+        cfg = {
+            **DEFAULT_CFG,
+            "policy": {
+                **DEFAULT_CFG["policy"],
+                "init_remask_bias": -4.0,
+                "init_cache_bias": -2.0,
+                "init_access_bias": -2.0,
+            },
+        }
+        pol = AOAEPolicy(cfg, input_dim=DIM)
+
+        assert pol.head_unmask.bias.mean().item() == pytest.approx(0.0)
+        assert pol.head_remask.bias.mean().item() == pytest.approx(-4.0)
+        assert pol.head_cache.bias.mean().item() == pytest.approx(-2.0)
+        assert pol.head_access.bias.mean().item() == pytest.approx(-2.0)
+
+    def test_apply_unmask_budget_keeps_highest_probability_actions(self):
+        from aoae.models.policy import apply_unmask_budget
+
+        actions = {
+            "u_t": torch.tensor([[1.0, 1.0, 1.0, 1.0, 0.0]]),
+            "r_t": torch.zeros(1, 5),
+            "kappa_t": torch.zeros(1, 5),
+            "q_t": torch.zeros(1, 5),
+        }
+        policy_out = {
+            "unmask_probs": torch.tensor([[0.2, 0.9, 0.4, 0.8, 0.7]]),
+        }
+        mask = torch.tensor([[True, True, True, True, True]])
+        cfg = {"inference": {"max_unmask_tokens_per_step": 2}}
+
+        capped = apply_unmask_budget(actions, policy_out, mask, cfg)
+
+        assert capped["u_t"].tolist() == [[0.0, 1.0, 0.0, 1.0, 0.0]]
+
 
 # ======================================================================
 # Tests: PRISMAdapter
@@ -2007,7 +2045,8 @@ class TestRunSpeculativeInferenceMetrics:
                 hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
                 confidence = torch.ones_like(mask_ind, dtype=torch.float32)
                 entropy = torch.zeros_like(mask_ind, dtype=torch.float32)
-                return hidden, confidence, entropy
+                weighted = torch.zeros_like(hidden)
+                return hidden, confidence, entropy, weighted
 
         def fake_reuse_signal(resp_logits, aux_logits, cfg, state=None):
             safe_reuse = torch.tensor([[False, False]])
@@ -2046,6 +2085,123 @@ class TestRunSpeculativeInferenceMetrics:
         assert stats["draft_rejects"] == 1
         assert stats["draft_accept_rate"] == pytest.approx(0.5)
         assert stats["total_commits"] == 0
+
+
+class TestAOAESpeculativeInferenceLoop:
+    def test_aux_only_steps_do_not_remask_or_commit_stable_cache(self, monkeypatch):
+        from aoae.speculative_inference import speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "cache": {
+                "enabled": True,
+                "kspec_skip": False,
+                "stable_kv_cache": False,
+                "prefix_kv_cache": False,
+            },
+            "grpo": {"thrash_age_decay": 0.0},
+            "inference": {
+                "steps": 3,
+                "gen_length": 3,
+                "temperature": 0.0,
+                "fallback_unmask": True,
+                "disable_remask": False,
+                "compose_gamma": 0.0,
+                "primary_every_n": 2,
+                "primary_agree_threshold": 0.0,
+                "force_primary_first_last": False,
+                "positional_cache": {"enabled": False},
+                "reuse_signal": {"method": "argmax_match"},
+            },
+            "analysis": {"track_kv_dynamics": False},
+        }
+
+        class DummyDualModel:
+            def auxiliary_forward(self, input_ids):
+                logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], 3)
+                logits[..., 0] = 5.0
+                return logits
+
+            def dual_forward_resp(self, input_ids, resp_slice, need_hidden=False, need_all_hidden=False):
+                del need_hidden, need_all_hidden
+                aux_logits = self.auxiliary_forward(input_ids)[:, resp_slice, :]
+                primary_logits = aux_logits.clone()
+                return types.SimpleNamespace(
+                    primary_logits=primary_logits,
+                    auxiliary_logits=aux_logits,
+                    primary_hidden=None,
+                    primary_hidden_states=None,
+                )
+
+        class GreedyCommitPolicy:
+            def __call__(
+                self,
+                H_t,
+                mask_ind,
+                step_frac,
+                temperature=1.0,
+                confidence=None,
+                quality_scores=None,
+                agreement=None,
+                age_feature=None,
+                last_action_feature=None,
+            ):
+                del H_t, step_frac, temperature, confidence, quality_scores, agreement
+                del age_feature, last_action_feature
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                ones = torch.ones_like(zeros)
+                return {
+                    "unmask_probs": zeros,
+                    "remask_probs": zeros,
+                    "cache_probs": ones,
+                    "access_probs": zeros,
+                    "access_logits": zeros,
+                }
+
+            def sample_actions(self, policy_out, mask_ind):
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                ones = torch.ones_like(zeros)
+                return {
+                    "u_t": zeros,
+                    "r_t": zeros,
+                    "kappa_t": ones,
+                    "q_t": zeros,
+                }
+
+            def log_prob(self, policy_out, actions):
+                return torch.zeros(actions["u_t"].shape[0])
+
+        class DummySoftMask:
+            def __call__(self, resp_logits, mask_ind, step_frac):
+                del step_frac
+                hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
+                confidence = torch.ones_like(mask_ind, dtype=torch.float32)
+                entropy = torch.zeros_like(confidence)
+                weighted = torch.zeros_like(hidden)
+                return hidden, confidence, entropy, weighted
+
+        def fake_reuse_signal(resp_logits, aux_logits, cfg, state=None):
+            del resp_logits, aux_logits, cfg
+            return torch.ones(1, 3, dtype=torch.bool), state, {}
+
+        monkeypatch.setattr("aoae.speculative_inference.compute_reuse_signal", fake_reuse_signal)
+
+        _, traj = speculative_inference(
+            dual_model=DummyDualModel(),
+            policy=GreedyCommitPolicy(),
+            soft_mask_module=DummySoftMask(),
+            prism_adapter=None,
+            prompt_ids=torch.tensor([[1]], dtype=torch.long),
+            cfg=cfg,
+            collect_stats=True,
+        )
+
+        assert traj.primary_steps == 1
+        assert traj.aux_only_steps == 2
+        assert [float(x.item()) for x in traj.cached_fractions[:2]] == [0.0, 0.0]
+        assert float(traj.cached_fractions[-1].item()) == pytest.approx(1.0)
+        assert traj.total_stable_commits == 3
+        assert traj.agreement_observations == 1
 
 
 class TestRunBlockwiseSpeculativeInference:
@@ -2129,7 +2285,7 @@ class TestRunBlockwiseSpeculativeInference:
         assert stats["draft_accept_rate"] == pytest.approx(0.5)
         assert stats["agreement_observations"] == 3
         assert stats["mean_agreement"] == pytest.approx(1.0 / 3.0)
-        assert stats["total_invalidations"] == 1
+        assert stats["total_invalidations"] == 0
 
     def test_blockwise_runner_skips_primary_to_active_span(self, monkeypatch):
         from aoae.dinfer_integration import run_blockwise_speculative_inference

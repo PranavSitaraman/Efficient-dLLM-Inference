@@ -36,4 +36,10 @@ def test_paper_config_enables_full_aoae_stack():
 
     assert cfg["base_model"]["backend"] == "dual"
     assert cfg["grpo"]["enabled"] is True
+    assert cfg["grpo"]["thrash_normalization"] == "response_length"
+    assert cfg["grpo"]["cache_speed_source"] == "none"
+    assert cfg["policy"]["init_unmask_bias"] < 0
+    assert cfg["policy"]["init_remask_bias"] < 0
+    assert cfg["policy"]["init_cache_bias"] < 0
+    assert cfg["inference"]["max_unmask_fraction_per_step"] <= 0.125
     assert cfg["inference"]["positional_cache"]["enabled"] is True

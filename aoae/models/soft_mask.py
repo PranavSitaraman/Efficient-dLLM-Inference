@@ -9,7 +9,48 @@ confidence-scaled sigmoid of negative entropy.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple
+from typing import Tuple, Union
+
+
+def call_soft_mask(
+    module,
+    logits: torch.Tensor,
+    mask_indicator: torch.BoolTensor,
+    step_frac: float,
+    *,
+    return_weighted: bool = False,
+):
+    """Call a soft-mask module across the old and new return contracts.
+
+    ``SoftMaskedState`` now returns three tensors by default and four only when
+    ``return_weighted=True``. Some tests and downstream stubs still implement a
+    plain three-argument ``__call__`` and may return either shape; normalize that
+    here so inference code does not need fragile tuple-length handling.
+    """
+    try:
+        out = module(
+            logits,
+            mask_indicator,
+            step_frac,
+            return_weighted=return_weighted,
+        )
+    except TypeError as exc:
+        if "return_weighted" not in str(exc):
+            raise
+        out = module(logits, mask_indicator, step_frac)
+
+    if len(out) < 3:
+        raise ValueError("soft-mask module must return at least (H_t, confidence, entropy)")
+
+    if return_weighted:
+        if len(out) >= 4:
+            return out[0], out[1], out[2], out[3]
+        # Legacy stubs cannot provide the exact top-k weighted embedding. Use a
+        # detached H_t placeholder so tests and non-training adapters can still
+        # exercise the policy path; real SoftMaskedState callers get exact data.
+        return out[0], out[1], out[2], out[0].detach()
+
+    return out[0], out[1], out[2]
 
 
 class SoftMaskedState(nn.Module):
@@ -38,7 +79,19 @@ class SoftMaskedState(nn.Module):
         logits: torch.Tensor,
         mask_indicator: torch.BoolTensor,
         step_frac: float,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        *,
+        return_weighted: bool = False,
+    ) -> Union[
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    ]:
+        """Return soft-masked states and scalar features.
+
+        The default three-value return preserves the original lightweight API.
+        Training rollouts can request ``weighted_embeds`` explicitly so GRPO can
+        recompute ``h_t`` with gradients through the learnable omega scalars
+        without storing full vocab logits.
+        """
         del mask_indicator, step_frac
         bsz, seq_len, vocab_size = logits.shape
 
@@ -69,7 +122,9 @@ class SoftMaskedState(nn.Module):
         h_t = lam_exp * mask_embed + (1.0 - lam_exp) * weighted_embeds
         assert h_t.shape[:2] == (bsz, seq_len)
         assert logits.shape[-1] == vocab_size
-        return h_t, confidence, entropy, weighted_embeds
+        if return_weighted:
+            return h_t, confidence, entropy, weighted_embeds
+        return h_t, confidence, entropy
 
     def recompute_h_t(
         self,

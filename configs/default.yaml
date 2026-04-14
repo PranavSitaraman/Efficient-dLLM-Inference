@@ -29,6 +29,10 @@ policy:
   n_layers: 1                  # N_pi transformer layers (paper §3.4)
   n_heads: 4                   # attention heads
   dropout: 0.0
+  init_unmask_bias: -1.5       # avoid one-shot cold-start denoising
+  init_remask_bias: -4.0       # conservative cold start: remasking is opt-in
+  init_cache_bias: -2.0        # avoid random 50% cache commits before reward signal
+  init_access_bias: -2.0
   use_positional_features: false # POC1 default: keep positional features disabled
   use_age_feature: true
   use_last_action_feature: true
@@ -45,32 +49,9 @@ prism:
   lr: 1.0e-3
   batch_size: 4
 
-# ---- Verifier backend ---------------------------------------
-# Controls how quality_scores are produced for the policy / speculative loop.
-# Ablations:
-#   - prism + trainable=false  → frozen PRISM sidecar
-#   - prism + trainable=true   → unfrozen PRISM during GRPO
-#   - learned_head             → fresh PRISM-like verifier head
-#   - confidence               → logits-only heuristic verifier
-verifier:
-  enabled: true
-  kind: "prism"
-  trainable: false
-  artifact_name: "prism_adapter.pt"
-  score_mode: "max_prob"
-  hidden_dim: 256
-  threshold: 0.5
-  dropout: 0.0
-
 # ---- dKV-Cache ----------------------------------------------
 cache:
   enabled: true
-  # Legacy name retained for backward compatibility:
-  #   kspec_skip=true enables the speculative draft--validate path, where K_spec
-  #   is the transient drafted frontier awaiting the next verifier pass.
-  kspec_skip: true
-  stable_kv_cache: false
-  prefix_kv_cache: false
 
 # ---- GRPO training ------------------------------------------
 grpo:
@@ -78,6 +59,9 @@ grpo:
   clip_eps: 0.2                # epsilon for clipping (paper §3.5)
   alpha: 1.0                   # speed bonus exponent; applied to (1 - effective_flops)
   beta: 0.1                    # cache-thrashing penalty weight (paper §3.5)
+  thrash_normalization: "response_length"  # convert invalidation counts to a per-token rate
+  cache_speed_source: "none"   # transient agreement is diagnostic, not free persistent cache
+  cache_speed_credit_cap: 0.5
   # Dense intermediate signals — important for credit assignment beyond sparse
   # terminal correctness.  These provide per-step gradients to the cache (κ_t)
   # and access (q_t) heads that the terminal reward alone cannot supply.
@@ -106,9 +90,8 @@ inference:
   gen_length: 256              # max response tokens
   temperature: 0.0             # base-model sampling temp (0 = greedy)
   fallback_unmask: true        # unmask highest-confidence when u_t = 0
+  max_unmask_fraction_per_step: 0.125
   disable_remask: false        # ablation: set true to disable remasking
-  primary_every_n: 1           # set >1 for lossy k>1 speculative draft--validate
-  speculative_aux_cost_ratio: 0.15
   positional_cache:
     enabled: true              # enables age_feature and last_action_feature inputs to policy
     horizon: 4                 # next-H window for access prediction

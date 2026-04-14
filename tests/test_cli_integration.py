@@ -235,6 +235,27 @@ def test_cli_main_cleans_up_initialized_process_group(monkeypatch):
     assert calls == ["destroy"]
 
 
+def test_cleanup_distributed_is_best_effort_after_external_teardown(monkeypatch):
+    from aoae.cli import _cleanup_distributed
+
+    class FakeDist:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def is_initialized():
+            return True
+
+        @staticmethod
+        def destroy_process_group():
+            raise AssertionError("default process group already cleared")
+
+    monkeypatch.setitem(sys.modules, "torch.distributed", FakeDist)
+
+    _cleanup_distributed({"rank": 0, "local_rank": 0, "world_size": 2})
+
+
 def test_cli_paper_suite_passthrough(monkeypatch):
     calls = []
 

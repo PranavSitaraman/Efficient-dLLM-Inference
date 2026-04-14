@@ -1,4 +1,5 @@
 import torch
+import pytest
 from types import SimpleNamespace
 
 
@@ -100,7 +101,8 @@ def test_collect_rollout_group_batches_group_rollouts(monkeypatch):
 
     def fake_compute_reward(generated_tokens, reference_answer, tokenizer, trajectory, cfg, T):
         del generated_tokens, reference_answer, tokenizer, trajectory, cfg, T
-        return torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float32)
+        rewards = torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float32)
+        return rewards, {"correctness": rewards}
 
     monkeypatch.setattr(mod, "aoae_inference", fake_aoae_inference)
     monkeypatch.setattr(mod, "compute_reward", fake_compute_reward)
@@ -116,7 +118,7 @@ def test_collect_rollout_group_batches_group_rollouts(monkeypatch):
         "inference": {"steps": 64, "gen_length": 256},
     }
 
-    trajectories, rewards, advantages = mod.collect_rollout_group(
+    trajectories, rewards, advantages, reward_components = mod.collect_rollout_group(
         base_model=object(),
         policy=object(),
         soft_mask_module=object(),
@@ -134,6 +136,7 @@ def test_collect_rollout_group_batches_group_rollouts(monkeypatch):
     assert len(trajectories) == 4
     assert torch.allclose(rewards, torch.tensor([1.0, 2.0, 3.0, 4.0]))
     assert torch.allclose(advantages, torch.tensor([-1.5, -0.5, 0.5, 1.5]))
+    assert torch.allclose(reward_components["correctness"], rewards)
 
 
 def test_soft_mask_state_dict_excludes_static_embedding_weight():
@@ -180,7 +183,7 @@ def test_compute_reward_penalizes_unresolved_masks():
         },
     }
 
-    reward = compute_reward(
+    reward, _ = compute_reward(
         generated_tokens=torch.randint(0, 10, (1, 4)),
         reference_answer=["42"],
         tokenizer=tokenizer,
@@ -218,7 +221,7 @@ def test_compute_reward_cache_quality_f1_adds_positive_reward():
     traj_no_f1.thrash_counts = [torch.tensor([0.0])]
     traj_no_f1.actions = [{"u_t": torch.zeros(1, 4)}]
 
-    reward_no_f1 = compute_reward(
+    reward_no_f1, _ = compute_reward(
         generated_tokens=torch.randint(0, 10, (1, 4)),
         reference_answer=["42"],
         tokenizer=tokenizer,
@@ -238,7 +241,7 @@ def test_compute_reward_cache_quality_f1_adds_positive_reward():
         torch.tensor([0.85]),
     ]
 
-    reward_with_f1 = compute_reward(
+    reward_with_f1, _ = compute_reward(
         generated_tokens=torch.randint(0, 10, (1, 4)),
         reference_answer=["42"],
         tokenizer=tokenizer,
@@ -253,3 +256,110 @@ def test_compute_reward_cache_quality_f1_adds_positive_reward():
     expected_boost = 0.1 * ((0.9 + 0.8 + 0.85) / 3.0)
     actual_boost = reward_with_f1[0].item() - reward_no_f1[0].item()
     assert abs(actual_boost - expected_boost) < 1e-5
+
+
+def test_compute_reward_normalizes_thrash_by_response_length():
+    from aoae.train_grpo import compute_reward
+    from aoae.inference import AOAETrajectory
+    from unittest.mock import MagicMock
+
+    tokenizer = MagicMock()
+    tokenizer.decode.return_value = "\\boxed{42}"
+
+    traj = AOAETrajectory()
+    traj.completion_step = torch.tensor([8.0])
+    traj.thrash_counts = [torch.tensor([16.0])]
+    traj.actions = [{"u_t": torch.zeros(1, 16)}]
+
+    cfg = {
+        "base_model": {"mask_token_id": 99},
+        "grpo": {"alpha": 1.0, "beta": 0.25, "access_reward_weight": 0.0},
+    }
+
+    reward, components = compute_reward(
+        generated_tokens=torch.randint(0, 10, (1, 16)),
+        reference_answer=["42"],
+        tokenizer=tokenizer,
+        trajectory=traj,
+        cfg=cfg,
+        T=16,
+    )
+
+    assert components["total_thrash"][0].item() == 16.0
+    assert components["thrash_rate"][0].item() == 1.0
+    assert components["thrash_penalty"][0].item() == 0.25
+    assert reward[0].item() > -1.0
+
+
+def test_compute_reward_does_not_credit_transient_spec_cache_by_default():
+    from aoae.train_grpo import compute_reward
+    from aoae.speculative_inference import SpeculativeTrajectory
+    from unittest.mock import MagicMock
+
+    tokenizer = MagicMock()
+    tokenizer.decode.return_value = "\\boxed{42}"
+
+    traj = SpeculativeTrajectory()
+    traj.completion_step = torch.tensor([1.0])
+    traj.thrash_counts = [torch.tensor([0.0])]
+    traj.cached_fractions = [torch.tensor([1.0])]
+    traj.spec_cached_fractions = [torch.tensor([1.0])]
+    traj.stable_cached_fractions = [torch.tensor([0.0])]
+
+    cfg = {
+        "base_model": {"mask_token_id": 99},
+        "grpo": {"alpha": 1.0, "beta": 0.0, "access_reward_weight": 0.0},
+    }
+
+    reward, components = compute_reward(
+        generated_tokens=torch.randint(0, 10, (1, 16)),
+        reference_answer=["42"],
+        tokenizer=tokenizer,
+        trajectory=traj,
+        cfg=cfg,
+        T=16,
+    )
+
+    assert components["mean_combined_cached_fraction"][0].item() == 1.0
+    assert components["mean_spec_cached"][0].item() == 1.0
+    assert components["mean_cached_fraction"][0].item() == 0.0
+    assert components["effective_flops"][0].item() == pytest.approx(1.0 / 16.0)
+    assert reward[0].item() == pytest.approx(15.0 / 16.0)
+
+
+def test_compute_reward_can_credit_stable_cache_when_enabled():
+    from aoae.train_grpo import compute_reward
+    from aoae.speculative_inference import SpeculativeTrajectory
+    from unittest.mock import MagicMock
+
+    tokenizer = MagicMock()
+    tokenizer.decode.return_value = "\\boxed{42}"
+
+    traj = SpeculativeTrajectory()
+    traj.completion_step = torch.tensor([8.0])
+    traj.thrash_counts = [torch.tensor([0.0])]
+    traj.cached_fractions = [torch.tensor([1.0])]
+    traj.spec_cached_fractions = [torch.tensor([1.0])]
+    traj.stable_cached_fractions = [torch.tensor([0.5])]
+
+    cfg = {
+        "base_model": {"mask_token_id": 99},
+        "grpo": {
+            "alpha": 1.0,
+            "beta": 0.0,
+            "access_reward_weight": 0.0,
+            "cache_speed_source": "stable",
+        },
+    }
+
+    _, components = compute_reward(
+        generated_tokens=torch.randint(0, 10, (1, 16)),
+        reference_answer=["42"],
+        tokenizer=tokenizer,
+        trajectory=traj,
+        cfg=cfg,
+        T=16,
+    )
+
+    assert components["mean_cached_fraction"][0].item() == 0.5
+    assert components["effective_flops"][0].item() == pytest.approx(0.25)

@@ -1,15 +1,15 @@
 """
-Speculative Diffusion Inference (Algorithm 1 from paper §3.3).
+Speculative diffusion inference for AOAE.
 
-Dual-model loop:
-  Phase 0:  Auxiliary draft (hard-routed, fast ~1.4B active)
-  Phase 0b: Primary verification (soft-routed, slow all 16B active)
-  Phase 1:  Remask uncertain positions
-  Phase 2:  Unmask with composed prediction (auxiliary + primary)
-  Phase 3:  Cache commit (only at agreement positions)
+The runtime separates two ideas that are easy to conflate:
+  - K_spec: a transient drafter/verifier acceptance frontier. It is refreshed
+    at verifier events and never treated as a persistent stability guarantee.
+  - K_stable: a persistent policy-controlled stability cache. It survives
+    across steps until an explicit remask/eviction.
 
-The key insight: where auxiliary and primary argmax tokens agree,
-the auxiliary's pre-cached KV states are valid → speedup.
+Between verifier events the hard-routed auxiliary may take cheap draft steps.
+Verifier events compare auxiliary and primary predictions, compose or correct
+the draft, and optionally reset stale drafter cache state.
 """
 
 import torch
@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from .cache import SpeculativeCacheBookkeeper
 from .models.composed_prediction import compose_prediction_dual
 from .models.dual_model import DualModelWrapper, DualModelOutput
-from .models.policy import call_policy
+from .models.policy import apply_unmask_budget, call_policy
+from .models.soft_mask import call_soft_mask
 from .agreement_signals import compute_reuse_signal
 from .positional_cache import (
     init_positional_state,
@@ -29,7 +30,6 @@ from .positional_cache import (
     update_positional_state,
     compute_next_h_access_metrics,
 )
-from .models.verifier import run_verifier, verifier_requires_hidden_states
 import json
 
 
@@ -46,8 +46,6 @@ class SpeculativeTrajectory:
     entropy_list: List[torch.Tensor] = field(default_factory=list)
     mask_ind_list: List[torch.BoolTensor] = field(default_factory=list)
     quality_scores_list: List[Optional[torch.Tensor]] = field(default_factory=list)
-    verifier_hidden_list: List[Optional[torch.Tensor]] = field(default_factory=list)
-    verifier_logits_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     agreement_list: List[torch.Tensor] = field(default_factory=list)
     age_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     last_action_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
@@ -62,20 +60,25 @@ class SpeculativeTrajectory:
     mean_agreement_rate: float = 0.0
     total_cache_hits: int = 0
     total_cache_misses: int = 0
+    total_stable_commits: int = 0
+    total_stable_invalidations: int = 0
+    draft_accepts: int = 0
+    draft_rejects: int = 0
+    agreement_observations: int = 0
+    primary_steps: int = 0
+    aux_only_steps: int = 0
+    drafter_cache_resets: int = 0
     access_metrics: Dict[str, float] = field(default_factory=dict)
     mean_boundary_depth: float = 0.0
     boundary_distribution: str = "{}"
     # ---- compute-aware speed bonus ----
     # Legacy metric name: per-step fraction of positions in the transient
-    # K_spec frontier (drafted but not yet verifier-validated).
+    # K_spec speculative frontier / one-step speculative-accept state.
     spec_cached_fractions: List[torch.Tensor] = field(default_factory=list)
     # K_stable fraction: per-step fraction of positions in the persistent κ_t cache.
-    # In the k>1 speculative schedule, this is the persistent cache occupancy
-    # used by the primary verifier path when it does run; K_spec itself is not
-    # counted as a persistent cache fraction.
+    stable_cached_fractions: List[torch.Tensor] = field(default_factory=list)
+    # Combined K_spec ∪ K_stable diagnostic occupancy.
     cached_fractions: List[torch.Tensor] = field(default_factory=list)
-    # [B] indicator for whether the slow primary/verifier ran on a given step.
-    primary_step_flags: List[torch.Tensor] = field(default_factory=list)
     # ---- Cache quality F1 (soft precision-recall training signal) ----
     # Per-step F1 measuring whether the cache set contains the *stable*
     # positions (low H_t drift) and excludes the *unstable* ones.
@@ -109,7 +112,7 @@ def speculative_inference(
     record_trajectory: bool = False,
     policy_temperature: float = 1.0,
     track_kv_dynamics: bool = False,
-    verifier=None,
+    collect_stats: bool = False,
 ) -> Tuple[torch.Tensor, Optional[SpeculativeTrajectory]]:
     """
     Run speculative diffusion inference (Algorithm 1).
@@ -118,7 +121,7 @@ def speculative_inference(
         dual_model:       DualModelWrapper (soft primary + hard auxiliary).
         policy:           AOAE steering policy (with agreement input).
         soft_mask_module:  soft-masked state builder.
-        prism_adapter:     Legacy PRISM quality head (deprecated alias for verifier).
+        prism_adapter:     PRISM quality head (or None).
         prompt_ids:        [B, P] prompt token ids.
         cfg:               config dict.
         record_trajectory: if True, store actions/log_probs for GRPO.
@@ -128,6 +131,8 @@ def speculative_inference(
             trajectory.kv_dynamics_summary using the PRIMARY model's all-layer
             hidden states as a hidden-state proxy for KV drift.  Off by default
             during GRPO training to avoid the extra forward-pass overhead.
+        collect_stats: if True, return lightweight trajectory metrics during
+            evaluation without storing full GRPO rollout tensors.
 
     Returns:
         output_ids: [B, P + L_gen] full sequence with generated tokens.
@@ -143,13 +148,11 @@ def speculative_inference(
     base_temp = ic["temperature"]
     gamma = ic.get("compose_gamma", 0.0)
     use_positional_cache = bool(ic.get("positional_cache", {}).get("enabled", False))
-    primary_every_n = max(1, int(ic.get("primary_every_n", 1)))
 
     B = prompt_ids.shape[0]
     P = prompt_ids.shape[1]
     L_total = P + L_gen
     device = prompt_ids.device
-    verifier = verifier if verifier is not None else prism_adapter
 
     # --- Initialize: prompt + fully masked response ---
     y = torch.cat([
@@ -166,48 +169,50 @@ def speculative_inference(
         if use_cache else None
     )
 
-    trajectory = SpeculativeTrajectory() if record_trajectory else None
+    trajectory = SpeculativeTrajectory() if (record_trajectory or collect_stats) else None
     agreement_rates = []
     reuse_state = None
     pos_state = init_positional_state(B, L_gen, device)
-    _last_verified_quality = torch.zeros(B, L_gen, dtype=torch.float32, device=device)
-    _last_verified_agreement = torch.zeros(B, L_gen, dtype=torch.float32, device=device)
 
     # H_t from the previous step: used to compute per-position drift for the
     # cache quality F1 signal.  Mirrors the same variable in aoae_inference().
     _prev_H_t: Optional[torch.Tensor] = None
 
     # --- KV cache state ---
-    # Speculation path (legacy config name: cache.kspec_skip): enables the lossy
-    # k>1 draft--validate schedule. The auxiliary drafts every step; the soft
-    # primary/verifier runs every ``primary_every_n`` steps (plus bootstrap/final
-    # steps). K_spec is the transient frontier of drafted-but-not-yet-verified
-    # positions, not a persistent cache of accepted tokens.
+    # K_spec skip (cache.kspec_skip): current k=1 special case of speculative
+    # verification. Auxiliary forward always runs with use_cache=True. The
+    # returned aux_past_kv is used as the starting KV state for the primary; the
+    # primary only runs forward_replace_with_cache over non-agreed contiguous
+    # clusters, reusing aux K/V at previous-step K_spec positions under the
+    # lossy hypothesis aux K/V ≈ pri K/V there. Conceptually K_spec is a
+    # transient verifier frontier, not a persistent cache; the current runtime
+    # materializes that frontier as a one-step reuse hint.
     #
     # Prefix KV cache (cache.prefix_kv_cache): additionally caches the prompt
-    #   prefix for the auxiliary (skips prompt recompute each step).
+    #   prefix for the auxiliary (skips prompt recompute each step).  The primary
+    #   always starts from aux_past_kv so it also reuses prompt K/V implicitly.
     #
-    # K_spec and K_stable are independently configurable. When both are on, the
-    # aux drafter / agreement path stays active while stable_primary_kv delivers
-    # the actual primary-side KV reuse. This keeps speculation separable from the
-    # persistent stability cache even though the current runtime does not yet
-    # compose auxiliary-KV skip and stable-primary-KV skip into one kernel path.
+    # Real KV reuse is disabled when hidden states are needed (PRISM, KV dynamics
+    # tracker), but the auxiliary can still run aux-only draft steps without
+    # cache between verifier events.
     use_kspec_skip = cfg["cache"].get("kspec_skip", True) and use_cache
     use_prefix_kv_cache = cfg["cache"].get("prefix_kv_cache", False) and use_cache
     aux_past_kv = None
+    pri_past_kv = None   # only used when kspec_skip=False and prefix_kv_cache=True
     _prefix_cache_initialized = False
 
     # Stable KV cache path (no drafter): maintain primary KV across steps and only
     # recompute at positions that changed (newly unmasked / remasked) or are still [MASK].
-    # Active whenever cache.stable_kv_cache=true. Can be used on its own or in
-    # combination with the speculative drafter/verifier path above.
-    use_stable_kv_skip = cfg["cache"].get("stable_kv_cache", False) and use_cache
+    # Active when cache.stable_kv_cache=true and kspec_skip=false.
+    use_stable_kv_skip = (
+        cfg["cache"].get("stable_kv_cache", False) and use_cache
+        and not use_kspec_skip
+    )
     stable_primary_kv = None      # persistent primary KV cache (initialized on step 1)
     _stable_logits_cache = None   # [B, L_gen, V] most recent real primary logits at each
                                   # position; updated at active positions each step and
                                   # substituted at stable positions before soft_mask_module
                                   # so H_t / policy / cache_quality_f1 see correct values.
-    _stable_hidden_cache = None   # [B, L_gen, D] same idea for verifier hidden states
     # Note: no prev_y_resp needed — K_stable mask (from cache_mgr.stable) is the
     # ground-truth for what's genuinely stable; changed/remasked positions are
     # evicted from K_stable automatically via invalidate()/step_stable().
@@ -224,6 +229,25 @@ def speculative_inference(
     if _track_kv:
         from .kv_dynamics import SpeculativeDynamicsTracker
         _dynamics_tracker = SpeculativeDynamicsTracker(cfg)
+        if trajectory is None:
+            trajectory = SpeculativeTrajectory()
+
+    primary_every_n = max(1, int(ic.get("primary_every_n", 1)))
+    primary_agree_threshold = float(ic.get("primary_agree_threshold", 0.0))
+    force_primary_endpoints = bool(ic.get("force_primary_first_last", True))
+    aux_cache_reset_threshold = float(ic.get("aux_cache_reset_threshold", 1.1))
+    _ema_agreement = 1.0
+    _primary_steps = 0
+    _aux_only_steps = 0
+    _agreement_sum = 0.0
+    _agreement_obs = 0
+    _safe_reuse_sum = 0.0
+    _safe_reuse_obs = 0
+    _draft_accepts = 0
+    _draft_rejects = 0
+    _stable_commits = 0
+    _stable_invalidations = 0
+    _drafter_cache_resets = 0
 
     # --- Main speculative diffusion loop ---
     for t in range(T, 0, -1):
@@ -237,30 +261,78 @@ def speculative_inference(
                 trajectory.completion_step = torch.full((B,), T - t, device=device)
             break
 
-        # === Phase 0 + 0b: Draft / optional verify ===
-        # In the revised k>1 speculative schedule, the auxiliary may run for
-        # multiple draft steps before the soft primary/verifier runs again.
-        # K_spec tracks the drafted-but-not-yet-verified frontier across those
-        # draft steps. Accepted positions stay in y directly; they are not kept
-        # in K_spec after verification.
+        # === Phase 0 + 0b: Dual-model forward ===
+        # When KV dynamics tracking is enabled, request all-layer hidden states
+        # so the tracker can compute hidden-state-proxy drift per layer.
+        # need_all_hidden=True also satisfies PRISM's need for the last hidden
+        # state (dual_forward sets primary_hidden = primary_hidden_states[-1]).
         _need_all_hidden = _track_kv
-        _need_hidden = verifier_requires_hidden_states(verifier) and not _need_all_hidden
-        _use_speculative_branch = use_kspec_skip
-        _use_stable_branch = use_stable_kv_skip and not _need_all_hidden
+        _need_hidden = (prism_adapter is not None) and not _need_all_hidden
+        _can_use_cache = not _need_hidden and not _need_all_hidden
         step_idx = T - t
         run_primary = (
-            (not _use_speculative_branch)
-            or primary_every_n <= 1
-            or step_idx == 0
+            primary_every_n <= 1
             or (step_idx > 0 and step_idx % primary_every_n == 0)
-            or t == 1
+            or (force_primary_endpoints and (t == T or t == 1))
+            or _ema_agreement < primary_agree_threshold
         )
+        if use_stable_kv_skip:
+            # Stable-primary mode has no separate drafter.  Keep every step on
+            # the verifier/stable-cache path rather than silently switching to
+            # auxiliary-only decoding when primary_every_n > 1.
+            run_primary = True
 
-        frontier_before_step = cache_mgr.spec.get_cached_mask() if cache_mgr is not None else torch.zeros_like(mask_ind)
-        _pri_hidden_for_verifier = None
-        _pri_hidden_states_for_tracker = None
+        if not run_primary:
+            if use_prefix_kv_cache and _can_use_cache and _prefix_cache_initialized:
+                aux_logits, aux_past_kv = dual_model.auxiliary_forward_replace_with_cache(
+                    y, resp_slice, aux_past_kv,
+                )
+            elif use_prefix_kv_cache and _can_use_cache:
+                _aux_full, aux_past_kv = dual_model.auxiliary_forward_with_cache(y)
+                aux_logits = _aux_full[:, resp_slice, :]
+                _prefix_cache_initialized = True
+            else:
+                aux_logits = dual_model.auxiliary_forward(y)[:, resp_slice, :]
+            resp_logits = aux_logits
+            # No verifier observation happened on this cheap draft step, so no
+            # position is considered accepted for composition or K_spec.
+            agreement = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
+            _pri_hidden_for_prism = None
+            _pri_hidden_states_for_tracker = None
+            _aux_only_steps += 1
 
-        if _use_speculative_branch:
+        elif use_stable_kv_skip and _can_use_cache:
+            # --- Stable KV path: primary only, skip positions in K_stable ---
+            # K_stable = positions the policy's κ_t head committed as stable.
+            # Eviction: remask (r_t=1) evicts from K_stable via invalidate().
+            # Skip mask: K_stable positions that are NOT currently [MASK].
+            #   - [MASK] positions always need fresh logits for decoding.
+            #   - Non-K_stable unmasked positions: not yet committed or evicted;
+            #     recomputed so their KV stays current until κ_t commits them.
+            # Step 1: K_stable is empty → full primary forward (seeds stable_primary_kv).
+            if stable_primary_kv is None:
+                _full_logits, stable_primary_kv = dual_model.primary_forward_with_cache(y)
+                resp_logits = _full_logits[:, resp_slice, :]
+            else:
+                # Use K_stable mask from end of previous step (post eviction/commit).
+                _k_stable_mask = cache_mgr.stable.get_cached_mask()       # [B, L_gen]
+                _stable_skip = _k_stable_mask & ~mask_ind                  # [B, L_gen]
+                _fresh, stable_primary_kv = dual_model.primary_forward_with_stable_cache(
+                    y, resp_slice, stable_primary_kv, _stable_skip,
+                )
+                # _fresh: primary logits at active positions; zeros at skipped positions.
+                # Zeros are safe: skipped positions are unmasked and won't be sampled.
+                resp_logits = _fresh
+            # No drafter in stable path.
+            aux_logits = resp_logits
+            agreement = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
+            _pri_hidden_for_prism = None
+            _pri_hidden_states_for_tracker = None
+            _primary_steps += 1
+
+        elif use_kspec_skip and _can_use_cache:
+            # --- K_spec path: real KV skip for agreed positions ---
+            # Auxiliary runs with cache (prompt prefix reused when configured).
             if use_prefix_kv_cache and _prefix_cache_initialized:
                 aux_logits, aux_past_kv = dual_model.auxiliary_forward_replace_with_cache(
                     y, resp_slice, aux_past_kv,
@@ -269,129 +341,121 @@ def speculative_inference(
                 _aux_full, aux_past_kv = dual_model.auxiliary_forward_with_cache(y)
                 aux_logits = _aux_full[:, resp_slice, :]
                 _prefix_cache_initialized = True
-        else:
-            aux_logits = None
 
-        if run_primary:
-            if _use_stable_branch:
-                if stable_primary_kv is None:
-                    if _need_hidden:
-                        _full_logits, _full_hidden, stable_primary_kv = dual_model.primary_forward_with_cache_and_hidden(y)
-                        resp_logits = _full_logits[:, resp_slice, :]
-                        _pri_hidden_for_verifier = _full_hidden[:, resp_slice, :]
-                    else:
-                        _full_logits, stable_primary_kv = dual_model.primary_forward_with_cache(y)
-                        resp_logits = _full_logits[:, resp_slice, :]
-                else:
-                    _k_stable_mask = cache_mgr.stable.get_cached_mask()
-                    _stable_skip = _k_stable_mask & ~mask_ind
-                    if _need_hidden:
-                        _fresh, _fresh_hidden, stable_primary_kv = dual_model.primary_forward_with_stable_cache_and_hidden(
-                            y, resp_slice, stable_primary_kv, _stable_skip,
-                        )
-                        resp_logits = _fresh
-                        _pri_hidden_for_verifier = _fresh_hidden
-                    else:
-                        _fresh, stable_primary_kv = dual_model.primary_forward_with_stable_cache(
-                            y, resp_slice, stable_primary_kv, _stable_skip,
-                        )
-                        resp_logits = _fresh
+            # Primary: run only over non-agreed response clusters (K_spec skip).
+            # _k_spec is the current k=1 materialization of the transient K_spec
+            # frontier: previous-step one-step accepted / reusable positions.
+            _k_spec = cache_mgr.spec.get_cached_mask()  # [B, L_gen]
+            _pri_fresh, _ = dual_model.primary_forward_with_kspec(
+                y, resp_slice, aux_past_kv, _k_spec,
+            )
+            # Merge: agreed positions → aux_logits (no primary recompute there);
+            #        non-agreed positions → fresh primary logits.
+            resp_logits = torch.where(
+                _k_spec.unsqueeze(-1).expand_as(_pri_fresh),
+                aux_logits,
+                _pri_fresh,
+            )
+            _pri_hidden_for_prism = None
+            _pri_hidden_states_for_tracker = None
+            _primary_steps += 1
+
+        elif use_prefix_kv_cache and _can_use_cache:
+            # --- Prefix-only path: no K_spec skip, but prompt KVs cached ---
+            if not _prefix_cache_initialized:
+                _aux_full, aux_past_kv = dual_model.auxiliary_forward_with_cache(y)
+                _pri_full, pri_past_kv = dual_model.primary_forward_with_cache(y)
+                aux_logits = _aux_full[:, resp_slice, :]
+                resp_logits = _pri_full[:, resp_slice, :]
+                _prefix_cache_initialized = True
             else:
-                if _need_all_hidden:
-                    _pri_full, _pri_hidden_states_for_tracker = dual_model.primary_forward_with_all_hidden(y)
-                    resp_logits = _pri_full[:, resp_slice, :]
-                    _pri_hidden_for_verifier = _pri_hidden_states_for_tracker[-1][:, resp_slice, :]
-                    _pri_hidden_states_for_tracker = [h[:, resp_slice, :] for h in _pri_hidden_states_for_tracker]
-                elif _need_hidden:
-                    _pri_full, _pri_hidden_for_verifier = dual_model.primary_forward_with_hidden(y)
-                    resp_logits = _pri_full[:, resp_slice, :]
-                    _pri_hidden_for_verifier = _pri_hidden_for_verifier[:, resp_slice, :]
-                else:
-                    resp_logits = dual_model.primary_forward(y)[:, resp_slice, :]
-
-            if _use_speculative_branch:
-                agreement, reuse_state, _ = compute_reuse_signal(
-                    resp_logits, aux_logits, cfg, state=reuse_state
+                aux_logits, aux_past_kv = dual_model.auxiliary_forward_replace_with_cache(
+                    y, resp_slice, aux_past_kv,
                 )
-                agreement = agreement.bool()
-                _last_verified_agreement = agreement.float().detach()
-            else:
-                agreement = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
-            agreement_rates.append(float(agreement.float().mean().item()))
-        else:
-            resp_logits = aux_logits
-            agreement = torch.where(
-                frontier_before_step,
-                torch.zeros_like(_last_verified_agreement),
-                _last_verified_agreement,
-            ).bool()
-        if not _use_speculative_branch:
-            aux_logits = resp_logits
+                resp_logits, pri_past_kv = dual_model.primary_forward_replace_with_cache(
+                    y, resp_slice, pri_past_kv,
+                )
+            _pri_hidden_for_prism = None
+            _pri_hidden_states_for_tracker = None
+            _primary_steps += 1
 
-        # --- Cached substitution for stable-primary path ---
-        # In the stable path, resp_logits/hidden are zeros at K_stable positions
-        # because those spans were skipped. Substitute the previous exact values so
-        # the verifier, soft mask, and reward diagnostics see a coherent full state.
-        if _use_stable_branch and run_primary:
-            _stable_skip = cache_mgr.stable.get_cached_mask() & ~mask_ind
+        else:
+            # --- Full forward path: needed for hidden states (PRISM, KV tracker) ---
+            dual_out = dual_model.dual_forward_resp(
+                y, resp_slice, need_hidden=_need_hidden, need_all_hidden=_need_all_hidden,
+            )
+            resp_logits = dual_out.primary_logits      # [B, L_gen, V]
+            aux_logits = dual_out.auxiliary_logits      # [B, L_gen, V]
+            _pri_hidden_for_prism = dual_out.primary_hidden
+            _pri_hidden_states_for_tracker = dual_out.primary_hidden_states
+            _primary_steps += 1
+
+        if run_primary and not (use_stable_kv_skip and _can_use_cache):
+            # Stable path sets agreement=zeros directly (no drafter to compare against).
+            agreement, reuse_state, _ = compute_reuse_signal(
+                resp_logits, aux_logits, cfg, state=reuse_state
+            )
+            agreement = agreement.bool()
+            active_for_agreement = mask_ind.bool()
+            if active_for_agreement.any():
+                _agreement_sum += float(agreement[active_for_agreement].float().sum().item())
+                _agreement_obs += int(active_for_agreement.sum().item())
+                _safe_reuse_sum += float(agreement[active_for_agreement].float().sum().item())
+                _safe_reuse_obs += int(active_for_agreement.sum().item())
+            _ema_agreement = 0.8 * _ema_agreement + 0.2 * float(agreement.float().mean().item())
+            rejection_rate = 1.0 - float(agreement.float().mean().item())
+            if rejection_rate > aux_cache_reset_threshold:
+                aux_past_kv = None
+                _prefix_cache_initialized = False
+                _drafter_cache_resets += 1
+                if cache_mgr is not None:
+                    cache_mgr.step_spec(torch.zeros_like(agreement))
+        agreement_rates.append(float(agreement.float().mean().item()))
+
+        # --- PRISM quality scores ---
+        q_scores = None
+        if prism_adapter is not None and _pri_hidden_for_prism is not None:
+            with torch.no_grad():
+                q_scores = prism_adapter(_pri_hidden_for_prism.float())
+
+        # --- Correct resp_logits at stable positions (stable KV path only) ---
+        # In the stable path, resp_logits is zeros at K_stable positions (we skipped
+        # computing them).  Substituting cached logits there ensures that:
+        #   (a) soft_mask_module produces correct H_t / confidence / weighted_embeds
+        #       at stable positions (needed for policy κ_t/r_t and ω gradient);
+        #   (b) cache_quality_f1 measures real drift, not the artifact of zero logits;
+        #   (c) _prev_H_t stored below reflects true hidden-state proxy at stable positions.
+        # The substitution is exact in expectation: stable KV → same primary attention
+        # output → same logits → same H_t as the last step those positions were active.
+        if use_stable_kv_skip and _can_use_cache:
+            _stable_skip = cache_mgr.stable.get_cached_mask() & ~mask_ind  # [B, L_gen]
+            # Guard: NaN from forward_replace_with_cache (bf16 MoE numerical issues)
+            # must be scrubbed before updating _stable_logits_cache, otherwise NaN
+            # poisons the cache and propagates to all future steps via substitution.
+            # NaN → 0.0 is safe: 0-logits = uniform distribution = "no information".
             resp_logits = torch.nan_to_num(resp_logits, nan=0.0)
             if _stable_logits_cache is None:
+                # Step 1: all positions were active, resp_logits is fully real.
                 _stable_logits_cache = resp_logits.detach().clone()
             else:
-                _active_lc = ~_stable_skip
+                # Update cache at active positions with this step's fresh logits.
+                _active_lc = ~_stable_skip   # [B, L_gen]
                 _stable_logits_cache = torch.where(
                     _active_lc.unsqueeze(-1).expand_as(_stable_logits_cache),
                     resp_logits.detach(),
                     _stable_logits_cache,
                 )
+                # Substitute cached logits at stable positions.
                 resp_logits = torch.where(
                     _stable_skip.unsqueeze(-1).expand_as(resp_logits),
                     _stable_logits_cache,
                     resp_logits,
                 )
-            if _pri_hidden_for_verifier is not None:
-                _pri_hidden_for_verifier = torch.nan_to_num(_pri_hidden_for_verifier, nan=0.0)
-                if _stable_hidden_cache is None:
-                    _stable_hidden_cache = _pri_hidden_for_verifier.detach().clone()
-                else:
-                    _active_hc = ~_stable_skip
-                    _stable_hidden_cache = torch.where(
-                        _active_hc.unsqueeze(-1).expand_as(_stable_hidden_cache),
-                        _pri_hidden_for_verifier.detach(),
-                        _stable_hidden_cache,
-                    )
-                    _pri_hidden_for_verifier = torch.where(
-                        _stable_skip.unsqueeze(-1).expand_as(_pri_hidden_for_verifier),
-                        _stable_hidden_cache,
-                        _pri_hidden_for_verifier,
-                    )
-
-        # --- Verifier quality scores ---
-        if run_primary:
-            q_scores = run_verifier(
-                verifier,
-                hidden_states=_pri_hidden_for_verifier.float() if _pri_hidden_for_verifier is not None else None,
-                logits=resp_logits,
-                agreement=agreement.float(),
-                mask_indicator=mask_ind,
-                step_frac=step_frac,
-            )
-            if q_scores is not None:
-                _last_verified_quality = q_scores.detach().float()
-            elif verifier is not None:
-                _last_verified_quality = torch.zeros_like(_last_verified_quality)
-        elif verifier is not None:
-            q_scores = torch.where(
-                frontier_before_step,
-                torch.zeros_like(_last_verified_quality),
-                _last_verified_quality,
-            )
-        else:
-            q_scores = None
 
         # --- Construct soft-masked state from PRIMARY logits ---
-        H_t, confidence, entropy, weighted_embeds = soft_mask_module(
-            resp_logits, mask_ind, step_frac
+        H_t, confidence, entropy, weighted_embeds = call_soft_mask(
+            soft_mask_module,
+            resp_logits, mask_ind, step_frac, return_weighted=True
         )
 
         # --- Cache quality F1 (soft precision-recall of cache set) ---
@@ -403,13 +467,10 @@ def speculative_inference(
         # This was previously absent from the speculative path entirely, causing
         # cache_quality_f1 to remain empty and the reward to silently drop the
         # entire cache quality term.
-        if (
-            trajectory is not None
-            and _prev_H_t is not None
-            and cache_mgr is not None
-            and (run_primary or not _use_speculative_branch)
-        ):
-            _cached_mask = cache_mgr.get_cached_mask()           # [B, L_gen] bool
+        if record_trajectory and trajectory is not None and _prev_H_t is not None and cache_mgr is not None:
+            # Evaluate the learned persistent stability cache, not the
+            # transient K_spec agreement frontier.
+            _cached_mask = cache_mgr.stable.get_cached_mask()    # [B, L_gen] bool
             _h_delta = (H_t.detach() - _prev_H_t).norm(dim=-1)  # [B, L_gen]
             _h_norm  = _prev_H_t.norm(dim=-1).clamp(min=1e-8)   # [B, L_gen]
             _rel_drift = _h_delta / _h_norm                      # [B, L_gen] ∈ [0, ~2]
@@ -432,8 +493,7 @@ def speculative_inference(
             # Harmonic mean (F1)
             _cache_f1 = 2.0 * _cached_prec * _recall / (_cached_prec + _recall + 1e-8)  # [B]
             trajectory.cache_quality_f1.append(_cache_f1.detach())
-        if run_primary or not _use_speculative_branch:
-            _prev_H_t = H_t.detach()
+        _prev_H_t = H_t.detach()
 
         age_feat = None
         last_action_feat = None
@@ -455,10 +515,18 @@ def speculative_inference(
 
         # --- Sample actions ---
         actions = pol_inner.sample_actions(policy_out, mask_ind)
+        actions = apply_unmask_budget(actions, policy_out, mask_ind, cfg)
         u_t = actions["u_t"]
         r_t = actions["r_t"]
         kappa_t = actions["kappa_t"]
-        if disable_remask:
+        if not run_primary:
+            # Aux-only draft microsteps are intentionally unverified.  They may
+            # propose tokens, but they cannot safely remask or make persistent
+            # K_stable commitments until the verifier observes the state.
+            r_t = torch.zeros_like(r_t)
+            kappa_t = torch.zeros_like(kappa_t)
+            actions = {**actions, "r_t": r_t, "kappa_t": kappa_t}
+        elif disable_remask:
             r_t = torch.zeros_like(r_t)
             actions = {**actions, "r_t": r_t}
         q_exec, q_mandatory, _access_diag = build_access_set(
@@ -476,7 +544,7 @@ def speculative_inference(
         actions = {**actions, "q_t_mandatory": q_mandatory}
 
         # --- Record trajectory ---
-        if trajectory is not None:
+        if record_trajectory and trajectory is not None:
             lp = pol_inner.log_prob(policy_out, actions)
             trajectory.actions.append({k: v.detach() for k, v in actions.items()})
             trajectory.log_probs.append(lp.detach())
@@ -490,10 +558,6 @@ def speculative_inference(
             trajectory.quality_scores_list.append(
                 q_scores.detach() if q_scores is not None else None
             )
-            trajectory.verifier_hidden_list.append(
-                _pri_hidden_for_verifier.detach() if _pri_hidden_for_verifier is not None else None
-            )
-            trajectory.verifier_logits_list.append(resp_logits.detach())
             trajectory.agreement_list.append(agreement.detach())
             trajectory.age_feature_list.append(age_feat.detach() if age_feat is not None else None)
             trajectory.last_action_feature_list.append(
@@ -504,10 +568,20 @@ def speculative_inference(
             if "ell_t" in actions:
                 trajectory.boundary_actions.append(actions["ell_t"].detach())
             trajectory.step_fracs.append(step_frac)
+        elif trajectory is not None:
+            # Lightweight eval stats: enough for access-pattern summaries
+            # without storing logits, H_t, log-probs, or policy outputs.
+            trajectory.access_exec_list.append(q_exec.detach())
+            trajectory.access_mandatory_list.append(q_mandatory.detach())
+            if "ell_t" in actions:
+                trajectory.boundary_actions.append(actions["ell_t"].detach())
 
         # --- Count cache thrashing ---
-        if cache_mgr is not None and trajectory is not None:
+        thrash = None
+        if cache_mgr is not None:
             thrash = cache_mgr.count_thrash(r_t)
+            _stable_invalidations += int(thrash.sum().item())
+        if record_trajectory and trajectory is not None and thrash is not None:
             trajectory.thrash_counts.append(thrash.detach())
 
         resp_tokens = resp_tokens.clone()
@@ -551,41 +625,40 @@ def speculative_inference(
                         resp_tokens[b_idx, best_pos] = resp_logits[b_idx, best_pos].argmax()
                         fallback_positions[b_idx, best_pos] = True
 
-        drafted_positions = (u_t.bool() & mask_ind) | fallback_positions.bool()
+        drafted_positions = unmask_positions | fallback_positions
+        if run_primary and drafted_positions.any():
+            drafted_agreement = agreement[drafted_positions]
+            _draft_accepts += int(drafted_agreement.sum().item())
+            _draft_rejects += int(drafted_positions.sum().item() - drafted_agreement.sum().item())
 
-        # ====== Phase 3a: Speculative Frontier / Draft State (K_spec) ======
-        # K_spec tracks drafted-but-not-yet-verified positions. When the primary
-        # runs, the previous frontier has just been validated and is replaced by
-        # the new drafted positions from this step. During auxiliary-only draft
-        # steps, newly drafted positions accumulate into the existing frontier.
-        if cache_mgr is not None and _use_speculative_branch:
+        # ====== Phase 3a: Speculative Frontier / Accept State (K_spec) ======
+        # K_spec is transient and replaced each step; it is not a persistent KV
+        # cache. In the current k=1 implementation we store the one-step
+        # accepted/reusable positions for the next primary pass.
+        if cache_mgr is not None:
             if run_primary:
-                cache_mgr.replace_spec(drafted_positions)
+                cache_mgr.step_spec(agreement)
             else:
-                cache_mgr.add_spec(drafted_positions)
+                cache_mgr.step_spec(torch.zeros_like(agreement))
 
         # ====== Phase 3b: Stable Cache (K_stable) ======
         # Positions the κ_t head predicts will remain stable across future steps.
         # Accumulated persistently; evicted by r_t (Phase 1 already called invalidate).
         if cache_mgr is not None:
-            cache_mgr.step_stable(kappa_t, r_t)
-
-            if trajectory is not None:
-                if run_primary and _use_speculative_branch:
-                    accepted = frontier_before_step & agreement
-                    rejected = frontier_before_step & ~agreement
-                    trajectory.total_cache_hits += int(accepted.sum().item())
-                    trajectory.total_cache_misses += int(rejected.sum().item())
+            stable_commit_mask = kappa_t * (resp_tokens != mask_id).float()
+            stable_before = cache_mgr.stable.get_cached_mask().clone()
+            cache_mgr.step_stable(stable_commit_mask, r_t)
+            newly_stable = stable_commit_mask.bool() & ~stable_before & ~r_t.bool()
+            _stable_commits += int(newly_stable.sum().item())
 
         # --- Record cached fractions after commit (compute-aware speed bonus) ---
-        # spec_cached_fractions: K_spec frontier occupancy.
-        # cached_fractions:      K_stable occupancy only (persistent cache).
+        # spec_cached_fractions: legacy metric name for K_spec frontier occupancy.
+        # stable_cached_fractions: learned persistent cache occupancy.
+        # cached_fractions:        K_spec ∪ K_stable diagnostic occupancy.
         if trajectory is not None and cache_mgr is not None:
             trajectory.spec_cached_fractions.append(cache_mgr.spec_cached_fraction().detach())
-            trajectory.cached_fractions.append(cache_mgr.stable_cached_fraction().detach())
-            trajectory.primary_step_flags.append(
-                torch.full((B,), 1.0 if run_primary else 0.0, device=device)
-            )
+            trajectory.stable_cached_fractions.append(cache_mgr.stable_cached_fraction().detach())
+            trajectory.cached_fractions.append(cache_mgr.cached_fraction().detach())
 
         # --- KV dynamics tracker observation (eval diagnostic only) ---
         # Uses primary model all-layer hidden states as a hidden-state proxy for
@@ -624,8 +697,20 @@ def speculative_inference(
         trajectory.final_tokens = y[:, resp_slice].detach()
         if trajectory.completion_step is None:
             trajectory.completion_step = torch.full((B,), T, device=device)
-        if agreement_rates:
+        if _agreement_obs > 0:
+            trajectory.mean_agreement_rate = _agreement_sum / max(_agreement_obs, 1)
+        elif agreement_rates:
             trajectory.mean_agreement_rate = sum(agreement_rates) / len(agreement_rates)
+        trajectory.total_stable_commits = _stable_commits
+        trajectory.total_stable_invalidations = _stable_invalidations
+        trajectory.total_cache_hits = _stable_commits
+        trajectory.total_cache_misses = _stable_invalidations
+        trajectory.draft_accepts = _draft_accepts
+        trajectory.draft_rejects = _draft_rejects
+        trajectory.agreement_observations = _agreement_obs
+        trajectory.primary_steps = _primary_steps
+        trajectory.aux_only_steps = _aux_only_steps
+        trajectory.drafter_cache_resets = _drafter_cache_resets
         pc_cfg = cfg.get("inference", {}).get("positional_cache", {})
         if pc_cfg.get("enabled", False):
             horizon = int(pc_cfg.get("horizon", 4))

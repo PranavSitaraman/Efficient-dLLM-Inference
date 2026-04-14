@@ -78,6 +78,63 @@ def call_policy(
     return policy(H_t, mask_indicator, step_frac, **kwargs)
 
 
+def apply_unmask_budget(
+    actions: Dict[str, torch.Tensor],
+    policy_out: Dict[str, torch.Tensor],
+    mask_indicator: torch.BoolTensor,
+    cfg: dict,
+) -> Dict[str, torch.Tensor]:
+    """Apply an optional per-step unmask budget to sampled policy actions.
+
+    The budget is a decoding constraint, not a learned head. It prevents early
+    GRPO rollouts from collapsing to one-shot denoising while still letting the
+    policy choose which positions to reveal. If the sampled action already stays
+    within budget, it is returned unchanged.
+    """
+    if "u_t" not in actions:
+        return actions
+
+    ic = cfg.get("inference", {})
+    max_tokens = ic.get("max_unmask_tokens_per_step")
+    max_frac = ic.get("max_unmask_fraction_per_step")
+    if max_tokens is None and max_frac is None:
+        return actions
+
+    L = int(mask_indicator.shape[-1])
+    if max_tokens is not None:
+        budget = int(max_tokens)
+    else:
+        try:
+            frac = float(max_frac)
+        except (TypeError, ValueError):
+            return actions
+        if not math.isfinite(frac) or frac <= 0.0:
+            return actions
+        budget = int(math.ceil(frac * max(L, 1)))
+
+    if budget <= 0 or budget >= L:
+        return actions
+
+    u_t = actions["u_t"].float() * mask_indicator.float()
+    if int(u_t.sum(dim=-1).max().item()) <= budget:
+        return {**actions, "u_t": u_t}
+
+    scores = policy_out.get("unmask_probs")
+    if scores is None:
+        scores = torch.ones_like(u_t)
+    scores = scores.to(device=u_t.device, dtype=torch.float32)
+    keep = torch.zeros_like(u_t)
+    for b in range(u_t.shape[0]):
+        chosen = (u_t[b] > 0.0).nonzero(as_tuple=True)[0]
+        if chosen.numel() <= budget:
+            keep[b, chosen] = 1.0
+            continue
+        ranked = chosen[torch.argsort(scores[b, chosen], descending=True)]
+        keep[b, ranked[:budget]] = 1.0
+
+    return {**actions, "u_t": keep}
+
+
 class AOAEPolicy(nn.Module):
     """
     Policy pi_phi(a_t | s_t) with factorized Bernoulli likelihood.
@@ -107,6 +164,10 @@ class AOAEPolicy(nn.Module):
         self.boundary_cfg = pc.get("boundary_head", {})
         self.boundary_enabled = bool(self.boundary_cfg.get("enabled", False))
         self.boundary_num_bins = max(2, int(self.boundary_cfg.get("num_bins", 8)))
+        self.init_unmask_bias = float(pc.get("init_unmask_bias", 0.0))
+        self.init_remask_bias = float(pc.get("init_remask_bias", -4.0))
+        self.init_cache_bias = float(pc.get("init_cache_bias", -2.0))
+        self.init_access_bias = float(pc.get("init_access_bias", -2.0))
         extra_feats = 3 + int(self.use_agreement_feature) + int(self.use_age_feature) + int(self.use_last_action_feature)
         # --- Input projection: base + optional positional features ---
         self.input_proj = nn.Linear(input_dim + extra_feats, d)
@@ -136,12 +197,22 @@ class AOAEPolicy(nn.Module):
 
     # ------------------------------------------------------------------
     def _init_weights(self):
-        """Small init so early policy is roughly uniform (logit ≈ 0)."""
+        """Small init with conservative edit/cache heads.
+
+        Starting every Bernoulli head at logit 0 makes the fresh policy cache
+        and remask about half of all eligible positions, which creates massive
+        cache thrashing before GRPO has any useful signal. Keep unmask neutral
+        but make remask/cache/access opt-in at initialization.
+        """
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, std=0.02)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+        nn.init.constant_(self.head_unmask.bias, self.init_unmask_bias)
+        nn.init.constant_(self.head_remask.bias, self.init_remask_bias)
+        nn.init.constant_(self.head_cache.bias, self.init_cache_bias)
+        nn.init.constant_(self.head_access.bias, self.init_access_bias)
 
     # ------------------------------------------------------------------
     def forward(

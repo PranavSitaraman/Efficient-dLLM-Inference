@@ -148,8 +148,8 @@ def test_compute_reward_prefers_faster_completion_given_equal_correctness():
     traj_slow.thrash_counts = [torch.zeros(1)]
     traj_slow.completion_step = torch.tensor([8])  # slower
 
-    r_fast = compute_reward(gen, refs, tok, traj_fast, cfg, T=8)
-    r_slow = compute_reward(gen, refs, tok, traj_slow, cfg, T=8)
+    r_fast, _ = compute_reward(gen, refs, tok, traj_fast, cfg, T=8)
+    r_slow, _ = compute_reward(gen, refs, tok, traj_slow, cfg, T=8)
     assert r_fast.item() > r_slow.item()
 
 

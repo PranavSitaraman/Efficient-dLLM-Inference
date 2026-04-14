@@ -220,17 +220,6 @@ class DualModelWrapper(nn.Module):
             set_hard_routing(self._model.model)
 
     @torch.no_grad()
-    def primary_forward_with_cache_and_hidden(
-        self, input_ids: torch.LongTensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, object]:
-        """Soft-routed cached forward → (logits [B,L,V], hidden [B,L,D], kv)."""
-        set_soft_routing(self._model.model)
-        try:
-            return self._model.forward_with_cache_and_hidden(input_ids)
-        finally:
-            set_hard_routing(self._model.model)
-
-    @torch.no_grad()
     def primary_forward_with_all_hidden(
         self, input_ids: torch.LongTensor,
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
@@ -299,23 +288,6 @@ class DualModelWrapper(nn.Module):
         set_soft_routing(self._model.model)
         try:
             return self._model.forward_with_kspec_cache(
-                full_input_ids, resp_slice, stable_kv, stable_skip_mask,
-            )
-        finally:
-            set_hard_routing(self._model.model)
-
-    @torch.no_grad()
-    def primary_forward_with_stable_cache_and_hidden(
-        self,
-        full_input_ids: torch.LongTensor,
-        resp_slice: slice,
-        stable_kv: object,
-        stable_skip_mask: torch.BoolTensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, object]:
-        """Soft-routed primary cached forward with hidden states for active positions."""
-        set_soft_routing(self._model.model)
-        try:
-            return self._model.forward_with_kspec_cache_and_hidden(
                 full_input_ids, resp_slice, stable_kv, stable_skip_mask,
             )
         finally:

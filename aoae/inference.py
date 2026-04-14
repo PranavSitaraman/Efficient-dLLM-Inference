@@ -19,7 +19,8 @@ import json
 
 from .cache import DKVCacheManager
 from .models.composed_prediction import compose_prediction
-from .models.policy import call_policy
+from .models.policy import apply_unmask_budget, call_policy
+from .models.soft_mask import call_soft_mask
 from .positional_cache import (
     init_positional_state,
     get_policy_positional_features,
@@ -27,7 +28,6 @@ from .positional_cache import (
     update_positional_state,
     compute_next_h_access_metrics,
 )
-from .models.verifier import run_verifier
 
 
 def _max_prob_and_argmax(logits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -53,8 +53,6 @@ class AOAETrajectory:
     entropy_list: List[torch.Tensor] = field(default_factory=list)
     mask_ind_list: List[torch.BoolTensor] = field(default_factory=list)
     quality_scores_list: List[Optional[torch.Tensor]] = field(default_factory=list)
-    verifier_hidden_list: List[Optional[torch.Tensor]] = field(default_factory=list)
-    verifier_logits_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     age_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     last_action_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     access_exec_list: List[torch.Tensor] = field(default_factory=list)
@@ -102,7 +100,6 @@ def aoae_inference(
     record_trajectory: bool = False,
     policy_temperature: float = 1.0,
     track_kv_dynamics: bool = False,
-    verifier=None,
 ) -> Tuple[torch.Tensor, Optional[AOAETrajectory]]:
     """
     Run AOAE inference (Algorithm 1).
@@ -111,7 +108,7 @@ def aoae_inference(
         base_model:       frozen LLaDA wrapper.
         policy:           AOAE policy network.
         soft_mask_module:  soft-masked state builder.
-        prism_adapter:     Legacy PRISM quality head (deprecated alias for verifier).
+        prism_adapter:     PRISM quality head (or None to skip edit/remask).
         prompt_ids:        [B, P] prompt token ids.
         cfg:               config dict.
         record_trajectory: if True, store actions/log_probs for GRPO.
@@ -136,7 +133,6 @@ def aoae_inference(
     P = prompt_ids.shape[1]
     L_total = P + L_gen
     device = prompt_ids.device
-    verifier = verifier if verifier is not None else prism_adapter
 
     # --- Initialize: prompt + fully masked response ---
     y = torch.cat([
@@ -191,9 +187,9 @@ def aoae_inference(
         _layer_hiddens_for_tracker: List[torch.Tensor] = []
         if _track_kv:
             logits, _all_hidden = base_model.forward_with_all_hidden(y)
-            resp_hidden = _all_hidden[-1][:, resp_slice, :] if verifier is not None else None
+            resp_hidden = _all_hidden[-1][:, resp_slice, :] if prism_adapter is not None else None
             _layer_hiddens_for_tracker = [h[:, resp_slice, :].detach() for h in _all_hidden]
-        elif verifier is not None:
+        elif prism_adapter is not None:
             logits, hidden_states = base_model.forward_with_hidden(y)
             resp_hidden = hidden_states[:, resp_slice, :]
         else:
@@ -201,19 +197,16 @@ def aoae_inference(
             resp_hidden = None
         resp_logits = logits[:, resp_slice, :]
 
-        # --- Verifier quality scores ---
-        q_scores = run_verifier(
-            verifier,
-            hidden_states=resp_hidden.float() if resp_hidden is not None else None,
-            logits=resp_logits,
-            agreement=None,
-            mask_indicator=mask_ind,
-            step_frac=step_frac,
-        )
+        # --- PRISM quality scores ---
+        q_scores = None
+        if prism_adapter is not None and resp_hidden is not None:
+            with torch.no_grad():
+                q_scores = prism_adapter(resp_hidden.float())  # [B, L_gen]
 
         # --- Construct soft-masked state ---
-        H_t, confidence, entropy, weighted_embeds = soft_mask_module(
-            resp_logits, mask_ind, step_frac
+        H_t, confidence, entropy, weighted_embeds = call_soft_mask(
+            soft_mask_module,
+            resp_logits, mask_ind, step_frac, return_weighted=True
         )  # H_t: [B, L_gen, D]
 
         # --- Cache quality F1 (soft precision-recall of cache set) ---
@@ -276,6 +269,7 @@ def aoae_inference(
 
         # --- Sample actions ---
         actions = pol_inner.sample_actions(policy_out, mask_ind)
+        actions = apply_unmask_budget(actions, policy_out, mask_ind, cfg)
         u_t = actions["u_t"]        # [B, L_gen] unmask
         r_t = actions["r_t"]        # [B, L_gen] remask
         kappa_t = actions["kappa_t"]  # [B, L_gen] cache
@@ -315,10 +309,6 @@ def aoae_inference(
             trajectory.quality_scores_list.append(
                 q_scores.detach() if q_scores is not None else None
             )
-            trajectory.verifier_hidden_list.append(
-                resp_hidden.detach() if resp_hidden is not None else None
-            )
-            trajectory.verifier_logits_list.append(resp_logits.detach())
             trajectory.age_feature_list.append(age_feat.detach() if age_feat is not None else None)
             trajectory.last_action_feature_list.append(
                 last_action_feat.detach() if last_action_feat is not None else None

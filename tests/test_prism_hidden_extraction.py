@@ -10,7 +10,10 @@ def _make_base_model(hidden_dim=4096, vocab_size=126464):
     torch.nn.Module.__init__(base_model)
     base_model._backend = "hf"
     base_model._block_length = 32
-    base_model._embedding_weight = torch.zeros(vocab_size, hidden_dim)
+    # forward_hidden_only uses the explicit vocab_size/hidden_dim attributes
+    # below; allocating the full LLaDA embedding here would make this unit test
+    # consume ~2 GiB for no behavioral coverage.
+    base_model._embedding_weight = torch.zeros(1, hidden_dim)
     base_model.vocab_size = vocab_size
     base_model.hidden_dim = hidden_dim
     base_model.model = types.SimpleNamespace(model=object())
