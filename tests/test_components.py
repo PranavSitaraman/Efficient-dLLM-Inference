@@ -772,7 +772,7 @@ class TestGRPOLoss:
         from aoae.models.policy import AOAEPolicy
         from aoae.models.prism import PRISMAdapter
         from aoae.inference import aoae_inference
-        from aoae.train_grpo import compute_grpo_loss
+        from aoae.train_grpo import compute_grpo_loss, split_group_trajectory
 
         sm = SoftMaskedState(DEFAULT_CFG, embed_w)
         sm.set_mask_embedding(MASK_ID)
@@ -786,13 +786,7 @@ class TestGRPOLoss:
             record_trajectory=True,
         )
 
-        traj_data = {
-            "actions_list": traj.actions,
-            "old_log_probs": [lp.clone() for lp in traj.log_probs],
-            "H_t_list": traj.H_t_list,
-            "mask_ind_list": traj.mask_ind_list,
-            "step_fracs": traj.step_fracs,
-        }
+        traj_data = split_group_trajectory(traj, 1)[0]
 
         advantages = torch.tensor([0.5, -0.5])
         loss = compute_grpo_loss(
@@ -815,7 +809,7 @@ class TestGRPOLoss:
         from aoae.models.policy import AOAEPolicy
         from aoae.models.prism import PRISMAdapter
         from aoae.inference import aoae_inference
-        from aoae.train_grpo import compute_grpo_loss
+        from aoae.train_grpo import compute_grpo_loss, split_group_trajectory
 
         sm = SoftMaskedState(DEFAULT_CFG, embed_w)
         sm.set_mask_embedding(MASK_ID)
@@ -829,13 +823,8 @@ class TestGRPOLoss:
             record_trajectory=True,
         )
 
-        traj_data = {
-            "actions_list": traj.actions,
-            "old_log_probs": [lp.clone() - 1000.0 for lp in traj.log_probs],
-            "H_t_list": traj.H_t_list,
-            "mask_ind_list": traj.mask_ind_list,
-            "step_fracs": traj.step_fracs,
-        }
+        traj_data = split_group_trajectory(traj, 1)[0]
+        traj_data["old_log_probs"] = [lp.clone() - 1000.0 for lp in traj_data["old_log_probs"]]
 
         advantages = torch.tensor([0.5, -0.5])
         loss = compute_grpo_loss(

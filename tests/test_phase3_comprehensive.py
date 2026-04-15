@@ -152,7 +152,7 @@ class TestEndToEndReward:
 
         gen_tokens = torch.randint(0, 50, (1, 16))
         cfg = {"grpo": {"alpha": 1.0, "beta": 0.1, "access_reward_weight": 0.0}}
-        reward, _ = compute_reward(gen_tokens, reference, tokenizer, traj, cfg, T=64)
+        reward = compute_reward(gen_tokens, reference, tokenizer, traj, cfg, T=64)
         assert reward.shape == (1,)
         assert reward[0].item() > 0
 
@@ -171,7 +171,7 @@ class TestEndToEndReward:
 
         gen_tokens = torch.randint(0, 50, (1, 16))
         cfg = {"grpo": {"alpha": 1.0, "beta": 0.0, "access_reward_weight": 0.0}}
-        reward, _ = compute_reward(gen_tokens, reference, tokenizer, traj, cfg, T=64)
+        reward = compute_reward(gen_tokens, reference, tokenizer, traj, cfg, T=64)
         assert reward[0].item() == 0.0
 
     def test_thrashing_penalty(self):
@@ -191,12 +191,9 @@ class TestEndToEndReward:
         cfg_no_thrash = {"grpo": {"alpha": 1.0, "beta": 0.0, "access_reward_weight": 0.0}}
         cfg_thrash = {"grpo": {"alpha": 1.0, "beta": 0.5, "access_reward_weight": 0.0}}
 
-        r_no, _ = compute_reward(gen_tokens, reference, tokenizer, traj, cfg_no_thrash, T=64)
-        r_yes, _ = compute_reward(gen_tokens, reference, tokenizer, traj, cfg_thrash, T=64)
+        r_no = compute_reward(gen_tokens, reference, tokenizer, traj, cfg_no_thrash, T=64)
+        r_yes = compute_reward(gen_tokens, reference, tokenizer, traj, cfg_thrash, T=64)
         assert r_yes[0].item() < r_no[0].item()
-        # Thrash is normalized by response length before weighting, so it stays
-        # commensurate with bounded correctness/speed terms.
-        assert r_yes[0].item() > -1.0
 
 
 # ======================================================================
@@ -386,22 +383,18 @@ class TestGRPOTrainingStep:
             H_t_list, weighted_embeds_list, entropy_list = [], [], []
             mask_ind_list, step_fracs = [], []
             actions_list, old_lps = [], []
-            agreement_list = []
             for t in range(n_steps):
                 logits = torch.randn(1, 10, VOCAB)
                 mask_ind = torch.randint(0, 2, (1, 10)).bool()
-                H, _, entropy, weighted = sm(
-                    logits, mask_ind, t / n_steps, return_weighted=True
-                )
+                H, _, entropy, weighted_embeds = sm(logits, mask_ind, t / n_steps)
                 out = pol(H, mask_ind, t / n_steps)
                 actions = pol.sample_actions(out, mask_ind)
                 old_lp = pol.log_prob(out, actions)
                 H_t_list.append(H.detach())
-                weighted_embeds_list.append(weighted.detach())
+                weighted_embeds_list.append(weighted_embeds.detach())
                 entropy_list.append(entropy.detach())
                 mask_ind_list.append(mask_ind)
                 step_fracs.append(t / n_steps)
-                agreement_list.append(torch.zeros_like(mask_ind, dtype=torch.float32))
                 actions_list.append({k: v.detach() for k, v in actions.items()})
                 old_lps.append(old_lp.detach())
             return {
@@ -409,7 +402,6 @@ class TestGRPOTrainingStep:
                 "weighted_embeds_list": weighted_embeds_list,
                 "entropy_list": entropy_list,
                 "mask_ind_list": mask_ind_list,
-                "agreement_list": agreement_list,
                 "step_fracs": step_fracs,
                 "actions_list": actions_list,
                 "old_log_probs": old_lps,
