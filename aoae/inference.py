@@ -450,6 +450,33 @@ def aoae_inference(
 # Baseline decoders for comparison
 # ======================================================================
 
+
+def _force_complete_masked_positions(
+    base_model,
+    y: torch.Tensor,
+    resp_slice: slice,
+    mask_id: int,
+    max_passes: int = 4,
+) -> torch.Tensor:
+    """Fill any remaining [MASK] positions so eval compares complete outputs."""
+    for _ in range(max(1, int(max_passes))):
+        resp = y[:, resp_slice]
+        masked = resp.eq(mask_id)
+        if not masked.any():
+            break
+
+        logits = base_model.forward(y)[:, resp_slice, :]
+        if 0 <= int(mask_id) < int(logits.shape[-1]):
+            logits = logits.clone()
+            logits[..., int(mask_id)] = torch.finfo(logits.dtype).min
+        fill_tokens = logits.argmax(dim=-1)
+
+        resp = resp.clone()
+        resp[masked] = fill_tokens[masked]
+        y[:, resp_slice] = resp
+
+    return y
+
 def uniform_decode(
     base_model,
     prompt_ids: torch.LongTensor,
@@ -491,7 +518,7 @@ def uniform_decode(
             sel = masked_pos[perm]
             y[b, P + sel] = logits[b, sel].argmax(dim=-1)
 
-    return y
+    return _force_complete_masked_positions(base_model, y, resp_slice, mask_id)
 
 
 def confidence_threshold_decode(
@@ -557,7 +584,7 @@ def confidence_threshold_decode(
 
         y[:, resp_slice] = resp
 
-    return y
+    return _force_complete_masked_positions(base_model, y, resp_slice, mask_id)
 
 
 def block_smode_decode(

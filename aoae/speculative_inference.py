@@ -102,6 +102,19 @@ class SpeculativeTrajectory:
     kv_dynamics_summary: Optional[Dict] = None
 
 
+def _fresh_primary_agreement(
+    agreement: torch.Tensor,
+    primary_fresh_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Keep only agreement positions observed by a fresh primary verifier pass."""
+    if agreement.shape != primary_fresh_mask.shape:
+        raise ValueError(
+            "agreement and primary_fresh_mask must have identical shapes, "
+            f"got {tuple(agreement.shape)} and {tuple(primary_fresh_mask.shape)}"
+        )
+    return agreement.bool() & primary_fresh_mask.bool()
+
+
 def speculative_inference(
     dual_model: DualModelWrapper,
     policy,
@@ -281,6 +294,7 @@ def speculative_inference(
             # the verifier/stable-cache path rather than silently switching to
             # auxiliary-only decoding when primary_every_n > 1.
             run_primary = True
+        primary_fresh_mask = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
 
         if not run_primary:
             if use_prefix_kv_cache and _can_use_cache and _prefix_cache_initialized:
@@ -349,6 +363,7 @@ def speculative_inference(
             _pri_fresh, _ = dual_model.primary_forward_with_kspec(
                 y, resp_slice, aux_past_kv, _k_spec,
             )
+            primary_fresh_mask = ~_k_spec
             # Merge: agreed positions → aux_logits (no primary recompute there);
             #        non-agreed positions → fresh primary logits.
             resp_logits = torch.where(
@@ -375,6 +390,7 @@ def speculative_inference(
                 resp_logits, pri_past_kv = dual_model.primary_forward_replace_with_cache(
                     y, resp_slice, pri_past_kv,
                 )
+            primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
             _pri_hidden_for_prism = None
             _pri_hidden_states_for_tracker = None
             _primary_steps += 1
@@ -388,22 +404,32 @@ def speculative_inference(
             aux_logits = dual_out.auxiliary_logits      # [B, L_gen, V]
             _pri_hidden_for_prism = dual_out.primary_hidden
             _pri_hidden_states_for_tracker = dual_out.primary_hidden_states
+            primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
             _primary_steps += 1
 
         if run_primary and not (use_stable_kv_skip and _can_use_cache):
             # Stable path sets agreement=zeros directly (no drafter to compare against).
-            agreement, reuse_state, _ = compute_reuse_signal(
+            raw_agreement, reuse_state, _ = compute_reuse_signal(
                 resp_logits, aux_logits, cfg, state=reuse_state
             )
-            agreement = agreement.bool()
-            active_for_agreement = mask_ind.bool()
+            # K_spec skip merges auxiliary logits at skipped positions. Comparing
+            # that merged tensor back to auxiliary logits would make skipped
+            # positions self-confirming. Only freshly recomputed primary positions
+            # are allowed to update agreement features, draft-accept accounting,
+            # or the next K_spec frontier.
+            agreement = _fresh_primary_agreement(raw_agreement, primary_fresh_mask)
+            active_for_agreement = mask_ind.bool() & primary_fresh_mask
             if active_for_agreement.any():
                 _agreement_sum += float(agreement[active_for_agreement].float().sum().item())
                 _agreement_obs += int(active_for_agreement.sum().item())
                 _safe_reuse_sum += float(agreement[active_for_agreement].float().sum().item())
                 _safe_reuse_obs += int(active_for_agreement.sum().item())
-            _ema_agreement = 0.8 * _ema_agreement + 0.2 * float(agreement.float().mean().item())
-            rejection_rate = 1.0 - float(agreement.float().mean().item())
+            if primary_fresh_mask.any():
+                verifier_agreement = float(agreement[primary_fresh_mask].float().mean().item())
+            else:
+                verifier_agreement = 0.0
+            _ema_agreement = 0.8 * _ema_agreement + 0.2 * verifier_agreement
+            rejection_rate = 1.0 - verifier_agreement
             if rejection_rate > aux_cache_reset_threshold:
                 aux_past_kv = None
                 _prefix_cache_initialized = False

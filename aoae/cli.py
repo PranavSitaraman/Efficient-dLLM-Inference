@@ -33,6 +33,7 @@ def _apply_runtime_env_defaults(env: Optional[dict] = None) -> dict:
     target.setdefault("MASTER_ADDR", "127.0.0.1")
     target.setdefault("MASTER_PORT", "29500")
     target.setdefault("NCCL_SOCKET_FAMILY", "AF_INET")
+    target.setdefault("GLOO_SOCKET_FAMILY", "AF_INET")
     if target.get("MASTER_ADDR") == "localhost":
         target["MASTER_ADDR"] = "127.0.0.1"
     return target

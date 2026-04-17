@@ -36,6 +36,13 @@ def test_paper_config_enables_full_aoae_stack():
 
     assert cfg["base_model"]["backend"] == "dual"
     assert cfg["grpo"]["enabled"] is True
+    assert cfg["data"]["use_chat_template"] == "auto"
+    assert cfg["data"]["math_prompt_style"] == "auto"
+    assert cfg["evaluation"]["baseline_methods"] == [
+        "llada21_speed_mode",
+        "llada21_quality_mode",
+        "fast_dllm",
+    ]
     assert cfg["grpo"]["thrash_normalization"] == "response_length"
     assert cfg["grpo"]["cache_speed_source"] == "none"
     assert cfg["policy"]["init_unmask_bias"] < 0

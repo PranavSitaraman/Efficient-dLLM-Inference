@@ -71,6 +71,8 @@ data:
   train_max_samples: 5000
   eval_dataset: "openai/gsm8k"
   eval_split: "test"
+  use_chat_template: "auto"
+  math_prompt_style: "auto"
   eval_max_samples: 100
   max_prompt_len: 512
   max_answer_len: 256

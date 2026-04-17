@@ -147,9 +147,11 @@ def test_speculative_eval_points_come_from_config_sweep(tmp_path):
         "enabled": True,
         "points": [
             {
-                "name": "quality",
+                "name": "verified",
                 "policy_temperature": 0.7,
                 "overrides": {
+                    "inference.speculative_schedule": "aoae",
+                    "cache.kspec_skip": False,
                     "inference.primary_every_n": 1,
                     "inference.primary_agree_threshold": 0.98,
                     "inference.max_unmask_fraction_per_step": 0.0625,
@@ -166,15 +168,19 @@ def test_speculative_eval_points_come_from_config_sweep(tmp_path):
 
     points = mod._build_speculative_eval_points(cfg, explicit_policy_temperatures=None)
 
-    assert [point["name"] for point in points] == ["quality", "fast"]
+    assert [point["name"] for point in points] == ["verified", "fast"]
     assert points[0]["policy_temperature"] == 0.7
+    assert points[0]["overrides"]["inference.speculative_schedule"] == "aoae"
+    assert points[0]["overrides"]["cache.kspec_skip"] is False
     assert points[0]["overrides"]["inference.primary_every_n"] == 1
     assert points[1]["policy_temperature"] == 1.5
     assert points[1]["overrides"]["inference.primary_every_n"] == 8
     assert points[1]["overrides"]["inference.disable_remask"] is True
 
     point_cfg = mod._apply_speculative_eval_point(cfg, points[0])
-    assert point_cfg["_active_speculative_eval_point"] == "quality"
+    assert point_cfg["_active_speculative_eval_point"] == "verified"
+    assert point_cfg["inference"]["speculative_schedule"] == "aoae"
+    assert point_cfg["cache"]["kspec_skip"] is False
     assert point_cfg["inference"]["primary_every_n"] == 1
     assert point_cfg["inference"]["primary_agree_threshold"] == 0.98
     assert "primary_every_n" not in cfg["inference"]

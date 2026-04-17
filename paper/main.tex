@@ -85,7 +85,7 @@ A fast \emph{hard-routed auxiliary} runs in an aggressive low-cost mode---for ex
 The verifier accepts easy auxiliary drafts, rejects or remasks stale regions, and can reset the auxiliary cache when disagreement grows.
 AOAE separates transient speculative acceptance from persistent stability caching, and optionally learns a cache/access policy with GRPO.
 This yields a tunable speed--quality frontier: conservative settings recover verifier-quality decoding, while more aggressive settings trade quality for speed through controlled verifier rejection.
-In implementation, this frontier is swept with named operating points over verifier cadence, agreement threshold, unmask budget, remasking, and policy temperature rather than by changing policy temperature alone.
+In implementation, the paper evaluation anchors the frontier with verifier-quality blockwise baselines and sweeps AOAE with named operating points over verifier cadence, agreement threshold, unmask budget, remasking, the one-step $\cK_{\text{spec}}$ skip, and policy temperature rather than by changing policy temperature alone; prompt formatting uses chat-template auto-fallback plus a GSM8K answer-format scaffold in math mode, non-chat prompts include special tokens, and confidence-style baseline rows are scored on fully resolved (mask-completed) outputs.
 \end{abstract}
 
 % ======================================================================
@@ -237,7 +237,7 @@ Both modes share frozen weights; routing is toggled in-place, avoiding two full 
 The primary runs the original high-quality inference mode and acts as verifier/corrector: it scores the drafted state, emits verifier logits, supplies a PRISM-style keep/remask score, and can clear $\cC_{\text{aux}}$ when the fast path drifts too far.
 Conceptually, $\cK_{\text{spec}}$ is a short-lived frontier of drafted candidates awaiting validation, while only $\cK_{\text{stable}}$ is a persistent cache.
 
-The operating frontier is controlled by the verifier mode, the verifier cadence, agreement threshold, unmask budget, remasking policy, drafter shortcut, draft horizon $K_{\text{draft}}$, policy temperature $\tau_\pi$, and composition strength $\gamma$.
+The operating frontier is controlled by the verifier mode, verifier cadence, agreement threshold, unmask budget, remasking policy, drafter shortcut, $\cK_{\text{spec}}$ skip, draft horizon $K_{\text{draft}}$, policy temperature $\tau_\pi$, and composition strength $\gamma$.
 At conservative settings, the verifier dominates and quality is preserved; at aggressive settings, the cached drafter runs farther ahead and the verifier rejects more often.
 
 \subsection{State: Soft-Masked Representations}
@@ -348,7 +348,8 @@ Conflating the two would train $\kappa_t$ on a corrupted target, so AOAE maintai
     \item $\cK_{\text{spec}}$: transient speculative frontier; populated by freshly drafted candidates; replaced rather than accumulated.
     \item $\cK_{\text{stable}}$: persistent stable cache; populated by $\kappa_t^k = 1$ and evicted by explicit remask $r_t^k = 1$.
 \end{itemize}
-In the current $K_{\text{draft}}{=}1$ implementation, $\cK_{\text{spec}}$ can be materialized as a one-step accepted/reusable mask; for $K_{\text{draft}}{>}1$, it should be interpreted only as a verifier frontier, not a persistent cache.
+In the current $K_{\text{draft}}{=}1$ implementation, $\cK_{\text{spec}}$ can be materialized as a one-step accepted/reusable mask, but skipped positions are never allowed to refresh themselves: only positions freshly recomputed by the primary verifier can populate the next $\cK_{\text{spec}}$ frontier.
+For $K_{\text{draft}}{>}1$, $\cK_{\text{spec}}$ should likewise be interpreted only as a verifier frontier, not a persistent cache.
 Accordingly, the evaluation reports stable-cache occupancy, speculative-frontier occupancy, and their union separately from the stable-cache commit survival rate.
 During initial experimentation, the unmasking and remasking heads can be frozen while cache/access heads are trained.
 \paragraph{Prefix and drafter cache reuse.}

@@ -33,3 +33,14 @@ def test_get_baseline_methods_respects_config_override():
 
     cfg = {"evaluation": {"baseline_methods": ["llada21_speed_mode"]}}
     assert _get_baseline_methods(cfg) == ["llada21_speed_mode"]
+
+
+def test_get_baseline_methods_defaults_to_canonical_paper_set():
+    from aoae.evaluate import _get_baseline_methods
+
+    cfg = {"evaluation": {}}
+    assert _get_baseline_methods(cfg) == [
+        "llada21_speed_mode",
+        "llada21_quality_mode",
+        "fast_dllm",
+    ]

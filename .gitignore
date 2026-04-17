@@ -6,11 +6,3 @@ external/
 outputs/
 results/
 logs/
-
-# Development artifacts
-*.diff
-*.patch
-*.swp
-*.swo
-out.txt
-dlm_env/

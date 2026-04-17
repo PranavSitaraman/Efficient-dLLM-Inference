@@ -21,8 +21,12 @@ import numpy as np
 from datetime import datetime, timezone
 from tqdm import tqdm
 from dataclasses import dataclass, asdict
-from datasets import load_dataset
 from typing import Optional, List, Dict, Any
+
+try:
+    from datasets import load_dataset as _hf_load_dataset
+except Exception:  # pragma: no cover - exercised only in minimal test envs.
+    _hf_load_dataset = None
 
 from .checkpoints import (
     inspect_grpo_artifacts,
@@ -47,7 +51,12 @@ from .dinfer_integration import (
 from .speculative_inference import speculative_inference as _aoae_speculative_inference
 from .runtime_checks import collect_runtime_info, set_global_seed, is_global_rank_zero
 from .evaluators import build_evaluator
-from .tasks import extract_answer, extract_prompt_and_reference
+from .tasks import (
+    build_prompt,
+    decode_generated_tokens,
+    extract_answer,
+    extract_prompt_and_reference,
+)
 from .experiment_utils import set_nested
 
 
@@ -113,10 +122,8 @@ class EvalResult:
 
 
 _DEFAULT_BASELINE_METHODS = [
-    "block_smode",
-    "block_smode_mbe",
-    "confidence_s_mode",
-    "confidence_q_mode",
+    "llada21_speed_mode",
+    "llada21_quality_mode",
     "fast_dllm",
 ]
 
@@ -258,14 +265,19 @@ def _run_selected_baselines(
 
 def _load_eval_dataset(dc: Dict[str, Any]):
     """Load the configured evaluation dataset, optionally with a builder config."""
+    if _hf_load_dataset is None:
+        raise ImportError(
+            "datasets is required for evaluation dataset loading. "
+            "Install with `pip install datasets` or run in the full AOAE env."
+        )
     dataset_name = dc["eval_dataset"]
     dataset_config = dc.get("eval_dataset_config")
     split = dc["eval_split"]
     if dataset_config in (None, "", "null") and dataset_name == "openai/gsm8k":
         dataset_config = "main"
     if dataset_config in (None, "", "null"):
-        return load_dataset(dataset_name, split=split)
-    return load_dataset(dataset_name, dataset_config, split=split)
+        return _hf_load_dataset(dataset_name, split=split)
+    return _hf_load_dataset(dataset_name, dataset_config, split=split)
 
 
 def _extract_eval_prompt_reference(sample: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
@@ -414,15 +426,20 @@ def _configure_dual_model_for_eval_cfg(dual_model, cfg: Dict[str, Any]) -> None:
 
 def _summarize_speculative_point(point: Dict[str, Any], cfg: Dict[str, Any]) -> str:
     inf_cfg = cfg.get("inference", {})
+    cache_cfg = cfg.get("cache", {})
+    schedule = str(inf_cfg.get("speculative_schedule", "aoae")).strip().lower()
     unmask = inf_cfg.get(
         "max_unmask_tokens_per_step",
         inf_cfg.get("max_unmask_fraction_per_step", ""),
     )
     return (
-        f"{point.get('name', '')}: tau_pi={float(point.get('policy_temperature', 1.0))}, "
+        f"{point.get('name', '')}: sched={schedule}, "
+        f"tau_pi={float(point.get('policy_temperature', 1.0))}, "
         f"primary_every_n={inf_cfg.get('primary_every_n', 1)}, "
         f"agree={inf_cfg.get('primary_agree_threshold', 0.0)}, "
-        f"unmask={unmask}, {_remask_note(cfg)}"
+        f"unmask={unmask}, "
+        f"kspec={'on' if cache_cfg.get('kspec_skip', True) else 'off'}, "
+        f"{_remask_note(cfg)}"
     )
 
 
@@ -462,7 +479,8 @@ def _speculative_note(
         f"{prefix}tau_r={tau_r},tau_pi={policy_temperature},"
         f"primary_n={inf_cfg.get('primary_every_n', 1)},"
         f"agree_thr={inf_cfg.get('primary_agree_threshold', 0.0)},"
-        f"unmask={unmask},reuse={reuse_method},{pc_note},sched={schedule}"
+        f"unmask={unmask},reuse={reuse_method},{pc_note},sched={schedule},"
+        f"kspec={'on' if cfg.get('cache', {}).get('kspec_skip', True) else 'off'}"
     )
     return _append_note(note, _remask_note(cfg))
 
@@ -501,13 +519,10 @@ def evaluate_aoae(
         if not question or not reference:
             continue
 
-        messages = [{"role": "user", "content": question}]
-        prompt_text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+        prompt_text, add_special_tokens = build_prompt(tokenizer, question, cfg)
         prompt_ids = tokenizer.encode(
             prompt_text,
-            add_special_tokens=False,
+            add_special_tokens=add_special_tokens,
             max_length=cfg["data"]["max_prompt_len"],
             truncation=True,
             return_tensors="pt",
@@ -545,7 +560,11 @@ def evaluate_aoae(
         gen_tokens = output_ids[0, prompt_ids.shape[1]:]
         n_gen = int((gen_tokens != mask_id).sum().item())
         total_gen_tokens += n_gen
-        gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
+        gen_text = decode_generated_tokens(
+            tokenizer,
+            gen_tokens,
+            mask_token_id=mask_id,
+        )
 
         decision = evaluator.evaluate(gen_text, reference, sample=sample)
         is_correct = decision.correct
@@ -634,13 +653,13 @@ def evaluate_baseline(
         s0 = dataset[0]
         q0 = s0.get("question", s0.get("problem", ""))
         try:
-            pt0 = tokenizer.apply_chat_template(
-                [{"role": "user", "content": q0}],
-                tokenize=False, add_generation_prompt=True,
+            pt0, add_special_tokens0 = build_prompt(tokenizer, q0, cfg)
+            print(
+                f"  [DEBUG] Prompt format (first 200 chars): {pt0[:200]} "
+                f"(add_special_tokens={add_special_tokens0})"
             )
-            print(f"  [DEBUG] Prompt format (first 200 chars): {pt0[:200]}")
         except Exception as e:
-            print(f"  [DEBUG] apply_chat_template FAILED: {e}")
+            print(f"  [DEBUG] prompt templating FAILED: {e}")
             print(f"  [DEBUG] Falling back to raw question: {q0[:100]}")
 
     progress = tqdm(range(n_eval), desc=f"Baseline ({method})", disable=not rank0)
@@ -650,13 +669,10 @@ def evaluate_baseline(
         if not question or not reference:
             continue
 
-        messages = [{"role": "user", "content": question}]
-        prompt_text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+        prompt_text, add_special_tokens = build_prompt(tokenizer, question, cfg)
         prompt_ids = tokenizer.encode(
             prompt_text,
-            add_special_tokens=False,
+            add_special_tokens=add_special_tokens,
             max_length=cfg["data"]["max_prompt_len"],
             truncation=True,
             return_tensors="pt",
@@ -719,7 +735,11 @@ def evaluate_baseline(
         n_gen = int((gen_tokens != mask_id).sum().item())
         n_mask_remaining = int((gen_tokens == mask_id).sum().item())
         total_gen_tokens += n_gen
-        gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
+        gen_text = decode_generated_tokens(
+            tokenizer,
+            gen_tokens,
+            mask_token_id=mask_id,
+        )
 
         decision = evaluator.evaluate(gen_text, reference, sample=sample)
         is_correct = decision.correct
@@ -875,13 +895,10 @@ def evaluate_speculative(
         if not question or not reference:
             continue
 
-        messages = [{"role": "user", "content": question}]
-        prompt_text = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+        prompt_text, add_special_tokens = build_prompt(tokenizer, question, cfg)
         prompt_ids = tokenizer.encode(
             prompt_text,
-            add_special_tokens=False,
+            add_special_tokens=add_special_tokens,
             max_length=cfg["data"]["max_prompt_len"],
             truncation=True,
             return_tensors="pt",
@@ -977,7 +994,11 @@ def evaluate_speculative(
         # Count actual generated tokens (non-mask)
         n_gen = int((gen_tokens != mask_id).sum().item())
         total_gen_tokens += n_gen
-        gen_text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
+        gen_text = decode_generated_tokens(
+            tokenizer,
+            gen_tokens,
+            mask_token_id=mask_id,
+        )
 
         decision = evaluator.evaluate(gen_text, reference, sample=sample)
         is_correct = decision.correct
@@ -1414,6 +1435,8 @@ def _build_run_metadata(
         "seed": int(cfg.get("hardware", {}).get("seed", 42)),
         "deterministic": bool(cfg.get("hardware", {}).get("deterministic", False)),
         "task_type": eval_cfg.get("task_type", "math"),
+        "baseline_methods_requested": eval_cfg.get("baseline_methods"),
+        "baseline_methods_effective": _get_baseline_methods(cfg),
         "code_timeout_sec": eval_cfg.get("code", {}).get("timeout_sec"),
         "code_cpu_time_limit_sec": eval_cfg.get("code", {}).get("cpu_time_limit_sec"),
         "code_memory_limit_mb": eval_cfg.get("code", {}).get("memory_limit_mb"),
@@ -1446,6 +1469,8 @@ def _build_run_metadata(
         "eval_dataset": cfg.get("data", {}).get("eval_dataset", ""),
         "eval_dataset_config": cfg.get("data", {}).get("eval_dataset_config"),
         "eval_split": cfg.get("data", {}).get("eval_split", ""),
+        "use_chat_template": cfg.get("data", {}).get("use_chat_template", "auto"),
+        "math_prompt_style": cfg.get("data", {}).get("math_prompt_style", "auto"),
         "eval_max_samples": max_samples,
         "save_predictions": bool(cfg.get("evaluation", {}).get("save_predictions", False)),
         "saved_predictions": int(saved_predictions),

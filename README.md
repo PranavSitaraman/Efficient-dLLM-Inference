@@ -200,7 +200,8 @@ Single eval runs write:
 - `outputs/<run>/eval_predictions.json` when prediction saving is enabled
 - `outputs/<run>/kv_dynamics_*.json|png` when KV tracking is enabled
 
-For speculative runs, `configs/paper.yaml` defines `evaluation.speculative_sweep.points`: named operating points that sweep verifier cadence, agreement threshold, unmask budget, remasking, and `tau_pi`. Passing `--policy_temperatures 0.5,1.0,1.5` intentionally overrides this with a temperature-only sweep for focused ablations. `cache_hit_rate` in eval artifacts is the stable-cache commit survival rate; `stable_cache_fraction`, `spec_cache_fraction`, and `combined_cache_fraction` report actual occupancy of the persistent stable cache, transient speculative frontier, and their union.
+For speculative runs, `configs/paper.yaml` defines `evaluation.speculative_sweep.points`: named AOAE operating points that sweep verifier cadence, agreement threshold, unmask budget, remasking, K-spec skip, and `tau_pi`. The normal baseline rows provide the blockwise verifier-quality anchors; the speculative sweep starts at a fully verified AOAE point and then runs progressively more aggressive AOAE points. Passing `--policy_temperatures 0.5,1.0,1.5` intentionally overrides this with a temperature-only sweep for focused ablations. `cache_hit_rate` in eval artifacts is the stable-cache commit survival rate; `stable_cache_fraction`, `spec_cache_fraction`, and `combined_cache_fraction` report actual occupancy of the persistent stable cache, transient speculative frontier, and their union.
+Prompt construction now uses a robust fallback: `data.use_chat_template=auto` attempts tokenizer chat formatting whenever the tokenizer supports it (including runtime/default templates), and falls back cleanly to plain text when unavailable. Non-chat prompts now encode with special tokens enabled, and `data.math_prompt_style=auto` adds a GSM8K-targeted final-answer format instruction when evaluating GSM8K. For confidence-style baselines, terminal unresolved masks are force-completed before scoring so accuracy is computed on complete responses.
 
 Paper/POC workflows additionally write sweep summaries under:
 
@@ -383,7 +384,7 @@ aoae eval --config configs/default.yaml --checkpoint outputs/default/policy_fina
 | **T** (rollout steps) | `grpo.rollout_steps` | 16 | Training-time diffusion horizon (eval uses `inference.steps`) |
 | **L_gen** (rollout length) | `grpo.rollout_gen_length` | 128 | Training-time decode budget (eval uses `inference.gen_length`) |
 
-Eval-time Pareto points use the same trained policy but vary inference controls: `inference.primary_every_n`, `inference.primary_agree_threshold`, `inference.max_unmask_fraction_per_step` or `inference.max_unmask_tokens_per_step`, `inference.disable_remask`, positional-cache settings, and `policy_temperature` per point under `evaluation.speculative_sweep.points`.
+Eval-time Pareto points vary inference controls: `cache.kspec_skip`, `inference.primary_every_n`, `inference.primary_agree_threshold`, `inference.max_unmask_fraction_per_step` or `inference.max_unmask_tokens_per_step`, `inference.disable_remask`, positional-cache settings, and `policy_temperature` per point under `evaluation.speculative_sweep.points`. K-spec skip is a one-step drafter shortcut; skipped positions are not treated as freshly verified agreement, so conservative AOAE points disable it while the baseline rows provide verifier-quality blockwise anchors.
 
 ### Hyperparameter Sweep
 

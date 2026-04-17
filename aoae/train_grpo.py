@@ -36,7 +36,13 @@ from .checkpoints import (
 )
 from .inference import aoae_inference, AOAETrajectory
 from .speculative_inference import speculative_inference, SpeculativeTrajectory
-from .tasks import check_math_correctness, extract_answer, extract_prompt_and_reference
+from .tasks import (
+    build_prompt,
+    check_math_correctness,
+    decode_generated_tokens,
+    extract_answer,
+    extract_prompt_and_reference,
+)
 from .runtime_checks import collect_runtime_info
 
 # Both trajectory types share the same reward-relevant attributes; Union lets
@@ -181,7 +187,11 @@ def compute_reward(
     # --- Correctness term r(y*, y) ---
     correctness = torch.zeros(B, device=device)
     for b in range(B):
-        gen_text = tokenizer.decode(generated_tokens[b], skip_special_tokens=True)
+        gen_text = decode_generated_tokens(
+            tokenizer,
+            generated_tokens[b],
+            mask_token_id=cfg.get("base_model", {}).get("mask_token_id"),
+        )
         correct = check_math_correctness(gen_text, reference_answer[b])
         correctness[b] = 1.0 if correct else 0.0
 
@@ -909,13 +919,10 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         continue
                     valid_samples_this_epoch += 1
 
-                    messages = [{"role": "user", "content": question}]
-                    prompt_text = tokenizer.apply_chat_template(
-                        messages, tokenize=False, add_generation_prompt=True
-                    )
+                    prompt_text, add_special_tokens = build_prompt(tokenizer, question, cfg)
                     prompt_ids = tokenizer.encode(
                         prompt_text,
-                        add_special_tokens=False,
+                        add_special_tokens=add_special_tokens,
                         max_length=dc["max_prompt_len"],
                         truncation=True,
                         return_tensors="pt",

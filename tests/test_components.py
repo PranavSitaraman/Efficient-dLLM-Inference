@@ -181,6 +181,77 @@ class TestEvalExtraction:
         assert prompt == "Compute 2 + 2."
         assert reference == "We get \\boxed{4}."
 
+    def test_build_prompt_text_falls_back_to_plain_question_without_template(self):
+        from aoae.tasks import build_prompt_text
+
+        class NoTemplateTokenizer:
+            chat_template = None
+
+            def apply_chat_template(self, *args, **kwargs):
+                raise RuntimeError("should not be called")
+
+        question = "What is 6 * 7?"
+        text = build_prompt_text(NoTemplateTokenizer(), question, {"data": {"use_chat_template": "auto"}})
+        assert text == question
+
+    def test_build_prompt_auto_uses_callable_chat_template_even_without_field(self):
+        from aoae.tasks import build_prompt
+
+        class RuntimeTemplateTokenizer:
+            chat_template = None
+
+            def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=True):
+                assert tokenize is False
+                assert add_generation_prompt is True
+                return f"CHAT::{messages[0]['content']}"
+
+        question = "What is 6 * 7?"
+        prompt_text, add_special_tokens = build_prompt(
+            RuntimeTemplateTokenizer(),
+            question,
+            {"data": {"use_chat_template": "auto"}},
+        )
+        assert prompt_text == "CHAT::What is 6 * 7?"
+        assert add_special_tokens is False
+
+    def test_build_prompt_auto_formats_gsm8k_questions(self):
+        from aoae.tasks import build_prompt
+
+        class PlainTokenizer:
+            def apply_chat_template(self, *args, **kwargs):
+                raise RuntimeError("chat path should be disabled")
+
+        question = "Natalia sold clips."
+        prompt_text, add_special_tokens = build_prompt(
+            PlainTokenizer(),
+            question,
+            {
+                "data": {
+                    "use_chat_template": "off",
+                    "math_prompt_style": "auto",
+                    "eval_dataset": "openai/gsm8k",
+                },
+                "evaluation": {"task_type": "math"},
+            },
+        )
+        assert "#### <answer>" in prompt_text
+        assert prompt_text.startswith(question)
+        assert add_special_tokens is True
+
+    def test_decode_generated_tokens_truncates_eos_and_strips_mask(self):
+        from aoae.tasks import decode_generated_tokens
+
+        class DummyTokenizer:
+            eos_token_id = 2
+
+            def decode(self, ids, skip_special_tokens=True):
+                del skip_special_tokens
+                return " ".join(str(x) for x in ids)
+
+        tok = DummyTokenizer()
+        decoded = decode_generated_tokens(tok, [5, 99, 6, 2, 7, 8], mask_token_id=99)
+        assert decoded == "5 6"
+
 
 class TestDKVCacheManager:
     def test_init_empty(self):
@@ -536,8 +607,7 @@ class TestBaselines:
         out = uniform_decode(base_model, prompt, DEFAULT_CFG)
         L_gen = DEFAULT_CFG["inference"]["gen_length"]
         assert out.shape == (1, 4 + L_gen)
-        # Should unmask at least some tokens
-        assert (out[0, 4:] != MASK_ID).sum().item() > 0
+        assert (out[0, 4:] != MASK_ID).all()
 
     def test_confidence_decode(self, base_model):
         from aoae.inference import confidence_threshold_decode
@@ -548,6 +618,40 @@ class TestBaselines:
         )
         L_gen = DEFAULT_CFG["inference"]["gen_length"]
         assert out.shape == (1, 4 + L_gen)
+        assert (out[0, 4:] != MASK_ID).all()
+
+    def test_confidence_decode_force_completes_when_mask_token_is_argmax(self):
+        from aoae.inference import confidence_threshold_decode
+
+        class MaskPreferringModel(MockBaseModel):
+            def __init__(self):
+                super().__init__(VOCAB, DIM, MASK_ID)
+
+            def forward(self, input_ids):
+                B, L = input_ids.shape
+                logits = torch.zeros(B, L, self.vocab_size)
+                logits[..., self.mask_id] = 10.0
+                logits[..., 1] = 9.0
+                return logits
+
+        cfg = {
+            **DEFAULT_CFG,
+            "inference": {
+                **DEFAULT_CFG["inference"],
+                "steps": 2,
+                "gen_length": 6,
+            },
+        }
+        prompt = torch.tensor([[10, 20, 30, 40]])
+        out = confidence_threshold_decode(
+            MaskPreferringModel(),
+            prompt,
+            cfg,
+            tau_mask=0.999,
+            tau_edit=0.999,
+            enable_t2t=True,
+        )
+        assert (out[0, 4:] != MASK_ID).all()
 
     def test_block_smode_decode(self, base_model):
         from aoae.inference import block_smode_decode
@@ -2088,6 +2192,142 @@ class TestRunSpeculativeInferenceMetrics:
 
 
 class TestAOAESpeculativeInferenceLoop:
+    def test_fresh_primary_agreement_masks_skipped_kspec_positions(self):
+        from aoae.speculative_inference import _fresh_primary_agreement
+
+        agreement = torch.tensor(
+            [[True, True, False], [True, False, True]],
+            dtype=torch.bool,
+        )
+        primary_fresh = torch.tensor(
+            [[True, False, False], [False, True, True]],
+            dtype=torch.bool,
+        )
+
+        verified = _fresh_primary_agreement(agreement, primary_fresh)
+
+        expected = torch.tensor(
+            [[True, False, False], [False, False, True]],
+            dtype=torch.bool,
+        )
+        assert torch.equal(verified, expected)
+
+    def test_kspec_skip_does_not_self_confirm_skipped_positions(self, monkeypatch):
+        from aoae.speculative_inference import speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "cache": {
+                "enabled": True,
+                "kspec_skip": True,
+                "stable_kv_cache": False,
+                "prefix_kv_cache": True,
+            },
+            "grpo": {"thrash_age_decay": 0.0},
+            "inference": {
+                "steps": 2,
+                "gen_length": 3,
+                "temperature": 0.0,
+                "fallback_unmask": True,
+                "disable_remask": False,
+                "compose_gamma": 0.0,
+                "primary_every_n": 1,
+                "primary_agree_threshold": 0.0,
+                "force_primary_first_last": False,
+                "aux_cache_reset_threshold": 1.1,
+                "positional_cache": {"enabled": False},
+                "reuse_signal": {"method": "argmax_match"},
+            },
+            "analysis": {"track_kv_dynamics": False},
+        }
+
+        class DummyDualModel:
+            def __init__(self):
+                self.kspec_masks = []
+
+            @staticmethod
+            def _logits(batch, length):
+                logits = torch.zeros(batch, length, 3)
+                logits[..., 0] = 5.0
+                return logits
+
+            def auxiliary_forward_with_cache(self, input_ids):
+                return self._logits(input_ids.shape[0], input_ids.shape[1]), object()
+
+            def auxiliary_forward_replace_with_cache(self, input_ids, resp_slice, aux_past_kv):
+                del aux_past_kv
+                return self._logits(input_ids.shape[0], resp_slice.stop - resp_slice.start), object()
+
+            def primary_forward_with_kspec(self, input_ids, resp_slice, aux_past_kv, k_spec_mask):
+                del aux_past_kv
+                self.kspec_masks.append(k_spec_mask.detach().clone())
+                return self._logits(input_ids.shape[0], resp_slice.stop - resp_slice.start), object()
+
+        class ZeroPolicy:
+            def __call__(
+                self,
+                H_t,
+                mask_ind,
+                step_frac,
+                temperature=1.0,
+                confidence=None,
+                quality_scores=None,
+                agreement=None,
+                age_feature=None,
+                last_action_feature=None,
+            ):
+                del H_t, step_frac, temperature, confidence, quality_scores, agreement
+                del age_feature, last_action_feature
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return {
+                    "unmask_probs": zeros,
+                    "remask_probs": zeros,
+                    "cache_probs": zeros,
+                    "access_probs": zeros,
+                    "access_logits": zeros,
+                }
+
+            def sample_actions(self, policy_out, mask_ind):
+                del policy_out
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return {
+                    "u_t": zeros,
+                    "r_t": zeros,
+                    "kappa_t": zeros,
+                    "q_t": zeros,
+                }
+
+        class DummySoftMask:
+            def __call__(self, resp_logits, mask_ind, step_frac):
+                del step_frac
+                hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
+                confidence = torch.ones_like(mask_ind, dtype=torch.float32)
+                entropy = torch.zeros_like(confidence)
+                weighted = torch.zeros_like(hidden)
+                return hidden, confidence, entropy, weighted
+
+        def fake_reuse_signal(resp_logits, aux_logits, cfg, state=None):
+            del aux_logits, cfg
+            return torch.ones(resp_logits.shape[:2], dtype=torch.bool), state, {}
+
+        monkeypatch.setattr("aoae.speculative_inference.compute_reuse_signal", fake_reuse_signal)
+        dual_model = DummyDualModel()
+
+        _, traj = speculative_inference(
+            dual_model=dual_model,
+            policy=ZeroPolicy(),
+            soft_mask_module=DummySoftMask(),
+            prism_adapter=None,
+            prompt_ids=torch.tensor([[1]], dtype=torch.long),
+            cfg=cfg,
+            collect_stats=True,
+        )
+
+        assert len(dual_model.kspec_masks) == 2
+        assert not dual_model.kspec_masks[0].any()
+        assert dual_model.kspec_masks[1].all()
+        assert [float(x.item()) for x in traj.spec_cached_fractions] == pytest.approx([1.0, 0.0])
+
     def test_aux_only_steps_do_not_remask_or_commit_stable_cache(self, monkeypatch):
         from aoae.speculative_inference import speculative_inference
 
