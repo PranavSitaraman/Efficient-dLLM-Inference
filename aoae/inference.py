@@ -13,7 +13,7 @@ Also implements baseline decoders for comparison:
 
 import torch
 import torch.nn.functional as F
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from dataclasses import dataclass, field
 import json
 
@@ -36,6 +36,80 @@ def _max_prob_and_argmax(logits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tens
     max_logits, max_tok = logits_f.max(dim=-1)
     max_prob = torch.exp(max_logits - torch.logsumexp(logits_f, dim=-1))
     return max_prob.type_as(logits), max_tok
+
+
+def _resolve_eos_token_id(base_model) -> Optional[int]:
+    tokenizer = getattr(base_model, "tokenizer", None)
+    if tokenizer is None:
+        return None
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    if eos_token_id is None:
+        return None
+    try:
+        return int(eos_token_id)
+    except (TypeError, ValueError):
+        return None
+
+
+def _mask_after_first_eos(
+    tokens: torch.Tensor,
+    *,
+    eos_token_id: Optional[int],
+    mask_id: int,
+) -> torch.Tensor:
+    if eos_token_id is None or tokens.numel() == 0:
+        return tokens
+    out = tokens.clone()
+    for row_idx in range(out.shape[0]):
+        eos_pos = (out[row_idx] == eos_token_id).nonzero(as_tuple=True)[0]
+        if eos_pos.numel() == 0:
+            continue
+        first = int(eos_pos[0].item())
+        if first + 1 < out.shape[1]:
+            out[row_idx, first + 1 :] = int(mask_id)
+    return out
+
+
+def resolve_llada21_official_settings(cfg: dict, mode: str = "speed") -> Dict[str, Any]:
+    """Resolve the official LLaDA2.1 decode settings for speed or quality mode."""
+    mode = str(mode).lower()
+    if mode not in {"speed", "quality"}:
+        raise ValueError(f"Unknown LLaDA2.1 decode mode: {mode!r}")
+
+    defaults = {
+        "speed": {"threshold": 0.5, "editing_threshold": 0.0},
+        "quality": {"threshold": 0.7, "editing_threshold": 0.5},
+    }
+    inf_cfg = cfg.get("inference", {})
+    off_cfg = inf_cfg.get("llada21_official", {})
+    mode_cfg = off_cfg.get(mode, {}) if isinstance(off_cfg.get(mode), dict) else {}
+    legacy_threshold = off_cfg.get("threshold")
+    legacy_editing_threshold = off_cfg.get("editing_threshold")
+
+    threshold = mode_cfg.get("threshold")
+    if threshold is None:
+        threshold = legacy_threshold if legacy_threshold is not None else defaults[mode]["threshold"]
+
+    editing_threshold = mode_cfg.get("editing_threshold")
+    if editing_threshold is None:
+        editing_threshold = (
+            legacy_editing_threshold
+            if legacy_editing_threshold is not None
+            else defaults[mode]["editing_threshold"]
+        )
+
+    return {
+        "mode": mode,
+        "threshold": float(threshold),
+        "editing_threshold": float(editing_threshold),
+        "use_block_diffusion": bool(off_cfg.get("use_block_diffusion", True)),
+        "max_post_steps": int(off_cfg.get("max_post_steps", 16)),
+        "enable_mbe": bool(off_cfg.get("enable_mbe", False)),
+        "gen_length": int(off_cfg.get("gen_length", max(512, int(inf_cfg.get("gen_length", 512))))),
+        "eos_early_stop": bool(off_cfg.get("eos_early_stop", True)),
+        "block_length": int(inf_cfg.get("block_length", 32)),
+        "temperature": float(inf_cfg.get("temperature", 0.0)),
+    }
 
 
 @dataclass
@@ -457,11 +531,14 @@ def _force_complete_masked_positions(
     resp_slice: slice,
     mask_id: int,
     max_passes: int = 4,
+    skip_rows: Optional[torch.BoolTensor] = None,
 ) -> torch.Tensor:
     """Fill any remaining [MASK] positions so eval compares complete outputs."""
     for _ in range(max(1, int(max_passes))):
         resp = y[:, resp_slice]
         masked = resp.eq(mask_id)
+        if skip_rows is not None:
+            masked = masked & (~skip_rows).unsqueeze(-1)
         if not masked.any():
             break
 
@@ -528,6 +605,8 @@ def confidence_threshold_decode(
     tau_mask: float = 0.9,
     tau_edit: float = 0.95,
     enable_t2t: bool = True,
+    gen_length: Optional[int] = None,
+    eos_early_stop: bool = False,
 ) -> torch.Tensor:
     """
     LLaDA 2.1-style confidence threshold decoding.
@@ -537,11 +616,13 @@ def confidence_threshold_decode(
     """
     ic = cfg["inference"]
     T = ic["steps"]
-    L_gen = ic["gen_length"]
+    L_gen = int(gen_length if gen_length is not None else ic["gen_length"])
     mask_id = cfg["base_model"]["mask_token_id"]
 
     B, P = prompt_ids.shape
     device = prompt_ids.device
+    eos_token_id = _resolve_eos_token_id(base_model) if eos_early_stop else None
+    finished = torch.zeros(B, dtype=torch.bool, device=device)
 
     y = torch.cat([
         prompt_ids,
@@ -552,7 +633,8 @@ def confidence_threshold_decode(
 
     for t in range(T, 0, -1):
         resp = y[:, resp_slice]
-        mask_ind = (resp == mask_id)
+        active_rows = (~finished).unsqueeze(-1)
+        mask_ind = (resp == mask_id) & active_rows
 
         if not mask_ind.any():
             break
@@ -567,14 +649,14 @@ def confidence_threshold_decode(
 
         # T2T: edit unmasked positions where model disagrees and confidence > tau_edit
         if enable_t2t:
-            unmasked = ~mask_ind
+            unmasked = (resp != mask_id) & active_rows
             disagree = (max_tok != resp) & unmasked
             confident = max_prob > tau_edit
             edit = disagree & confident
             resp[edit] = max_tok[edit]
 
         # Fallback: if nothing was unmasked, unmask the most confident
-        still_masked = (resp == mask_id)
+        still_masked = (resp == mask_id) & active_rows
         nothing_happened = mask_ind.any(dim=-1) & ~unmask.any(dim=-1)
         for b in nothing_happened.nonzero(as_tuple=True)[0]:
             masked_pos = still_masked[b].nonzero(as_tuple=True)[0]
@@ -582,9 +664,25 @@ def confidence_threshold_decode(
                 best = masked_pos[max_prob[b, masked_pos].argmax()]
                 resp[b, best] = max_tok[b, best]
 
-        y[:, resp_slice] = resp
+        if eos_early_stop and eos_token_id is not None:
+            resp = _mask_after_first_eos(
+                resp,
+                eos_token_id=eos_token_id,
+                mask_id=mask_id,
+            )
+            finished = finished | (resp == eos_token_id).any(dim=-1)
 
-    return _force_complete_masked_positions(base_model, y, resp_slice, mask_id)
+        y[:, resp_slice] = resp
+        if eos_early_stop and finished.all():
+            break
+
+    return _force_complete_masked_positions(
+        base_model,
+        y,
+        resp_slice,
+        mask_id,
+        skip_rows=finished if eos_early_stop else None,
+    )
 
 
 def block_smode_decode(
@@ -595,6 +693,8 @@ def block_smode_decode(
     tau_edit: float = 0.9,
     max_steps_per_block: int = 16,
     enable_mbe: bool = False,
+    gen_length: Optional[int] = None,
+    eos_early_stop: bool = False,
 ) -> torch.Tensor:
     """
     Block-wise Semi-Autoregressive S-Mode Decoding (LLaDA 2.1 paper §2).
@@ -620,13 +720,15 @@ def block_smode_decode(
         output_ids: [B, P + L_gen] generated sequence.
     """
     ic = cfg["inference"]
-    L_gen = ic["gen_length"]
+    L_gen = int(gen_length if gen_length is not None else ic["gen_length"])
     block_len = ic.get("block_length", 32)
     mask_id = cfg["base_model"]["mask_token_id"]
 
     B, P = prompt_ids.shape
     device = prompt_ids.device
     n_blocks = (L_gen + block_len - 1) // block_len
+    eos_token_id = _resolve_eos_token_id(base_model) if eos_early_stop else None
+    finished = torch.zeros(B, dtype=torch.bool, device=device)
 
     # Start with prompt + all masks
     y = torch.cat([
@@ -635,13 +737,16 @@ def block_smode_decode(
     ], dim=1)
 
     for blk_idx in range(n_blocks):
+        if eos_early_stop and finished.all():
+            break
         blk_start = P + blk_idx * block_len
         blk_end = min(P + (blk_idx + 1) * block_len, P + L_gen)
         blk_slice = slice(blk_start, blk_end)
 
         for step in range(max_steps_per_block):
             blk_tokens = y[:, blk_slice]
-            mask_ind = (blk_tokens == mask_id)
+            active_rows = (~finished).unsqueeze(-1)
+            mask_ind = (blk_tokens == mask_id) & active_rows
 
             if not mask_ind.any():
                 break
@@ -663,14 +768,14 @@ def block_smode_decode(
             blk_tokens[unmask] = max_tok[unmask]
 
             # T2T: edit unmasked positions where model disagrees
-            unmasked = ~mask_ind
+            unmasked = (blk_tokens != mask_id) & active_rows
             disagree = (max_tok != blk_tokens) & unmasked
             confident = max_prob > tau_edit
             edit = disagree & confident
             blk_tokens[edit] = max_tok[edit]
 
             # Fallback: unmask most confident if nothing changed
-            still_masked = (blk_tokens == mask_id)
+            still_masked = (blk_tokens == mask_id) & active_rows
             nothing_happened = mask_ind.any(dim=-1) & ~unmask.any(dim=-1)
             for b in nothing_happened.nonzero(as_tuple=True)[0]:
                 masked_pos = still_masked[b].nonzero(as_tuple=True)[0]
@@ -678,9 +783,19 @@ def block_smode_decode(
                     best = masked_pos[max_prob[b, masked_pos].argmax()]
                     blk_tokens[b, best] = max_tok[b, best]
 
+            if eos_early_stop and eos_token_id is not None:
+                blk_tokens = _mask_after_first_eos(
+                    blk_tokens,
+                    eos_token_id=eos_token_id,
+                    mask_id=mask_id,
+                )
+                finished = finished | (blk_tokens == eos_token_id).any(dim=-1)
+
             y[:, blk_slice] = blk_tokens
 
         remaining_mask = y[:, blk_slice] == mask_id
+        if eos_early_stop:
+            remaining_mask = remaining_mask & (~finished).unsqueeze(-1)
         if remaining_mask.any():
             prefix_ids = y[:, :blk_end]
             if hasattr(base_model, 'forward_block_causal'):
@@ -692,6 +807,13 @@ def block_smode_decode(
             _, final_tok = _max_prob_and_argmax(final_logits)
             completed = y[:, blk_slice].clone()
             completed[remaining_mask] = final_tok[remaining_mask]
+            if eos_early_stop and eos_token_id is not None:
+                completed = _mask_after_first_eos(
+                    completed,
+                    eos_token_id=eos_token_id,
+                    mask_id=mask_id,
+                )
+                finished = finished | (completed == eos_token_id).any(dim=-1)
             y[:, blk_slice] = completed
 
         # Optional: Multiple Block Editing — revisit previous blocks
@@ -710,7 +832,7 @@ def block_smode_decode(
             max_prob, max_tok = _max_prob_and_argmax(logits)
 
             prev_tokens = y[:, prev_slice].clone()
-            disagree = (max_tok != prev_tokens) & (max_prob > tau_edit)
+            disagree = (max_tok != prev_tokens) & (max_prob > tau_edit) & (~finished).unsqueeze(-1)
             prev_tokens[disagree] = max_tok[disagree]
             y[:, prev_slice] = prev_tokens
 
@@ -732,39 +854,28 @@ def llada21_official_decode(
       - Quality mode: threshold=0.7, editing_threshold=0.5
       - block diffusion enabled by default with max_post_steps=16
     """
-    mode = str(mode).lower()
-    if mode not in {"speed", "quality"}:
-        raise ValueError(f"Unknown LLaDA2.1 decode mode: {mode!r}")
+    settings = resolve_llada21_official_settings(cfg, mode=mode)
 
-    defaults = {
-        "speed": {"threshold": 0.5, "editing_threshold": 0.0},
-        "quality": {"threshold": 0.7, "editing_threshold": 0.5},
-    }
-    off_cfg = cfg.get("inference", {}).get("llada21_official", {})
-    threshold = float(off_cfg.get("threshold", defaults[mode]["threshold"]))
-    editing_threshold = float(
-        off_cfg.get("editing_threshold", defaults[mode]["editing_threshold"])
-    )
-    use_block_diffusion = bool(off_cfg.get("use_block_diffusion", True))
-    max_post_steps = int(off_cfg.get("max_post_steps", 16))
-    enable_mbe = bool(off_cfg.get("enable_mbe", False))
-
-    if use_block_diffusion:
+    if settings["use_block_diffusion"]:
         return block_smode_decode(
             base_model,
             prompt_ids,
             cfg,
-            tau_mask=threshold,
-            tau_edit=editing_threshold,
-            max_steps_per_block=max_post_steps,
-            enable_mbe=enable_mbe,
+            tau_mask=settings["threshold"],
+            tau_edit=settings["editing_threshold"],
+            max_steps_per_block=settings["max_post_steps"],
+            enable_mbe=settings["enable_mbe"],
+            gen_length=settings["gen_length"],
+            eos_early_stop=settings["eos_early_stop"],
         )
 
     return confidence_threshold_decode(
         base_model,
         prompt_ids,
         cfg,
-        tau_mask=threshold,
-        tau_edit=editing_threshold,
+        tau_mask=settings["threshold"],
+        tau_edit=settings["editing_threshold"],
         enable_t2t=True,
+        gen_length=settings["gen_length"],
+        eos_early_stop=settings["eos_early_stop"],
     )

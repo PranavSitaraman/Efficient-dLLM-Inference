@@ -127,6 +127,7 @@ analysis:
   track_kv_dynamics: false
   track_attention_deviation: true  # per-layer attention deviation tracking
   keep_step_traces: true           # per-step action/mask ratios (for analysis)
+  log_speculative_config: false    # print one rollout-level speculative mode summary
   locality_windows: [8, 16, 32]
   confidence_threshold: 0.9
   attention_proxy_top_frac: 0.1

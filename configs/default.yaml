@@ -121,6 +121,7 @@ inference:
 analysis:
   track_kv_dynamics: true
   keep_step_traces: true
+  log_speculative_config: false
   locality_windows: [8, 16, 32]
   confidence_threshold: 0.9
   attention_proxy_top_frac: 0.1

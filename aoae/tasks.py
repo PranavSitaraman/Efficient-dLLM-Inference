@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import re
-from numbers import Integral
 from fractions import Fraction
+from numbers import Integral
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 _NUMERIC_RE = re.compile(
     r"[-+]?(?:\d+\s*/\s*\d+|(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?)"
 )
+_GSM8K_OFFICIAL_ANS_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
+_GSM8K_INVALID_ANS = "[invalid]"
 
 
 _TRUE_VALUES = {"1", "true", "yes", "on", "force"}
@@ -66,26 +68,62 @@ def decode_generated_tokens(
     mask_token_id: Optional[int] = None,
 ) -> str:
     """Decode generated tokens with EOS truncation and optional mask stripping."""
+    summary = summarize_generated_tokens(
+        tokenizer,
+        token_ids,
+        mask_token_id=mask_token_id,
+    )
+    return summary["decoded_text"]
+
+
+def summarize_generated_tokens(
+    tokenizer,
+    token_ids: Any,
+    *,
+    mask_token_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Summarize generated tokens after mask stripping and EOS truncation."""
     ids = _to_token_list(token_ids)
     if not ids:
-        return ""
+        return {
+            "decoded_text": "",
+            "visible_token_count": 0,
+            "raw_non_mask_token_count": 0,
+            "mask_tokens_remaining": 0,
+            "has_eos": False,
+            "raw_sequence_length": 0,
+        }
 
     eos_token_id = _coerce_token_id(getattr(tokenizer, "eos_token_id", None))
-    if eos_token_id is not None:
-        try:
-            eos_index = ids.index(eos_token_id)
-            ids = ids[:eos_index]
-        except ValueError:
-            pass
-
     mask_token_int = _coerce_token_id(mask_token_id)
-    if mask_token_int is not None:
-        ids = [tok for tok in ids if int(tok) != mask_token_int]
+    visible_ids: List[int] = []
+    has_eos = False
+    mask_tokens_remaining = 0
+    raw_non_mask_token_count = 0
 
-    if not ids:
-        return ""
+    for tok in ids:
+        tok_int = int(tok)
+        if mask_token_int is not None and tok_int == mask_token_int:
+            mask_tokens_remaining += 1
+            continue
+        raw_non_mask_token_count += 1
+        if eos_token_id is not None and tok_int == eos_token_id:
+            has_eos = True
+            break
+        visible_ids.append(tok_int)
 
-    return str(tokenizer.decode(ids, skip_special_tokens=True)).strip()
+    decoded_text = ""
+    if visible_ids:
+        decoded_text = str(tokenizer.decode(visible_ids, skip_special_tokens=True)).strip()
+
+    return {
+        "decoded_text": decoded_text,
+        "visible_token_count": len(visible_ids),
+        "raw_non_mask_token_count": raw_non_mask_token_count,
+        "mask_tokens_remaining": mask_tokens_remaining,
+        "has_eos": has_eos,
+        "raw_sequence_length": len(ids),
+    }
 
 
 def _should_apply_gsm8k_prompt(cfg: Optional[Dict[str, Any]]) -> bool:
@@ -103,6 +141,18 @@ def _should_apply_gsm8k_prompt(cfg: Optional[Dict[str, Any]]) -> bool:
     eval_task = str(cfg.get("evaluation", {}).get("task_type", "math")).strip().lower()
     if eval_task != "math":
         return False
+    dataset_hints = [
+        str(data_cfg.get("eval_dataset", "")),
+        str(data_cfg.get("train_dataset", "")),
+    ]
+    return any("gsm8k" in hint.lower() for hint in dataset_hints if hint)
+
+
+def is_gsm8k_dataset(cfg: Optional[Dict[str, Any]]) -> bool:
+    """Return True when the configured task is GSM8K."""
+    if not isinstance(cfg, dict):
+        return False
+    data_cfg = cfg.get("data", {})
     dataset_hints = [
         str(data_cfg.get("eval_dataset", "")),
         str(data_cfg.get("train_dataset", "")),
@@ -208,7 +258,13 @@ def _parse_numeric_answer(value: str) -> Optional[float]:
 
 
 def extract_answer(text: str) -> Optional[str]:
-    """Extract a final scalar-style answer from a model response."""
+    """
+    Heuristic scalar extractor for datasets that do not ship an official grader.
+
+    This helper is intentionally broad and can be wrong for benchmark-specific
+    formats such as GSM8K. Prefer a dataset's official evaluator whenever one
+    exists.
+    """
     match = re.findall(r"\\boxed\{([^}]+)\}", text)
     if match:
         candidate = match[-1].strip()
@@ -233,6 +289,27 @@ def extract_answer(text: str) -> Optional[str]:
         return candidate
 
     return None
+
+
+def extract_gsm8k_official_answer(text: str) -> str:
+    """
+    Official OpenAI GSM8K extraction rule from grade_school_math/dataset.py.
+
+    Source of truth:
+      https://github.com/openai/grade-school-math/blob/master/grade_school_math/dataset.py
+    """
+    match = _GSM8K_OFFICIAL_ANS_RE.search(text or "")
+    if match:
+        return match.group(1).strip().replace(",", "")
+    return _GSM8K_INVALID_ANS
+
+
+def check_gsm8k_correctness_official(generated: str, reference: str) -> bool:
+    """Official OpenAI GSM8K exact-match correctness."""
+    gold = extract_gsm8k_official_answer(reference)
+    if gold == _GSM8K_INVALID_ANS:
+        return False
+    return extract_gsm8k_official_answer(generated) == gold
 
 
 def check_math_correctness(generated: str, reference: str) -> bool:

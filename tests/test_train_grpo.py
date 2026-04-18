@@ -73,13 +73,12 @@ def test_collect_rollout_group_batches_group_rollouts(monkeypatch):
         policy,
         soft_mask_module,
         prism_adapter,
-        verifier,
         prompt_ids,
         cfg,
         record_trajectory=False,
         policy_temperature=1.0,
     ):
-        del base_model, policy, soft_mask_module, prism_adapter, verifier, record_trajectory, policy_temperature
+        del base_model, policy, soft_mask_module, prism_adapter, record_trajectory, policy_temperature
         called["shape"] = tuple(prompt_ids.shape)
         called["steps"] = cfg["inference"]["steps"]
         called["gen_length"] = cfg["inference"]["gen_length"]

@@ -252,6 +252,35 @@ class TestEvalExtraction:
         decoded = decode_generated_tokens(tok, [5, 99, 6, 2, 7, 8], mask_token_id=99)
         assert decoded == "5 6"
 
+    def test_gsm8k_official_extractor_matches_openai_semantics(self):
+        from aoae.tasks import extract_gsm8k_official_answer
+
+        assert extract_gsm8k_official_answer("Reasoning\n#### 42,000") == "42000"
+        assert extract_gsm8k_official_answer("Reasoning\n#### -3.5") == "-3.5"
+
+    def test_gsm8k_official_extractor_requires_hashes(self):
+        from aoae.tasks import extract_gsm8k_official_answer
+
+        assert extract_gsm8k_official_answer("Answer: 7 dozens in 4 weeks.") == "[invalid]"
+
+    def test_math_evaluator_uses_official_gsm8k_rule(self):
+        from aoae.evaluators import build_evaluator
+
+        cfg = {
+            "evaluation": {"task_type": "math"},
+            "data": {"eval_dataset": "openai/gsm8k"},
+        }
+        evaluator = build_evaluator(cfg)
+        decision = evaluator.evaluate(
+            "Answer: Claire will eat 7 dozens of eggs in 4 weeks.",
+            "#### 7",
+        )
+
+        assert decision.correct is False
+        assert decision.detail == "gsm8k_official_openai"
+        assert decision.extracted_prediction == "[invalid]"
+        assert decision.extracted_reference == "7"
+
 
 class TestDKVCacheManager:
     def test_init_empty(self):
@@ -699,6 +728,49 @@ class TestBaselines:
         assert model.seen_lengths[0] == 6
         assert max(model.seen_lengths) == 8
         assert (out[0, 4:] != MASK_ID).all()
+
+    def test_block_smode_eos_early_stop_masks_future_positions(self):
+        from aoae.inference import block_smode_decode
+
+        class EosTokenizer:
+            eos_token_id = 2
+
+        class EarlyStopModel(MockBaseModel):
+            def __init__(self):
+                super().__init__(VOCAB, DIM, MASK_ID)
+                self.tokenizer = EosTokenizer()
+
+            def forward_block_causal(self, input_ids, block_length=32):
+                del block_length
+                B, L = input_ids.shape
+                logits = torch.zeros(B, L, self.vocab_size)
+                logits[..., 1] = 1.0
+                if L >= 4:
+                    logits[:, 2, 2] = 10.0
+                    logits[:, 3, 1] = 9.0
+                return logits
+
+        cfg = {
+            **DEFAULT_CFG,
+            "inference": {
+                **DEFAULT_CFG["inference"],
+                "gen_length": 4,
+                "block_length": 2,
+            },
+        }
+        prompt = torch.tensor([[10, 20]])
+        out = block_smode_decode(
+            EarlyStopModel(),
+            prompt,
+            cfg,
+            tau_mask=0.0,
+            tau_edit=0.0,
+            max_steps_per_block=1,
+            eos_early_stop=True,
+        )
+
+        assert out[0, 2].item() == 2
+        assert (out[0, 3:] == MASK_ID).all()
 
 
 # ======================================================================
@@ -2431,6 +2503,252 @@ class TestAOAESpeculativeInferenceLoop:
         assert float(traj.cached_fractions[-1].item()) == pytest.approx(1.0)
         assert traj.total_stable_commits == 3
         assert traj.agreement_observations == 1
+
+    def test_prism_keeps_aux_prefix_cache_on_draft_steps(self):
+        from aoae.speculative_inference import speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "cache": {
+                "enabled": True,
+                "kspec_skip": True,
+                "stable_kv_cache": False,
+                "prefix_kv_cache": True,
+            },
+            "grpo": {"thrash_age_decay": 0.0},
+            "inference": {
+                "steps": 3,
+                "gen_length": 2,
+                "temperature": 0.0,
+                "fallback_unmask": False,
+                "disable_remask": False,
+                "compose_gamma": 0.0,
+                "primary_every_n": 2,
+                "primary_agree_threshold": 0.0,
+                "force_primary_first_last": False,
+                "aux_cache_reset_threshold": 1.1,
+                "positional_cache": {"enabled": False},
+                "reuse_signal": {"method": "argmax_match"},
+            },
+            "analysis": {"track_kv_dynamics": False},
+        }
+
+        class DummyDualModel:
+            def __init__(self):
+                self.calls = []
+
+            @staticmethod
+            def _full_logits(input_ids):
+                logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], 3)
+                logits[..., 0] = 5.0
+                return logits
+
+            def auxiliary_forward(self, input_ids):
+                self.calls.append("aux_plain")
+                return self._full_logits(input_ids)
+
+            def auxiliary_forward_with_cache(self, input_ids):
+                self.calls.append("aux_cache_full")
+                return self._full_logits(input_ids), object()
+
+            def auxiliary_forward_replace_with_cache(self, input_ids, resp_slice, aux_past_kv):
+                del aux_past_kv
+                self.calls.append(("aux_cache_replace", resp_slice.start, resp_slice.stop))
+                return self._full_logits(input_ids)[:, resp_slice, :], object()
+
+            def primary_forward_with_hidden(self, input_ids):
+                self.calls.append("pri_hidden")
+                logits = self._full_logits(input_ids)
+                hidden = torch.zeros(input_ids.shape[0], input_ids.shape[1], 4)
+                return logits, hidden
+
+            def dual_forward_resp(self, input_ids, resp_slice, need_hidden=False, need_all_hidden=False):
+                del input_ids, resp_slice, need_hidden, need_all_hidden
+                raise AssertionError("Verifier path should not fall back to dual_forward_resp when PRISM is active.")
+
+        class ZeroPolicy:
+            def __call__(
+                self,
+                H_t,
+                mask_ind,
+                step_frac,
+                temperature=1.0,
+                confidence=None,
+                quality_scores=None,
+                agreement=None,
+                age_feature=None,
+                last_action_feature=None,
+            ):
+                del H_t, step_frac, temperature, confidence, quality_scores, agreement
+                del age_feature, last_action_feature
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return {
+                    "unmask_probs": zeros,
+                    "remask_probs": zeros,
+                    "cache_probs": zeros,
+                    "access_probs": zeros,
+                    "access_logits": zeros,
+                }
+
+            def sample_actions(self, policy_out, mask_ind):
+                del policy_out
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return {
+                    "u_t": zeros,
+                    "r_t": zeros,
+                    "kappa_t": zeros,
+                    "q_t": zeros,
+                }
+
+        class DummySoftMask:
+            def __call__(self, resp_logits, mask_ind, step_frac):
+                del step_frac
+                hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
+                confidence = torch.ones_like(mask_ind, dtype=torch.float32)
+                entropy = torch.zeros_like(confidence)
+                weighted = torch.zeros_like(hidden)
+                return hidden, confidence, entropy, weighted
+
+        class DummyPrism:
+            def __call__(self, hidden_states):
+                return torch.ones(hidden_states.shape[:2], dtype=torch.float32)
+
+        dual_model = DummyDualModel()
+        _, traj = speculative_inference(
+            dual_model=dual_model,
+            policy=ZeroPolicy(),
+            soft_mask_module=DummySoftMask(),
+            prism_adapter=DummyPrism(),
+            prompt_ids=torch.tensor([[1]], dtype=torch.long),
+            cfg=cfg,
+            collect_stats=True,
+        )
+
+        assert traj.aux_only_steps == 2
+        assert traj.primary_steps == 1
+        assert dual_model.calls == [
+            "aux_cache_full",
+            ("aux_cache_replace", 1, 3),
+            ("aux_cache_replace", 1, 3),
+            "pri_hidden",
+        ]
+
+    def test_log_speculative_config_reports_rollout_mode(self, capsys):
+        from aoae.speculative_inference import speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "cache": {
+                "enabled": True,
+                "kspec_skip": True,
+                "stable_kv_cache": False,
+                "prefix_kv_cache": True,
+            },
+            "grpo": {"thrash_age_decay": 0.0},
+            "inference": {
+                "steps": 1,
+                "gen_length": 2,
+                "temperature": 0.0,
+                "fallback_unmask": False,
+                "disable_remask": False,
+                "compose_gamma": 0.0,
+                "primary_every_n": 1,
+                "primary_agree_threshold": 0.0,
+                "force_primary_first_last": False,
+                "aux_cache_reset_threshold": 1.1,
+                "positional_cache": {"enabled": False},
+                "reuse_signal": {"method": "argmax_match"},
+            },
+            "analysis": {
+                "track_kv_dynamics": False,
+                "log_speculative_config": True,
+            },
+        }
+
+        class DummyDualModel:
+            @staticmethod
+            def _full_logits(input_ids):
+                logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], 3)
+                logits[..., 0] = 5.0
+                return logits
+
+            def auxiliary_forward_with_cache(self, input_ids):
+                return self._full_logits(input_ids), object()
+
+            def primary_forward_with_hidden(self, input_ids):
+                logits = self._full_logits(input_ids)
+                hidden = torch.zeros(input_ids.shape[0], input_ids.shape[1], 4)
+                return logits, hidden
+
+        class ZeroPolicy:
+            def __call__(
+                self,
+                H_t,
+                mask_ind,
+                step_frac,
+                temperature=1.0,
+                confidence=None,
+                quality_scores=None,
+                agreement=None,
+                age_feature=None,
+                last_action_feature=None,
+            ):
+                del H_t, step_frac, temperature, confidence, quality_scores, agreement
+                del age_feature, last_action_feature
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return {
+                    "unmask_probs": zeros,
+                    "remask_probs": zeros,
+                    "cache_probs": zeros,
+                    "access_probs": zeros,
+                    "access_logits": zeros,
+                }
+
+            def sample_actions(self, policy_out, mask_ind):
+                del policy_out
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return {
+                    "u_t": zeros,
+                    "r_t": zeros,
+                    "kappa_t": zeros,
+                    "q_t": zeros,
+                }
+
+        class DummySoftMask:
+            def __call__(self, resp_logits, mask_ind, step_frac):
+                del step_frac
+                hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
+                confidence = torch.ones_like(mask_ind, dtype=torch.float32)
+                entropy = torch.zeros_like(confidence)
+                weighted = torch.zeros_like(hidden)
+                return hidden, confidence, entropy, weighted
+
+        class DummyPrism:
+            def __call__(self, hidden_states):
+                return torch.ones(hidden_states.shape[:2], dtype=torch.float32)
+
+        speculative_inference(
+            dual_model=DummyDualModel(),
+            policy=ZeroPolicy(),
+            soft_mask_module=DummySoftMask(),
+            prism_adapter=DummyPrism(),
+            prompt_ids=torch.tensor([[1]], dtype=torch.long),
+            cfg=cfg,
+            collect_stats=True,
+        )
+
+        out = capsys.readouterr().out
+        assert "[Speculative]" in out
+        assert "schedule=aoae" in out
+        assert "prism=on" in out
+        assert "kv_tracking=off" in out
+        assert "aux_cache=on" in out
+        assert "kspec_skip=on" in out
+        assert "primary_cache_fastpath=off" in out
+        assert "verifier_mode=full_hidden_with_aux_cache" in out
+        assert "primary_every_n=1" in out
+        assert "gamma=0.000" in out
+        assert "remask=on" in out
 
 
 class TestRunBlockwiseSpeculativeInference:

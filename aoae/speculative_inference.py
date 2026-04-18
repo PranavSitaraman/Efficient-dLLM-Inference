@@ -115,6 +115,90 @@ def _fresh_primary_agreement(
     return agreement.bool() & primary_fresh_mask.bool()
 
 
+def _on_off(flag: bool) -> str:
+    return "on" if bool(flag) else "off"
+
+
+def _describe_primary_verifier_mode(
+    *,
+    use_stable_kv_skip: bool,
+    primary_cache_enabled: bool,
+    use_kspec_skip: bool,
+    need_hidden: bool,
+    need_all_hidden: bool,
+    use_prefix_kv_cache: bool,
+    aux_cache_enabled: bool,
+) -> str:
+    if use_stable_kv_skip and primary_cache_enabled:
+        return "stable_kv_skip"
+    if use_stable_kv_skip:
+        return "full_hidden_no_stable_skip"
+    if use_kspec_skip and primary_cache_enabled:
+        return "kspec_skip"
+    if need_hidden or need_all_hidden:
+        return "full_hidden_with_aux_cache" if aux_cache_enabled else "full_hidden"
+    if use_prefix_kv_cache and primary_cache_enabled:
+        return "prefix_cache_replace"
+    return "full_dual_no_cache"
+
+
+def _maybe_log_speculative_rollout_config(
+    *,
+    cfg: dict,
+    prism_adapter,
+    track_kv_enabled: bool,
+    use_cache: bool,
+    use_fallback: bool,
+    disable_remask: bool,
+    use_kspec_skip: bool,
+    use_prefix_kv_cache: bool,
+    use_stable_kv_skip: bool,
+    aux_cache_enabled: bool,
+    primary_cache_enabled: bool,
+    need_hidden: bool,
+    need_all_hidden: bool,
+    primary_every_n: int,
+    primary_agree_threshold: float,
+    force_primary_endpoints: bool,
+    aux_cache_reset_threshold: float,
+    gamma: float,
+) -> None:
+    if not bool(cfg.get("analysis", {}).get("log_speculative_config", False)):
+        return
+
+    schedule = cfg.get("inference", {}).get("speculative_schedule", "aoae")
+    verifier_mode = _describe_primary_verifier_mode(
+        use_stable_kv_skip=use_stable_kv_skip,
+        primary_cache_enabled=primary_cache_enabled,
+        use_kspec_skip=use_kspec_skip,
+        need_hidden=need_hidden,
+        need_all_hidden=need_all_hidden,
+        use_prefix_kv_cache=use_prefix_kv_cache,
+        aux_cache_enabled=aux_cache_enabled,
+    )
+    print(
+        "[Speculative] "
+        f"schedule={schedule} "
+        f"prism={_on_off(prism_adapter is not None)} "
+        f"kv_tracking={_on_off(track_kv_enabled)} "
+        f"cache={_on_off(use_cache)} "
+        f"aux_cache={_on_off(aux_cache_enabled)} "
+        f"kspec_skip={_on_off(use_kspec_skip)} "
+        f"stable_kv={_on_off(use_stable_kv_skip)} "
+        f"primary_hidden={_on_off(need_hidden)} "
+        f"primary_all_hidden={_on_off(need_all_hidden)} "
+        f"primary_cache_fastpath={_on_off(primary_cache_enabled and (use_kspec_skip or use_stable_kv_skip or use_prefix_kv_cache))} "
+        f"verifier_mode={verifier_mode} "
+        f"primary_every_n={primary_every_n} "
+        f"primary_agree_threshold={primary_agree_threshold:.3f} "
+        f"force_primary_endpoints={_on_off(force_primary_endpoints)} "
+        f"aux_cache_reset_threshold={aux_cache_reset_threshold:.3f} "
+        f"gamma={float(gamma):.3f} "
+        f"remask={_on_off(not disable_remask)} "
+        f"fallback={_on_off(use_fallback)}"
+    )
+
+
 def speculative_inference(
     dual_model: DualModelWrapper,
     policy,
@@ -205,9 +289,10 @@ def speculative_inference(
     #   prefix for the auxiliary (skips prompt recompute each step).  The primary
     #   always starts from aux_past_kv so it also reuses prompt K/V implicitly.
     #
-    # Real KV reuse is disabled when hidden states are needed (PRISM, KV dynamics
-    # tracker), but the auxiliary can still run aux-only draft steps without
-    # cache between verifier events.
+    # Primary-side KV skip requires logits-only verifier passes. When PRISM or
+    # KV dynamics tracking needs primary hidden states we fall back to a full
+    # primary verifier forward, but the auxiliary can still reuse its own prefix
+    # cache on draft steps and before verifier events.
     use_kspec_skip = cfg["cache"].get("kspec_skip", True) and use_cache
     use_prefix_kv_cache = cfg["cache"].get("prefix_kv_cache", False) and use_cache
     aux_past_kv = None
@@ -245,10 +330,72 @@ def speculative_inference(
         if trajectory is None:
             trajectory = SpeculativeTrajectory()
 
+    # Hidden-state requirements are rollout-global: they depend on the verifier
+    # wiring for this call, not on the current diffusion step.
+    _need_all_hidden = _track_kv
+    _need_hidden = (prism_adapter is not None) and not _need_all_hidden
+    _primary_cache_enabled = not (_need_hidden or _need_all_hidden)
+    _aux_cache_enabled = use_prefix_kv_cache
+
+    def _run_auxiliary_resp(current_y: torch.Tensor) -> torch.Tensor:
+        nonlocal aux_past_kv, _prefix_cache_initialized
+
+        if _aux_cache_enabled and _prefix_cache_initialized:
+            aux_logits, aux_past_kv = dual_model.auxiliary_forward_replace_with_cache(
+                current_y, resp_slice, aux_past_kv,
+            )
+            return aux_logits
+
+        if _aux_cache_enabled:
+            aux_full, aux_past_kv = dual_model.auxiliary_forward_with_cache(current_y)
+            _prefix_cache_initialized = True
+            return aux_full[:, resp_slice, :]
+
+        return dual_model.auxiliary_forward(current_y)[:, resp_slice, :]
+
+    def _run_primary_full_resp(
+        current_y: torch.Tensor,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[List[torch.Tensor]]]:
+        if _need_all_hidden:
+            pri_full, pri_hidden_states, _, _ = dual_model.primary_forward_with_diagnostics(current_y)
+            pri_hidden = pri_hidden_states[-1]
+            return (
+                pri_full[:, resp_slice, :],
+                pri_hidden[:, resp_slice, :],
+                [h[:, resp_slice, :] for h in pri_hidden_states],
+            )
+
+        if _need_hidden:
+            pri_full, pri_hidden = dual_model.primary_forward_with_hidden(current_y)
+            return pri_full[:, resp_slice, :], pri_hidden[:, resp_slice, :], None
+
+        pri_full = dual_model.primary_forward(current_y)
+        return pri_full[:, resp_slice, :], None, None
+
     primary_every_n = max(1, int(ic.get("primary_every_n", 1)))
     primary_agree_threshold = float(ic.get("primary_agree_threshold", 0.0))
     force_primary_endpoints = bool(ic.get("force_primary_first_last", True))
     aux_cache_reset_threshold = float(ic.get("aux_cache_reset_threshold", 1.1))
+    _maybe_log_speculative_rollout_config(
+        cfg=cfg,
+        prism_adapter=prism_adapter,
+        track_kv_enabled=_track_kv,
+        use_cache=use_cache,
+        use_fallback=use_fallback,
+        disable_remask=disable_remask,
+        use_kspec_skip=use_kspec_skip,
+        use_prefix_kv_cache=use_prefix_kv_cache,
+        use_stable_kv_skip=use_stable_kv_skip,
+        aux_cache_enabled=_aux_cache_enabled,
+        primary_cache_enabled=_primary_cache_enabled,
+        need_hidden=_need_hidden,
+        need_all_hidden=_need_all_hidden,
+        primary_every_n=primary_every_n,
+        primary_agree_threshold=primary_agree_threshold,
+        force_primary_endpoints=force_primary_endpoints,
+        aux_cache_reset_threshold=aux_cache_reset_threshold,
+        gamma=gamma,
+    )
     _ema_agreement = 1.0
     _primary_steps = 0
     _aux_only_steps = 0
@@ -275,13 +422,6 @@ def speculative_inference(
             break
 
         # === Phase 0 + 0b: Dual-model forward ===
-        # When KV dynamics tracking is enabled, request all-layer hidden states
-        # so the tracker can compute hidden-state-proxy drift per layer.
-        # need_all_hidden=True also satisfies PRISM's need for the last hidden
-        # state (dual_forward sets primary_hidden = primary_hidden_states[-1]).
-        _need_all_hidden = _track_kv
-        _need_hidden = (prism_adapter is not None) and not _need_all_hidden
-        _can_use_cache = not _need_hidden and not _need_all_hidden
         step_idx = T - t
         run_primary = (
             primary_every_n <= 1
@@ -297,16 +437,7 @@ def speculative_inference(
         primary_fresh_mask = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
 
         if not run_primary:
-            if use_prefix_kv_cache and _can_use_cache and _prefix_cache_initialized:
-                aux_logits, aux_past_kv = dual_model.auxiliary_forward_replace_with_cache(
-                    y, resp_slice, aux_past_kv,
-                )
-            elif use_prefix_kv_cache and _can_use_cache:
-                _aux_full, aux_past_kv = dual_model.auxiliary_forward_with_cache(y)
-                aux_logits = _aux_full[:, resp_slice, :]
-                _prefix_cache_initialized = True
-            else:
-                aux_logits = dual_model.auxiliary_forward(y)[:, resp_slice, :]
+            aux_logits = _run_auxiliary_resp(y)
             resp_logits = aux_logits
             # No verifier observation happened on this cheap draft step, so no
             # position is considered accepted for composition or K_spec.
@@ -315,7 +446,7 @@ def speculative_inference(
             _pri_hidden_states_for_tracker = None
             _aux_only_steps += 1
 
-        elif use_stable_kv_skip and _can_use_cache:
+        elif use_stable_kv_skip and _primary_cache_enabled:
             # --- Stable KV path: primary only, skip positions in K_stable ---
             # K_stable = positions the policy's κ_t head committed as stable.
             # Eviction: remask (r_t=1) evicts from K_stable via invalidate().
@@ -344,17 +475,20 @@ def speculative_inference(
             _pri_hidden_states_for_tracker = None
             _primary_steps += 1
 
-        elif use_kspec_skip and _can_use_cache:
+        elif use_stable_kv_skip:
+            # --- Hidden-state verifier path: no drafter, no stable KV skip ---
+            # The stable-primary fast path cannot expose the primary hidden states
+            # PRISM / KV diagnostics need, so fall back to a full verifier pass.
+            resp_logits, _pri_hidden_for_prism, _pri_hidden_states_for_tracker = _run_primary_full_resp(y)
+            aux_logits = resp_logits
+            agreement = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
+            primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
+            _primary_steps += 1
+
+        elif use_kspec_skip and _primary_cache_enabled:
             # --- K_spec path: real KV skip for agreed positions ---
             # Auxiliary runs with cache (prompt prefix reused when configured).
-            if use_prefix_kv_cache and _prefix_cache_initialized:
-                aux_logits, aux_past_kv = dual_model.auxiliary_forward_replace_with_cache(
-                    y, resp_slice, aux_past_kv,
-                )
-            else:
-                _aux_full, aux_past_kv = dual_model.auxiliary_forward_with_cache(y)
-                aux_logits = _aux_full[:, resp_slice, :]
-                _prefix_cache_initialized = True
+            aux_logits = _run_auxiliary_resp(y)
 
             # Primary: run only over non-agreed response clusters (K_spec skip).
             # _k_spec is the current k=1 materialization of the transient K_spec
@@ -375,7 +509,17 @@ def speculative_inference(
             _pri_hidden_states_for_tracker = None
             _primary_steps += 1
 
-        elif use_prefix_kv_cache and _can_use_cache:
+        elif _need_hidden or _need_all_hidden:
+            # --- Mixed verifier path: cached auxiliary + full hidden-state primary ---
+            # PRISM / diagnostics need hidden states from a full primary pass, but
+            # the auxiliary can still reuse its prefix cache to keep draft steps and
+            # cache-reset accounting aligned with the speculative path.
+            aux_logits = _run_auxiliary_resp(y)
+            resp_logits, _pri_hidden_for_prism, _pri_hidden_states_for_tracker = _run_primary_full_resp(y)
+            primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
+            _primary_steps += 1
+
+        elif use_prefix_kv_cache and _primary_cache_enabled:
             # --- Prefix-only path: no K_spec skip, but prompt KVs cached ---
             if not _prefix_cache_initialized:
                 _aux_full, aux_past_kv = dual_model.auxiliary_forward_with_cache(y)
@@ -396,7 +540,7 @@ def speculative_inference(
             _primary_steps += 1
 
         else:
-            # --- Full forward path: needed for hidden states (PRISM, KV tracker) ---
+            # --- Full dual-model forward path: logits only, no cache reuse ---
             dual_out = dual_model.dual_forward_resp(
                 y, resp_slice, need_hidden=_need_hidden, need_all_hidden=_need_all_hidden,
             )
@@ -407,7 +551,7 @@ def speculative_inference(
             primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
             _primary_steps += 1
 
-        if run_primary and not (use_stable_kv_skip and _can_use_cache):
+        if run_primary and not (use_stable_kv_skip and _primary_cache_enabled):
             # Stable path sets agreement=zeros directly (no drafter to compare against).
             raw_agreement, reuse_state, _ = compute_reuse_signal(
                 resp_logits, aux_logits, cfg, state=reuse_state
@@ -453,7 +597,7 @@ def speculative_inference(
         #   (c) _prev_H_t stored below reflects true hidden-state proxy at stable positions.
         # The substitution is exact in expectation: stable KV → same primary attention
         # output → same logits → same H_t as the last step those positions were active.
-        if use_stable_kv_skip and _can_use_cache:
+        if use_stable_kv_skip and _primary_cache_enabled:
             _stable_skip = cache_mgr.stable.get_cached_mask() & ~mask_ind  # [B, L_gen]
             # Guard: NaN from forward_replace_with_cache (bf16 MoE numerical issues)
             # must be scrubbed before updating _stable_logits_cache, otherwise NaN

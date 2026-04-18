@@ -54,10 +54,22 @@ grpo:
 
 inference:
   steps: 64
-  gen_length: 256
+  gen_length: 512
   temperature: 0.0
   fallback_unmask: true
   disable_remask: false
+  llada21_official:
+    use_block_diffusion: true
+    max_post_steps: 16
+    gen_length: 512
+    eos_early_stop: true
+    enable_mbe: false
+    speed:
+      threshold: 0.5
+      editing_threshold: 0.0
+    quality:
+      threshold: 0.7
+      editing_threshold: 0.5
   positional_cache:
     enabled: false
     horizon: 4
@@ -86,6 +98,7 @@ inference:
 analysis:
   track_kv_dynamics: false
   keep_step_traces: true
+  log_speculative_config: false
   locality_windows: [8, 16, 32]
   confidence_threshold: 0.9
   attention_proxy_top_frac: 0.1
@@ -100,7 +113,7 @@ data:
   math_prompt_style: "auto"
   eval_max_samples: 100
   max_prompt_len: 512
-  max_answer_len: 256
+  max_answer_len: 512
 
 evaluation:
   task_type: "math"

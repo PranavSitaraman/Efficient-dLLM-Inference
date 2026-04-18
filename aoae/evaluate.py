@@ -44,18 +44,18 @@ from .inference import (
     confidence_threshold_decode,
     block_smode_decode,
     llada21_official_decode,
+    resolve_llada21_official_settings,
 )
 from .dinfer_integration import (
     run_blockwise_speculative_inference,
 )
 from .speculative_inference import speculative_inference as _aoae_speculative_inference
 from .runtime_checks import collect_runtime_info, set_global_seed, is_global_rank_zero
-from .evaluators import build_evaluator
+from .evaluators import build_evaluator, describe_evaluator
 from .tasks import (
     build_prompt,
-    decode_generated_tokens,
-    extract_answer,
     extract_prompt_and_reference,
+    summarize_generated_tokens,
 )
 from .experiment_utils import set_nested
 
@@ -89,6 +89,9 @@ class EvalResult:
     avg_tokens_per_sec: float
     avg_gen_time_sec: float
     config_note: str = ""   # e.g., "tau_pi=0.5" or "tau_mask=0.9"
+    scoring_rule: str = ""
+    truncation_count: int = 0
+    truncation_rate: float = 0.0
     cache_hit_rate: float = 0.0
     stable_cache_fraction: float = 0.0
     spec_cache_fraction: float = 0.0
@@ -178,6 +181,47 @@ def _get_prediction_save_limit(cfg: Dict[str, Any]) -> int:
     return min(requested, _MAX_SAVED_PREDICTIONS)
 
 
+def _llada21_mode_for_method(method: str) -> Optional[str]:
+    if method == "llada21_speed_mode":
+        return "speed"
+    if method == "llada21_quality_mode":
+        return "quality"
+    return None
+
+
+def _configured_generation_cap(cfg: Dict[str, Any], method: str) -> int:
+    llada_mode = _llada21_mode_for_method(method)
+    if llada_mode is not None:
+        return int(resolve_llada21_official_settings(cfg, mode=llada_mode)["gen_length"])
+    return int(cfg.get("inference", {}).get("gen_length", 0))
+
+
+def _summarize_generation(
+    tokenizer,
+    token_ids: Any,
+    *,
+    cfg: Dict[str, Any],
+    method: str,
+    mask_token_id: int,
+) -> Dict[str, Any]:
+    summary = summarize_generated_tokens(
+        tokenizer,
+        token_ids,
+        mask_token_id=mask_token_id,
+    )
+    generation_cap = _configured_generation_cap(cfg, method)
+    visible_tokens = int(summary["visible_token_count"])
+    summary["generation_cap"] = generation_cap
+    summary["truncated_generation"] = bool(
+        generation_cap > 0
+        and not bool(summary["has_eos"])
+        and visible_tokens >= generation_cap
+    )
+    summary["generated_text"] = summary["decoded_text"]
+    summary["generated_tokens"] = visible_tokens
+    return summary
+
+
 def _maybe_record_prediction(
     predictions_sink: Optional[List[Dict[str, Any]]],
     prediction_limit: int,
@@ -189,6 +233,13 @@ def _maybe_record_prediction(
     generated_text: str,
     is_correct: bool,
     generated_tokens: int,
+    extracted_prediction: Optional[str] = None,
+    extracted_reference: Optional[str] = None,
+    scoring_detail: str = "",
+    generation_cap: Optional[int] = None,
+    has_eos_token: Optional[bool] = None,
+    truncated_generation: bool = False,
+    mask_tokens_remaining: Optional[int] = None,
     note: str = "",
 ) -> None:
     if predictions_sink is None or prediction_limit <= 0:
@@ -203,9 +254,14 @@ def _maybe_record_prediction(
             "question": question,
             "reference": reference,
             "generated_text": generated_text,
-            "extracted_prediction": extract_answer(generated_text),
-            "extracted_reference": extract_answer(reference),
+            "extracted_prediction": extracted_prediction,
+            "extracted_reference": extracted_reference,
             "generated_tokens": int(generated_tokens),
+            "scoring_detail": scoring_detail,
+            "generation_cap": None if generation_cap is None else int(generation_cap),
+            "has_eos_token": None if has_eos_token is None else bool(has_eos_token),
+            "truncated_generation": bool(truncated_generation),
+            "mask_tokens_remaining": None if mask_tokens_remaining is None else int(mask_tokens_remaining),
             "config_note": note,
         }
     )
@@ -509,7 +565,9 @@ def evaluate_aoae(
     total_time = 0.0
     total_nfe = 0
     total_gen_tokens = 0
+    total_truncated = 0
     evaluator = build_evaluator(cfg)
+    scoring_rule = getattr(evaluator, "evaluator_name", describe_evaluator(cfg))
 
     n_eval = min(len(dataset), max_samples) if max_samples else len(dataset)
 
@@ -558,13 +616,17 @@ def evaluate_aoae(
             dynamics_sink.append({"kv_dynamics": trajectory.kv_dynamics_summary})
 
         gen_tokens = output_ids[0, prompt_ids.shape[1]:]
-        n_gen = int((gen_tokens != mask_id).sum().item())
-        total_gen_tokens += n_gen
-        gen_text = decode_generated_tokens(
+        generation = _summarize_generation(
             tokenizer,
             gen_tokens,
+            cfg=cfg,
+            method="AOAE",
             mask_token_id=mask_id,
         )
+        n_gen = int(generation["generated_tokens"])
+        total_gen_tokens += n_gen
+        total_truncated += int(generation["truncated_generation"])
+        gen_text = generation["generated_text"]
 
         decision = evaluator.evaluate(gen_text, reference, sample=sample)
         is_correct = decision.correct
@@ -582,6 +644,13 @@ def evaluate_aoae(
             generated_text=gen_text,
             is_correct=is_correct,
             generated_tokens=n_gen,
+            extracted_prediction=decision.extracted_prediction,
+            extracted_reference=decision.extracted_reference,
+            scoring_detail=decision.detail,
+            generation_cap=generation["generation_cap"],
+            has_eos_token=generation["has_eos"],
+            truncated_generation=generation["truncated_generation"],
+            mask_tokens_remaining=generation["mask_tokens_remaining"],
             note=_append_note(f"tau_pi={policy_temperature}", _remask_note(cfg)),
         )
 
@@ -609,6 +678,9 @@ def evaluate_aoae(
         avg_tokens_per_sec=avg_tps,
         avg_gen_time_sec=avg_time,
         config_note=_append_note(f"tau_pi={policy_temperature},{pc_note}", _remask_note(cfg)),
+        scoring_rule=scoring_rule,
+        truncation_count=total_truncated,
+        truncation_rate=total_truncated / max(total, 1),
     )
 
 
@@ -633,14 +705,16 @@ def evaluate_baseline(
     total = 0
     total_time = 0.0
     total_gen_tokens = 0
+    total_truncated = 0
     evaluator = build_evaluator(cfg)
+    scoring_rule = getattr(evaluator, "evaluator_name", describe_evaluator(cfg))
     debug_eval = bool(cfg.get("evaluation", {}).get("debug_logging", False))
     rank0 = is_global_rank_zero()
 
     n_eval = min(len(dataset), max_samples) if max_samples else len(dataset)
 
     # Warm-up with realistic size to trigger Triton kernel compilation
-    warmup_len = cfg["data"].get("max_prompt_len", 512) + cfg["inference"]["gen_length"]
+    warmup_len = cfg["data"].get("max_prompt_len", 512) + _configured_generation_cap(cfg, method)
     warmup_ids = torch.full((1, warmup_len), mask_id, dtype=torch.long, device=device)
     with torch.no_grad():
         base_model.forward(warmup_ids)
@@ -732,14 +806,18 @@ def evaluate_baseline(
         t1 = time.perf_counter()
 
         gen_tokens = output_ids[0, prompt_ids.shape[1]:]
-        n_gen = int((gen_tokens != mask_id).sum().item())
-        n_mask_remaining = int((gen_tokens == mask_id).sum().item())
-        total_gen_tokens += n_gen
-        gen_text = decode_generated_tokens(
+        generation = _summarize_generation(
             tokenizer,
             gen_tokens,
+            cfg=cfg,
+            method=method,
             mask_token_id=mask_id,
         )
+        n_gen = int(generation["generated_tokens"])
+        n_mask_remaining = int(generation["mask_tokens_remaining"])
+        total_gen_tokens += n_gen
+        total_truncated += int(generation["truncated_generation"])
+        gen_text = generation["generated_text"]
 
         decision = evaluator.evaluate(gen_text, reference, sample=sample)
         is_correct = decision.correct
@@ -763,19 +841,27 @@ def evaluate_baseline(
             generated_text=gen_text,
             is_correct=is_correct,
             generated_tokens=n_gen,
+            extracted_prediction=decision.extracted_prediction,
+            extracted_reference=decision.extracted_reference,
+            scoring_detail=decision.detail,
+            generation_cap=generation["generation_cap"],
+            has_eos_token=generation["has_eos"],
+            truncated_generation=generation["truncated_generation"],
+            mask_tokens_remaining=generation["mask_tokens_remaining"],
             note=note,
         )
 
         # Debug output for first 3 samples
         if debug_eval and rank0 and i < 3:
-            gen_answer = extract_answer(gen_text)
-            ref_answer = extract_answer(reference)
+            gen_answer = decision.extracted_prediction
+            ref_answer = decision.extracted_reference
             print(f"\n  [DEBUG sample {i}] method={method}")
             print(f"    prompt_len={prompt_ids.shape[1]}, gen_len={len(gen_tokens)}, "
                   f"unmasked={n_gen}, masks_remaining={n_mask_remaining}")
             print(f"    reference_answer='{ref_answer}' (from: {reference[:80]}...)")
             print(f"    extracted_answer='{gen_answer}'")
             print(f"    correct={is_correct}")
+            print(f"    scoring_detail='{decision.detail}', truncated={generation['truncated_generation']}")
             print(f"    generated_text (first 300 chars): {gen_text[:300]}")
 
     accuracy = correct / max(total, 1)
@@ -798,6 +884,9 @@ def evaluate_baseline(
         avg_tokens_per_sec=avg_tps,
         avg_gen_time_sec=avg_time,
         config_note=note,
+        scoring_rule=scoring_rule,
+        truncation_count=total_truncated,
+        truncation_rate=total_truncated / max(total, 1),
     )
 
 
@@ -825,6 +914,7 @@ def evaluate_speculative(
     total = 0
     total_time = 0.0
     total_gen_tokens = 0
+    total_truncated = 0
     total_nfe = 0
     total_agreement = 0.0
     total_agreement_obs = 0
@@ -860,6 +950,7 @@ def evaluate_speculative(
     total_primary_full_equiv_positions = 0.0
     boundary_dist_counter: collections.Counter[str] = collections.Counter()
     evaluator = build_evaluator(cfg)
+    scoring_rule = getattr(evaluator, "evaluator_name", describe_evaluator(cfg))
 
     n_eval = min(len(dataset), max_samples) if max_samples else len(dataset)
     tau_r = cfg["base_model"].get("routing_temperature", 0.01)
@@ -991,14 +1082,17 @@ def evaluate_speculative(
         t1 = time.perf_counter()
 
         gen_tokens = output_ids[0, prompt_ids.shape[1]:]
-        # Count actual generated tokens (non-mask)
-        n_gen = int((gen_tokens != mask_id).sum().item())
-        total_gen_tokens += n_gen
-        gen_text = decode_generated_tokens(
+        generation = _summarize_generation(
             tokenizer,
             gen_tokens,
+            cfg=cfg,
+            method="Speculative-AOAE",
             mask_token_id=mask_id,
         )
+        n_gen = int(generation["generated_tokens"])
+        total_gen_tokens += n_gen
+        total_truncated += int(generation["truncated_generation"])
+        gen_text = generation["generated_text"]
 
         decision = evaluator.evaluate(gen_text, reference, sample=sample)
         is_correct = decision.correct
@@ -1016,6 +1110,13 @@ def evaluate_speculative(
             generated_text=gen_text,
             is_correct=is_correct,
             generated_tokens=n_gen,
+            extracted_prediction=decision.extracted_prediction,
+            extracted_reference=decision.extracted_reference,
+            scoring_detail=decision.detail,
+            generation_cap=generation["generation_cap"],
+            has_eos_token=generation["has_eos"],
+            truncated_generation=generation["truncated_generation"],
+            mask_tokens_remaining=generation["mask_tokens_remaining"],
             note=note,
         )
 
@@ -1134,6 +1235,9 @@ def evaluate_speculative(
         avg_tokens_per_sec=avg_tps,
         avg_gen_time_sec=avg_time,
         config_note=note,
+        scoring_rule=scoring_rule,
+        truncation_count=total_truncated,
+        truncation_rate=total_truncated / max(total, 1),
         cache_hit_rate=cache_hit_rate,
         stable_cache_fraction=stable_cache_fraction,
         spec_cache_fraction=spec_cache_fraction,
@@ -1418,6 +1522,8 @@ def _build_run_metadata(
 ) -> Dict[str, Any]:
     runtime = collect_runtime_info()
     eval_cfg = cfg.get("evaluation", {})
+    llada_speed = resolve_llada21_official_settings(cfg, mode="speed")
+    llada_quality = resolve_llada21_official_settings(cfg, mode="quality")
     return {
         "schema_version": "aoae_eval_v2",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -1435,6 +1541,7 @@ def _build_run_metadata(
         "seed": int(cfg.get("hardware", {}).get("seed", 42)),
         "deterministic": bool(cfg.get("hardware", {}).get("deterministic", False)),
         "task_type": eval_cfg.get("task_type", "math"),
+        "task_evaluator": describe_evaluator(cfg),
         "baseline_methods_requested": eval_cfg.get("baseline_methods"),
         "baseline_methods_effective": _get_baseline_methods(cfg),
         "code_timeout_sec": eval_cfg.get("code", {}).get("timeout_sec"),
@@ -1444,11 +1551,15 @@ def _build_run_metadata(
         "reuse_signal_method": cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match"),
         "reuse_signal_threshold": cfg.get("inference", {}).get("reuse_signal", {}).get("threshold", 0.0),
         "compose_gamma": cfg.get("inference", {}).get("compose_gamma", 0.0),
-        "llada21_use_block_diffusion": bool(cfg.get("inference", {}).get("llada21_official", {}).get("use_block_diffusion", False)),
-        "llada21_threshold": cfg.get("inference", {}).get("llada21_official", {}).get("threshold"),
-        "llada21_editing_threshold": cfg.get("inference", {}).get("llada21_official", {}).get("editing_threshold"),
-        "llada21_max_post_steps": cfg.get("inference", {}).get("llada21_official", {}).get("max_post_steps"),
-        "llada21_enable_mbe": bool(cfg.get("inference", {}).get("llada21_official", {}).get("enable_mbe", False)),
+        "llada21_use_block_diffusion": bool(llada_speed["use_block_diffusion"]),
+        "llada21_speed_threshold": llada_speed["threshold"],
+        "llada21_speed_editing_threshold": llada_speed["editing_threshold"],
+        "llada21_quality_threshold": llada_quality["threshold"],
+        "llada21_quality_editing_threshold": llada_quality["editing_threshold"],
+        "llada21_max_post_steps": llada_speed["max_post_steps"],
+        "llada21_enable_mbe": bool(llada_speed["enable_mbe"]),
+        "llada21_gen_length": llada_speed["gen_length"],
+        "llada21_eos_early_stop": bool(llada_speed["eos_early_stop"]),
         "candidate_policy": cfg.get("inference", {}).get("positional_cache", {}).get("candidate_policy", "learned_topb"),
         "positional_cache_enabled": bool(cfg.get("inference", {}).get("positional_cache", {}).get("enabled", False)),
         "positional_cache_horizon": int(cfg.get("inference", {}).get("positional_cache", {}).get("horizon", 4)),
