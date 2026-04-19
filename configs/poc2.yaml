@@ -86,6 +86,7 @@ data:
   eval_split: "test"
   use_chat_template: "auto"
   math_prompt_style: "auto"
+  gsm8k_num_fewshot: 0
   eval_max_samples: 100
   max_prompt_len: 512
   max_answer_len: 256
