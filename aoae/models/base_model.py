@@ -177,10 +177,10 @@ def _init_vllm_distributed(tp_size: int = 1):
         if os.environ.get("MASTER_ADDR") == "localhost":
             os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ.setdefault("NCCL_SOCKET_FAMILY", "AF_INET")
-        
+
         torch.distributed.init_process_group(
-            backend="nccl", 
-            world_size=tp_size, 
+            backend="nccl",
+            world_size=tp_size,
             rank=int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0"))),
         )
 

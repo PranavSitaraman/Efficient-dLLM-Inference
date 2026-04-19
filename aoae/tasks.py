@@ -12,6 +12,14 @@ _NUMERIC_RE = re.compile(
     r"[-+]?(?:\d+\s*/\s*\d+|(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?)"
 )
 _GSM8K_OFFICIAL_ANS_RE = re.compile(r"#### (\-?[0-9\.\,]+)")
+_GSM8K_HASH_LINE_RE = re.compile(r"(?im)^####\s*(.+)$")
+_GSM8K_ANSWER_LINE_RES = (
+    re.compile(r"(?im)(?:final answer|final|answer|result)\s*[:=]\s*([^\n]+)"),
+    re.compile(r"(?im)(?:the answer is|therefore,? the answer is|so the answer is)\s+([^\n]+)"),
+)
+_GSM8K_STANDALONE_ANSWER_HEADING_RE = re.compile(
+    r"(?im)^\s*(?:[#>*-]+\s*)*(?:final answer|final|answer|result)\s*[:=]\s*$"
+)
 _GSM8K_INVALID_ANS = "[invalid]"
 
 
@@ -242,6 +250,13 @@ def _extract_numeric_candidate(text: str) -> Optional[str]:
     return _normalize_answer_text(matches[-1])
 
 
+def _extract_first_numeric_candidate(text: str) -> Optional[str]:
+    matches = _NUMERIC_RE.findall(text or "")
+    if not matches:
+        return None
+    return _normalize_answer_text(matches[0])
+
+
 def _parse_numeric_answer(value: str) -> Optional[float]:
     normalized = _normalize_answer_text(value)
     if not normalized:
@@ -310,6 +325,130 @@ def check_gsm8k_correctness_official(generated: str, reference: str) -> bool:
     if gold == _GSM8K_INVALID_ANS:
         return False
     return extract_gsm8k_official_answer(generated) == gold
+
+
+def _normalize_gsm8k_llada_answer(value: str) -> str:
+    normalized = (value or "").strip()
+    normalized = normalized.replace(",", "")
+    normalized = normalized.replace("$", "")
+    normalized = normalized.replace("+", "")
+    normalized = normalized.strip().strip("[](){}<>")
+    normalized = normalized.rstrip(".")
+    normalized = re.sub(r"(?<=\d)\.0+(?!\d)", "", normalized)
+    return normalized.strip()
+
+
+def _gsm8k_allows_leading_scalar_prefix(prefix: str) -> bool:
+    cleaned = prefix or ""
+    cleaned = re.sub(r"<[^>]+>", "", cleaned)
+    cleaned = cleaned.replace(r"\boxed{", "")
+    cleaned = cleaned.replace(r"\(", "")
+    cleaned = cleaned.replace(r"\[", "")
+    cleaned = re.sub(r"[\s*_`~#$>:;,\-={}\[\]()\"']+", "", cleaned)
+    return cleaned == ""
+
+
+def _extract_leading_numeric_candidate(text: str) -> Optional[str]:
+    match = _NUMERIC_RE.search(text or "")
+    if not match:
+        return None
+    prefix = (text or "")[: match.start()]
+    if not _gsm8k_allows_leading_scalar_prefix(prefix):
+        return None
+    return _normalize_answer_text(match.group(0))
+
+
+def _extract_gsm8k_llada_from_line(line: str) -> str:
+    candidate = _extract_leading_numeric_candidate(line)
+    if candidate is None:
+        return _GSM8K_INVALID_ANS
+    return _normalize_gsm8k_llada_answer(candidate)
+
+
+def _extract_gsm8k_llada_flexible_answer(text: str) -> str:
+    candidate = _extract_numeric_candidate(text)
+    if candidate is None:
+        return _GSM8K_INVALID_ANS
+    return _normalize_gsm8k_llada_answer(candidate)
+
+
+def _extract_gsm8k_llada_multiline_answer(text: str) -> str:
+    lines = (text or "").splitlines()
+    for idx, line in enumerate(lines):
+        if not _GSM8K_STANDALONE_ANSWER_HEADING_RE.match(line):
+            continue
+        for next_line in lines[idx + 1 :]:
+            stripped = next_line.strip()
+            if not stripped:
+                continue
+            return _extract_gsm8k_llada_from_line(stripped)
+    return _GSM8K_INVALID_ANS
+
+
+def extract_gsm8k_llada_answer(text: str) -> str:
+    """
+    GSM8K extractor tuned for LLaDA-style prose answers.
+
+    It prefers explicit final-answer markers (`####`, `\\boxed{}`, answer lines)
+    and only falls back to a broad last-number heuristic when no explicit cue is
+    present. If an explicit answer cue exists but the associated text contains
+    multiple prose numbers without a leading scalar answer, this extractor marks
+    the sample invalid instead of guessing between first/last numeric tokens.
+    """
+    saw_explicit_answer_cue = False
+
+    strict = _GSM8K_OFFICIAL_ANS_RE.search(text or "")
+    if strict:
+        return _normalize_gsm8k_llada_answer(strict.group(1))
+
+    boxed = re.findall(r"\\boxed\{([^}]+)\}", text or "")
+    if boxed:
+        saw_explicit_answer_cue = True
+        candidate = _extract_gsm8k_llada_from_line(boxed[-1])
+        if candidate != _GSM8K_INVALID_ANS:
+            return candidate
+
+    hash_lines = _GSM8K_HASH_LINE_RE.findall(text or "")
+    if hash_lines:
+        saw_explicit_answer_cue = True
+        candidate = _extract_gsm8k_llada_from_line(hash_lines[-1])
+        if candidate != _GSM8K_INVALID_ANS:
+            return candidate
+
+    for pattern in _GSM8K_ANSWER_LINE_RES:
+        matches = pattern.findall(text or "")
+        if matches:
+            saw_explicit_answer_cue = True
+            candidate = _extract_gsm8k_llada_from_line(matches[-1])
+            if candidate != _GSM8K_INVALID_ANS:
+                return candidate
+
+    multiline_candidate = _extract_gsm8k_llada_multiline_answer(text)
+    if multiline_candidate != _GSM8K_INVALID_ANS:
+        return multiline_candidate
+    if _GSM8K_STANDALONE_ANSWER_HEADING_RE.search(text or ""):
+        saw_explicit_answer_cue = True
+
+    if saw_explicit_answer_cue:
+        return _GSM8K_INVALID_ANS
+
+    return _extract_gsm8k_llada_flexible_answer(text)
+
+
+def extract_gsm8k_llada_reference(text: str) -> str:
+    """Extract GSM8K references with the same normalization as predictions."""
+    strict = _GSM8K_OFFICIAL_ANS_RE.search(text or "")
+    if strict:
+        return _normalize_gsm8k_llada_answer(strict.group(1))
+    return _extract_gsm8k_llada_flexible_answer(text)
+
+
+def check_gsm8k_correctness_llada(generated: str, reference: str) -> bool:
+    """LLaDA-friendly GSM8K exact-match correctness with flexible extraction."""
+    gold = extract_gsm8k_llada_reference(reference)
+    if gold == _GSM8K_INVALID_ANS:
+        return False
+    return extract_gsm8k_llada_answer(generated) == gold
 
 
 def check_math_correctness(generated: str, reference: str) -> bool:

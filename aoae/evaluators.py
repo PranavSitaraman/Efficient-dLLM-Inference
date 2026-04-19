@@ -14,10 +14,11 @@ from typing import Any, Dict, Optional
 
 from .code_eval import evaluate_code_sample
 from .tasks import (
-    check_gsm8k_correctness_official,
+    check_gsm8k_correctness_llada,
     check_math_correctness,
     extract_answer,
-    extract_gsm8k_official_answer,
+    extract_gsm8k_llada_answer,
+    extract_gsm8k_llada_reference,
     is_gsm8k_dataset,
 )
 
@@ -43,9 +44,9 @@ class MathEvaluator(BaseEvaluator):
 
     def __init__(self, cfg: Dict[str, Any]):
         self.eval_dataset = str(cfg.get("data", {}).get("eval_dataset", "") or "")
-        self.uses_gsm8k_official = is_gsm8k_dataset(cfg)
-        if self.uses_gsm8k_official:
-            self.evaluator_name = "gsm8k_official_openai"
+        self.uses_gsm8k_llada = is_gsm8k_dataset(cfg)
+        if self.uses_gsm8k_llada:
+            self.evaluator_name = "gsm8k_llada_flexible"
         else:
             self.evaluator_name = "math_heuristic_fallback"
             warnings.warn(
@@ -57,13 +58,13 @@ class MathEvaluator(BaseEvaluator):
 
     def evaluate(self, generated: str, reference: str, sample: Optional[Dict[str, Any]] = None) -> EvalDecision:
         del sample
-        if self.uses_gsm8k_official:
-            pred = extract_gsm8k_official_answer(generated)
-            gold = extract_gsm8k_official_answer(reference)
-            ok = check_gsm8k_correctness_official(generated, reference)
+        if self.uses_gsm8k_llada:
+            pred = extract_gsm8k_llada_answer(generated)
+            gold = extract_gsm8k_llada_reference(reference)
+            ok = check_gsm8k_correctness_llada(generated, reference)
             return EvalDecision(
                 correct=bool(ok),
-                detail="gsm8k_official_openai",
+                detail="gsm8k_llada_flexible",
                 extracted_prediction=pred,
                 extracted_reference=gold,
             )
@@ -116,7 +117,7 @@ class CodeEvaluator(BaseEvaluator):
 def describe_evaluator(cfg: Dict[str, Any]) -> str:
     task_type = str(cfg.get("evaluation", {}).get("task_type", "math")).lower()
     if task_type == "math":
-        return "gsm8k_official_openai" if is_gsm8k_dataset(cfg) else "math_heuristic_fallback"
+        return "gsm8k_llada_flexible" if is_gsm8k_dataset(cfg) else "math_heuristic_fallback"
     if task_type == "code":
         return "code_exec_or_string_match"
     return f"unknown:{task_type}"

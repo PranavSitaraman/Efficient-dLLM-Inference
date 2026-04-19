@@ -168,6 +168,71 @@ class TestHFCompatibility:
                 modeling_rope_utils.ROPE_INIT_FUNCTIONS["default"] = original_default
 
 
+class TestVllmDistributedInit:
+    def test_init_vllm_distributed_uses_vllm_env_init_without_manual_process_group(self, monkeypatch):
+        import aoae.models.base_model as mod
+
+        calls = []
+        fake_vllm_dist = types.SimpleNamespace(
+            init_distributed_environment=lambda world_size, rank, init_method, local_rank, backend: calls.append(
+                ("env", world_size, rank, init_method, local_rank, backend)
+            ),
+            initialize_model_parallel=lambda tp_size, backend="nccl": calls.append(
+                ("mp", tp_size, backend)
+            ),
+            model_parallel_is_initialized=lambda: False,
+        )
+        fake_vllm = types.ModuleType("vllm")
+        fake_vllm.distributed = fake_vllm_dist
+        monkeypatch.setitem(sys.modules, "vllm", fake_vllm)
+
+        monkeypatch.setenv("RANK", "1")
+        monkeypatch.setenv("LOCAL_RANK", "1")
+        monkeypatch.setenv("WORLD_SIZE", "2")
+        monkeypatch.setattr(mod.torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(mod.torch.distributed, "is_initialized", lambda: False)
+        monkeypatch.setattr(
+            mod.torch.distributed,
+            "init_process_group",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("manual init_process_group should not be used for vLLM")
+            ),
+        )
+
+        mod._init_vllm_distributed(2)
+
+        assert calls == [
+            ("env", 2, 1, "env://", 1, "nccl"),
+            ("mp", 2, "nccl"),
+        ]
+
+    def test_init_vllm_distributed_reuses_existing_process_group(self, monkeypatch):
+        import aoae.models.base_model as mod
+
+        calls = []
+        fake_vllm_dist = types.SimpleNamespace(
+            init_distributed_environment=lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("existing distributed env should be reused")
+            ),
+            initialize_model_parallel=lambda tp_size, backend="nccl": calls.append(
+                ("mp", tp_size, backend)
+            ),
+            model_parallel_is_initialized=lambda: False,
+        )
+        fake_vllm = types.ModuleType("vllm")
+        fake_vllm.distributed = fake_vllm_dist
+        monkeypatch.setitem(sys.modules, "vllm", fake_vllm)
+
+        monkeypatch.setattr(mod.torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(mod.torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(mod.torch.distributed, "get_world_size", lambda: 2)
+        monkeypatch.setattr(mod.torch.distributed, "get_rank", lambda: 0)
+
+        mod._init_vllm_distributed(2)
+
+        assert calls == [("mp", 2, "nccl")]
+
+
 class TestEvalExtraction:
     def test_extract_eval_prompt_reference_supports_math_schema(self):
         from aoae.evaluate import _extract_eval_prompt_reference
@@ -252,18 +317,16 @@ class TestEvalExtraction:
         decoded = decode_generated_tokens(tok, [5, 99, 6, 2, 7, 8], mask_token_id=99)
         assert decoded == "5 6"
 
-    def test_gsm8k_official_extractor_matches_openai_semantics(self):
-        from aoae.tasks import extract_gsm8k_official_answer
+    def test_gsm8k_llada_extractor_handles_strict_and_prose_answers(self):
+        from aoae.tasks import extract_gsm8k_llada_answer
 
-        assert extract_gsm8k_official_answer("Reasoning\n#### 42,000") == "42000"
-        assert extract_gsm8k_official_answer("Reasoning\n#### -3.5") == "-3.5"
+        assert extract_gsm8k_llada_answer("Reasoning\n#### 42,000") == "42000"
+        assert extract_gsm8k_llada_answer("Reasoning\n#### -3.5") == "-3.5"
+        assert extract_gsm8k_llada_answer("Answer: Claire will eat 7 dozens of eggs in 4 weeks.") == "7"
+        assert extract_gsm8k_llada_answer("#### <23>") == "23"
+        assert extract_gsm8k_llada_answer("#### <answer>243</answer>") == "243"
 
-    def test_gsm8k_official_extractor_requires_hashes(self):
-        from aoae.tasks import extract_gsm8k_official_answer
-
-        assert extract_gsm8k_official_answer("Answer: 7 dozens in 4 weeks.") == "[invalid]"
-
-    def test_math_evaluator_uses_official_gsm8k_rule(self):
+    def test_math_evaluator_uses_llada_gsm8k_rule(self):
         from aoae.evaluators import build_evaluator
 
         cfg = {
@@ -276,9 +339,9 @@ class TestEvalExtraction:
             "#### 7",
         )
 
-        assert decision.correct is False
-        assert decision.detail == "gsm8k_official_openai"
-        assert decision.extracted_prediction == "[invalid]"
+        assert decision.correct is True
+        assert decision.detail == "gsm8k_llada_flexible"
+        assert decision.extracted_prediction == "7"
         assert decision.extracted_reference == "7"
 
 
