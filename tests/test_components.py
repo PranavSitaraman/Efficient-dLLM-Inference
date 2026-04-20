@@ -2473,6 +2473,247 @@ class TestAOAESpeculativeInferenceLoop:
         assert traj.frontier_accept_rate == pytest.approx(2 / 3)
         assert traj.frontier_reject_rate == pytest.approx(1 / 3)
 
+    def test_recompute_after_reject_false_does_not_rerun_verifier(self):
+        from aoae.speculative_inference import speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "cache": {
+                "enabled": True,
+                "kspec_skip": False,
+                "stable_kv_cache": False,
+                "prefix_kv_cache": False,
+            },
+            "grpo": {"thrash_age_decay": 0.0},
+            "inference": {
+                "steps": 2,
+                "gen_length": 1,
+                "temperature": 0.0,
+                "fallback_unmask": False,
+                "disable_remask": False,
+                "compose_gamma": 0.0,
+                "primary_agree_threshold": 0.0,
+                "force_primary_first_last": False,
+                "aux_cache_reset_threshold": 1.1,
+                "verifier_schedule": {
+                    "mode": "candidate_budget",
+                    "draft_token_budget": 1,
+                    "min_draft_microsteps": 1,
+                    "max_draft_microsteps": 2,
+                    "force_first_last": False,
+                },
+                "verifier": {
+                    "acceptance_mode": "argmax_match",
+                    "rejection_action": "remask",
+                    "recompute_after_reject": False,
+                },
+                "positional_cache": {"enabled": False},
+                "reuse_signal": {"method": "argmax_match"},
+            },
+            "analysis": {"track_kv_dynamics": False},
+        }
+
+        class DummyDualModel:
+            def __init__(self):
+                self.verifier_calls = 0
+
+            def auxiliary_forward(self, input_ids):
+                logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], 3)
+                logits[..., 0] = 5.0
+                return logits
+
+            def primary_forward(self, input_ids):
+                raise AssertionError("primary_forward is only needed for rejection recompute")
+
+            def dual_forward_resp(self, input_ids, resp_slice, need_hidden=False, need_all_hidden=False):
+                del need_hidden, need_all_hidden
+                self.verifier_calls += 1
+                primary_logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], 3)
+                primary_logits[..., 1] = 5.0
+                aux_logits = self.auxiliary_forward(input_ids)
+                return types.SimpleNamespace(
+                    primary_logits=primary_logits[:, resp_slice, :],
+                    auxiliary_logits=aux_logits[:, resp_slice, :],
+                    primary_hidden=None,
+                    primary_hidden_states=None,
+                )
+
+        class DraftThenStopPolicy:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(
+                self,
+                H_t,
+                mask_ind,
+                step_frac,
+                temperature=1.0,
+                confidence=None,
+                quality_scores=None,
+                agreement=None,
+                age_feature=None,
+                last_action_feature=None,
+            ):
+                del H_t, step_frac, temperature, confidence, quality_scores, agreement
+                del age_feature, last_action_feature
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return {
+                    "unmask_probs": mask_ind.float(),
+                    "remask_probs": zeros,
+                    "cache_probs": zeros,
+                    "access_probs": zeros,
+                    "access_logits": zeros,
+                }
+
+            def sample_actions(self, policy_out, mask_ind):
+                del policy_out
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                self.calls += 1
+                u_t = mask_ind.float() if self.calls == 1 else zeros
+                return {"u_t": u_t, "r_t": zeros, "kappa_t": zeros, "q_t": zeros}
+
+        class DummySoftMask:
+            def __call__(self, resp_logits, mask_ind, step_frac):
+                del step_frac
+                hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
+                confidence = torch.ones_like(mask_ind, dtype=torch.float32)
+                entropy = torch.zeros_like(confidence)
+                weighted = torch.zeros_like(hidden)
+                return hidden, confidence, entropy, weighted
+
+        dual_model = DummyDualModel()
+        output, traj = speculative_inference(
+            dual_model=dual_model,
+            policy=DraftThenStopPolicy(),
+            soft_mask_module=DummySoftMask(),
+            prism_adapter=None,
+            prompt_ids=torch.tensor([[1]], dtype=torch.long),
+            cfg=cfg,
+            collect_stats=True,
+        )
+
+        assert dual_model.verifier_calls == 1
+        assert traj.draft_rejects == 1
+        assert output[0, -1].item() == MASK_ID
+
+    def test_rejection_action_keep_evicts_without_remasking_or_stable_commit(self):
+        from aoae.speculative_inference import speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "cache": {
+                "enabled": True,
+                "kspec_skip": False,
+                "stable_kv_cache": False,
+                "prefix_kv_cache": False,
+            },
+            "grpo": {"thrash_age_decay": 0.0},
+            "inference": {
+                "steps": 2,
+                "gen_length": 1,
+                "temperature": 0.0,
+                "fallback_unmask": False,
+                "disable_remask": False,
+                "compose_gamma": 0.0,
+                "primary_agree_threshold": 0.0,
+                "force_primary_first_last": False,
+                "aux_cache_reset_threshold": 1.1,
+                "verifier_schedule": {
+                    "mode": "candidate_budget",
+                    "draft_token_budget": 1,
+                    "min_draft_microsteps": 1,
+                    "max_draft_microsteps": 2,
+                    "force_first_last": False,
+                },
+                "verifier": {
+                    "acceptance_mode": "argmax_match",
+                    "rejection_action": "keep",
+                    "recompute_after_reject": False,
+                },
+                "positional_cache": {"enabled": False},
+                "reuse_signal": {"method": "argmax_match"},
+            },
+            "analysis": {"track_kv_dynamics": False},
+        }
+
+        class DummyDualModel:
+            def auxiliary_forward(self, input_ids):
+                logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], 3)
+                logits[..., 0] = 5.0
+                return logits
+
+            def dual_forward_resp(self, input_ids, resp_slice, need_hidden=False, need_all_hidden=False):
+                del need_hidden, need_all_hidden
+                primary_logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], 3)
+                primary_logits[..., 1] = 5.0
+                aux_logits = self.auxiliary_forward(input_ids)
+                return types.SimpleNamespace(
+                    primary_logits=primary_logits[:, resp_slice, :],
+                    auxiliary_logits=aux_logits[:, resp_slice, :],
+                    primary_hidden=None,
+                    primary_hidden_states=None,
+                )
+
+        class DraftThenCommitPolicy:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(
+                self,
+                H_t,
+                mask_ind,
+                step_frac,
+                temperature=1.0,
+                confidence=None,
+                quality_scores=None,
+                agreement=None,
+                age_feature=None,
+                last_action_feature=None,
+            ):
+                del H_t, step_frac, temperature, confidence, quality_scores, agreement
+                del age_feature, last_action_feature
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                ones = torch.ones_like(zeros)
+                return {
+                    "unmask_probs": ones * mask_ind.float(),
+                    "remask_probs": zeros,
+                    "cache_probs": ones,
+                    "access_probs": ones,
+                    "access_logits": ones,
+                }
+
+            def sample_actions(self, policy_out, mask_ind):
+                del policy_out
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                ones = torch.ones_like(zeros)
+                self.calls += 1
+                if self.calls == 1:
+                    return {"u_t": mask_ind.float(), "r_t": zeros, "kappa_t": zeros, "q_t": zeros}
+                return {"u_t": zeros, "r_t": zeros, "kappa_t": ones, "q_t": ones}
+
+        class DummySoftMask:
+            def __call__(self, resp_logits, mask_ind, step_frac):
+                del step_frac
+                hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
+                confidence = torch.ones_like(mask_ind, dtype=torch.float32)
+                entropy = torch.zeros_like(confidence)
+                weighted = torch.zeros_like(hidden)
+                return hidden, confidence, entropy, weighted
+
+        output, traj = speculative_inference(
+            dual_model=DummyDualModel(),
+            policy=DraftThenCommitPolicy(),
+            soft_mask_module=DummySoftMask(),
+            prism_adapter=None,
+            prompt_ids=torch.tensor([[1]], dtype=torch.long),
+            cfg=cfg,
+            collect_stats=True,
+        )
+
+        assert traj.draft_rejects == 1
+        assert output[0, -1].item() == 0
+        assert traj.total_stable_commits == 0
+
     def test_aux_only_steps_do_not_remask_or_commit_stable_cache(self, monkeypatch):
         from aoae.speculative_inference import speculative_inference
 

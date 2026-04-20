@@ -56,4 +56,6 @@ def test_paper_config_enables_full_aoae_stack():
     assert cfg["inference"]["verifier_schedule"]["mode"] == "candidate_budget"
     assert cfg["inference"]["verifier_schedule"]["draft_token_budget"] == 12
     assert cfg["inference"]["verifier"]["acceptance_mode"] == "argmax_match"
+    assert cfg["inference"]["verifier"]["rejection_action"] == "remask"
+    assert cfg["inference"]["verifier"]["recompute_after_reject"] is True
     assert cfg["inference"]["drafter"]["decode_mode"] == "s_mode"

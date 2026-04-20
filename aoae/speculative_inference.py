@@ -523,6 +523,14 @@ def speculative_inference(
     primary_agree_threshold = float(ic.get("primary_agree_threshold", 0.0))
     force_primary_endpoints = bool(schedule_cfg.get("force_first_last", True))
     aux_cache_reset_threshold = float(ic.get("aux_cache_reset_threshold", 1.1))
+    verifier_cfg = ic.get("verifier", {})
+    rejection_action = str(verifier_cfg.get("rejection_action", "remask")).lower()
+    recompute_after_reject = bool(verifier_cfg.get("recompute_after_reject", True))
+    if rejection_action not in ("remask", "mask", "keep", "none", "evict_only"):
+        raise ValueError(
+            f"Unsupported verifier.rejection_action={rejection_action!r}. "
+            "Use remask or keep/evict_only."
+        )
     drafter_cfg = ic.get("drafter", {})
     aux_compute_ratio = float(drafter_cfg.get("aux_compute_ratio", ic.get("aux_compute_ratio", 0.35)))
     _maybe_log_speculative_rollout_config(
@@ -657,7 +665,6 @@ def speculative_inference(
 
         # --- PRISM quality scores ---
         q_scores = None
-        verifier_cfg = ic.get("verifier", {})
         _use_prism_score = bool(verifier_cfg.get("use_prism_score", prism_adapter is not None))
         if _use_prism_score and prism_adapter is not None and _pri_hidden_for_prism is not None:
             with torch.no_grad():
@@ -685,28 +692,38 @@ def speculative_inference(
 
                 if frontier_reject_mask.any():
                     resp_tokens = y[:, resp_slice].clone()
-                    resp_tokens[frontier_reject_mask] = mask_id
-                    y = y.clone()
-                    y[:, resp_slice] = resp_tokens
-                    mask_ind = (resp_tokens == mask_id)
                     if cache_mgr is not None:
                         _stable_invalidations += int(
                             (cache_mgr.stable.get_cached_mask() & frontier_reject_mask).sum().item()
                         )
                         cache_mgr.invalidate(frontier_reject_mask.float())
 
-                    # Policy state must be computed on the corrected sequence.
-                    # A rejected token has been removed, so rerun the verifier
-                    # on the remasked state rather than using logits conditioned
-                    # on the stale draft.
-                    aux_logits = _run_auxiliary_resp(y)
-                    _aux_units += aux_compute_ratio
-                    resp_logits, _pri_hidden_for_prism, _pri_hidden_states_for_tracker = _run_primary_full_resp(y)
-                    _verifier_units += 1.0
-                    primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
-                    if _use_prism_score and prism_adapter is not None and _pri_hidden_for_prism is not None:
-                        with torch.no_grad():
-                            q_scores = prism_adapter(_pri_hidden_for_prism.float())
+                    if rejection_action in ("remask", "mask"):
+                        resp_tokens[frontier_reject_mask] = mask_id
+                        y = y.clone()
+                        y[:, resp_slice] = resp_tokens
+                        mask_ind = (resp_tokens == mask_id)
+
+                        if recompute_after_reject:
+                            # Policy state should normally be computed on the
+                            # corrected sequence. A rejected token has been
+                            # removed, so rerun the verifier on the remasked
+                            # state instead of using logits conditioned on the
+                            # stale draft.
+                            aux_logits = _run_auxiliary_resp(y)
+                            _aux_units += aux_compute_ratio
+                            resp_logits, _pri_hidden_for_prism, _pri_hidden_states_for_tracker = _run_primary_full_resp(y)
+                            _verifier_units += 1.0
+                            primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
+                            if _use_prism_score and prism_adapter is not None and _pri_hidden_for_prism is not None:
+                                with torch.no_grad():
+                                    q_scores = prism_adapter(_pri_hidden_for_prism.float())
+                    else:
+                        # Ablation mode: leave rejected draft tokens in the
+                        # sequence but still mark their KV as unusable. They are
+                        # excluded from K_stable commits below.
+                        y = y.clone()
+                        y[:, resp_slice] = resp_tokens
 
                 rejected_total = float(frontier_reject_mask.float().sum().item())
                 frontier_total = float(frontier_before.float().sum().item())
@@ -948,6 +965,7 @@ def speculative_inference(
                 * q_exec
                 * (resp_tokens != mask_id).float()
                 * (1.0 - draft_frontier.mask.float())
+                * (1.0 - frontier_reject_mask.float())
             )
             stable_before = cache_mgr.stable.get_cached_mask().clone()
             cache_mgr.step_stable(stable_commit_mask, r_t)
