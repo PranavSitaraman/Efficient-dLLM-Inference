@@ -3,6 +3,3 @@ __pycache__/
 *.pyc
 *.egg-info/
 external/
-logs/
-outputs/
-results/
