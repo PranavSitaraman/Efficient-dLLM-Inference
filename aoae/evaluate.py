@@ -1647,7 +1647,7 @@ def _build_run_metadata(
 
 
 def _append_manifest(metadata: Dict[str, Any], all_results: List[EvalResult]) -> str:
-    manifest_path = os.path.join("results", "experiment_manifest.jsonl")
+    manifest_path = os.path.join("outputs", "experiment_manifest.jsonl")
     os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
 
     run_id = (

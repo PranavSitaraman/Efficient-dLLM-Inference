@@ -61,8 +61,8 @@ def test_comparison_table_main(tmp_path):
     run_dir = tmp_path / "outputs" / "demo"
     _write_eval_artifacts(run_dir)
 
-    csv_path = tmp_path / "results" / "comparison.csv"
-    md_path = tmp_path / "results" / "comparison.md"
+    csv_path = tmp_path / "outputs" / "comparison.csv"
+    md_path = tmp_path / "outputs" / "comparison.md"
     comparison_table_main(
         [
             "--glob",
@@ -103,8 +103,8 @@ def test_kv_summary_main(tmp_path):
         )
     )
 
-    csv_path = tmp_path / "results" / "kv.csv"
-    md_path = tmp_path / "results" / "kv.md"
+    csv_path = tmp_path / "outputs" / "kv.csv"
+    md_path = tmp_path / "outputs" / "kv.md"
     kv_summary_main(
         [
             "--glob",

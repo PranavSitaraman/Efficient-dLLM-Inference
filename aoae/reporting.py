@@ -148,8 +148,8 @@ def load_comparison_rows(eval_path: Path) -> List[Dict[str, Any]]:
 def comparison_table_main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="Build a comparison table from eval artifacts.")
     parser.add_argument("--glob", default="outputs/**/eval_results.json", help="Glob for eval result files.")
-    parser.add_argument("--csv", default="results/comparison_table.csv", help="Output CSV path.")
-    parser.add_argument("--md", default="results/comparison_table.md", help="Output Markdown path.")
+    parser.add_argument("--csv", default="outputs/comparison_table.csv", help="Output CSV path.")
+    parser.add_argument("--md", default="outputs/comparison_table.md", help="Output Markdown path.")
     args = parser.parse_args(argv)
 
     eval_files = sorted(Path(path) for path in glob.glob(args.glob, recursive=True))
@@ -173,8 +173,8 @@ def comparison_table_main(argv: Optional[List[str]] = None) -> None:
 def kv_summary_main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="Summarize kv_dynamics_summary.json files.")
     parser.add_argument("--glob", default="outputs/**/kv_dynamics_summary.json")
-    parser.add_argument("--csv", default="results/kv_dynamics_table.csv")
-    parser.add_argument("--md", default="results/kv_dynamics_table.md")
+    parser.add_argument("--csv", default="outputs/kv_dynamics_table.csv")
+    parser.add_argument("--md", default="outputs/kv_dynamics_table.md")
     args = parser.parse_args(argv)
 
     files = sorted(Path(path) for path in glob.glob(args.glob, recursive=True))

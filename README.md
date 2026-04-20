@@ -34,7 +34,7 @@ Efficient-dLLM-Inference/
 └── setup.sh              # Environment bootstrap
 ```
 
-Generated artifacts live in `outputs/`, `logs/`, and `results/` and are gitignored.
+Generated artifacts live in `outputs/` and are gitignored.
 
 ## Canonical configs
 
@@ -211,10 +211,10 @@ Paper/POC workflows additionally write sweep summaries under:
 
 Aggregated tables write to:
 
-- `results/comparison_table.csv`
-- `results/comparison_table.md`
-- `results/kv_dynamics_table.csv`
-- `results/kv_dynamics_table.md`
+- `outputs/comparison_table.csv`
+- `outputs/comparison_table.md`
+- `outputs/kv_dynamics_table.csv`
+- `outputs/kv_dynamics_table.md`
 
 ## GRPO Training System
 
