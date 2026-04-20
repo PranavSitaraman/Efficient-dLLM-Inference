@@ -1,6 +1,6 @@
 {
   "schema_version": "aoae_eval_v2",
-  "created_at_utc": "2026-04-20T01:26:46.701044+00:00",
+  "created_at_utc": "2026-04-20T01:57:17.715905+00:00",
   "run_name": "default",
   "output_dir": "outputs/default/",
   "results_path": "outputs/default/eval_results.json",
@@ -15,7 +15,7 @@
   "seed": 42,
   "deterministic": false,
   "task_type": "math",
-  "task_evaluator": "gsm8k_llada_flexible",
+  "task_evaluator": "gsm8k_official_openai",
   "baseline_methods_requested": null,
   "baseline_methods_effective": [
     "llada21_speed_mode",
@@ -65,8 +65,8 @@
   "saved_predictions": 0,
   "max_saved_predictions": 0,
   "num_results": 3,
-  "host": "holygpu8a17304.rc.fas.harvard.edu",
-  "git_commit": "e2fd184aad020b0e9eec2ee776acce3399dc4169",
+  "host": "holygpu8a17202.rc.fas.harvard.edu",
+  "git_commit": "1b9c7ade705294840f31b8a22be07d857ebd38cb",
   "torch_version": "2.9.0+cu128",
   "vllm_version": "0.11.2",
   "transformers_version": "4.57.1",

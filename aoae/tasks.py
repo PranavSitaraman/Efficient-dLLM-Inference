@@ -29,8 +29,9 @@ _RAW_STYLE_VALUES = {"raw", "plain", "none", "off", "false", "0"}
 _GSM8K_STYLE_VALUES = {"gsm8k", "cot", "math_cot", "1", "true", "on"}
 
 _GSM8K_PROMPT_SUFFIX = (
-    "Solve this carefully. Show short reasoning, then end with one final line:\n"
-    "#### <answer>"
+    "Solve this carefully. Please reason step by step, then end with one final line with your answer in the format:\n"
+    "#### (your numerical answer) \n"
+    "Example: Claire will eat 7 dozens of eggs.\n #### 7"
 )
 
 

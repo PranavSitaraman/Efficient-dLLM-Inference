@@ -299,7 +299,8 @@ class TestEvalExtraction:
                 "evaluation": {"task_type": "math"},
             },
         )
-        assert "#### <answer>" in prompt_text
+        assert "#### (your numerical answer)" in prompt_text
+        assert "Please reason step by step" in prompt_text
         assert prompt_text.startswith(question)
         assert add_special_tokens is True
 
@@ -326,7 +327,7 @@ class TestEvalExtraction:
         assert extract_gsm8k_llada_answer("#### <23>") == "23"
         assert extract_gsm8k_llada_answer("#### <answer>243</answer>") == "243"
 
-    def test_math_evaluator_uses_llada_gsm8k_rule(self):
+    def test_math_evaluator_uses_official_gsm8k_rule(self):
         from aoae.evaluators import build_evaluator
 
         cfg = {
@@ -335,12 +336,12 @@ class TestEvalExtraction:
         }
         evaluator = build_evaluator(cfg)
         decision = evaluator.evaluate(
-            "Answer: Claire will eat 7 dozens of eggs in 4 weeks.",
+            "Claire will eat 7 dozens of eggs in 4 weeks.\n#### 7",
             "#### 7",
         )
 
         assert decision.correct is True
-        assert decision.detail == "gsm8k_llada_flexible"
+        assert decision.detail == "gsm8k_official_openai"
         assert decision.extracted_prediction == "7"
         assert decision.extracted_reference == "7"
 
