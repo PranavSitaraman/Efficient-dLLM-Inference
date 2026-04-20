@@ -95,8 +95,8 @@ grpo:
   rollout_gen_length: 128          # training-time decode budget; eval remains 256
 
 inference:
-  steps: 32
-  gen_length: 256
+  steps: 64
+  gen_length: 512
   temperature: 0.0
   fallback_unmask: true
   max_unmask_fraction_per_step: 0.125
