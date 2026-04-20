@@ -1,7 +1,7 @@
 {
   "stage": "prism",
-  "output_dir": "outputs/default/",
-  "artifact_path": "outputs/default/prism_adapter.pt",
+  "output_dir": "outputs/llada21_hard/",
+  "artifact_path": "outputs/llada21_hard/prism_adapter.pt",
   "train_dataset": "nvidia/OpenMathInstruct-2",
   "train_split": "train",
   "requested_train_samples": 10000,

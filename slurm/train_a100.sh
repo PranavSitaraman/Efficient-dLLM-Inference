@@ -14,14 +14,14 @@
 # A100-targeted variant of slurm/train.sh.
 # Usage: sbatch slurm/train_a100.sh <stage> <config> [resume]
 #   stage  : prism | grpo | pipeline
-#   config : path to YAML config (default: configs/default.yaml)
+#   config : path to YAML config (default: configs/llada21_hard.yaml)
 #   resume : checkpoint path or 'auto' or 'fresh' (default: auto)
 #
-# GRPO training with HF backend runs single-GPU (tp_size not set in default.yaml).
+# GRPO training with HF backend runs single-GPU (tp_size not set in llada21_hard.yaml).
 # For H100 nodes, use slurm/train.sh (partition=kempner_h100).
 #
 # Override partition/account at submission time:
-#   sbatch --partition=<p> --account=<a> slurm/train_a100.sh grpo configs/default.yaml fresh
+#   sbatch --partition=<p> --account=<a> slurm/train_a100.sh grpo configs/llada21_hard.yaml fresh
 
 set -euo pipefail
 
@@ -39,7 +39,7 @@ if [[ "$MASTER_ADDR" == "localhost" ]]; then
 fi
 
 STAGE="${1:-prism}"
-CONFIG="${2:-configs/default.yaml}"
+CONFIG="${2:-configs/llada21_hard.yaml}"
 RESUME="${3:-auto}"
 if [[ $# -ge 3 ]]; then
   shift 3

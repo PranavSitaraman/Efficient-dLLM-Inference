@@ -38,11 +38,13 @@ from .inference import aoae_inference, AOAETrajectory
 from .speculative_inference import speculative_inference, SpeculativeTrajectory
 from .tasks import (
     build_prompt,
-    check_math_correctness,
+    check_math_correctness,  # re-exported for legacy tests/scripts
     decode_generated_tokens,
-    extract_answer,
+    extract_answer,  # re-exported for legacy tests/scripts
     extract_prompt_and_reference,
 )
+from .evaluators import build_evaluator
+from .experiment_utils import parse_head_set
 from .runtime_checks import collect_runtime_info
 
 # Both trajectory types share the same reward-relevant attributes; Union lets
@@ -51,17 +53,9 @@ AnyTrajectory = Union[AOAETrajectory, SpeculativeTrajectory]
 _MAX_IMPORTANCE_LOG_RATIO = 20.0
 
 
-def _head_set(value: Any) -> Optional[set]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return {p.strip() for p in value.split(",") if p.strip()}
-    return {str(p).strip() for p in value if str(p).strip()}
-
-
 def _include_heads_for_logprob(cfg: dict) -> Optional[set]:
     gc = cfg.get("grpo", {})
-    return _head_set(gc.get("include_heads_in_logprob", gc.get("train_heads")))
+    return parseparse_head_set(gc.get("include_heads_in_logprob", gc.get("train_heads")))
 
 
 # ======================================================================
@@ -147,6 +141,22 @@ class _TrainingLogger:
 # Reward computation (Eq. reward from paper)
 # ======================================================================
 
+def _build_reward_evaluator(cfg: dict):
+    """Build a correctness evaluator for the rollout reference source.
+
+    Evaluation uses ``data.eval_dataset``.  GRPO rollouts are scored against
+    ``data.train_dataset`` references, which may have a different answer format
+    (for example OpenMathInstruct vs. GSM8K).  Reusing the eval dataset hint for
+    training would make non-GSM8K training references invalid under the GSM8K
+    official extractor.
+    """
+    reward_cfg = copy.deepcopy(cfg)
+    data_cfg = reward_cfg.setdefault("data", {})
+    train_dataset = data_cfg.get("train_dataset")
+    if train_dataset:
+        data_cfg["eval_dataset"] = train_dataset
+    return build_evaluator(reward_cfg)
+
 def compute_reward(
     generated_tokens: torch.Tensor,
     reference_answer: List[str],
@@ -198,6 +208,10 @@ def compute_reward(
     device = generated_tokens.device
 
     # --- Correctness term r(y*, y) ---
+    # Use the task evaluator associated with the rollout reference source.
+    # This keeps GSM8K training strict while avoiding invalid official-GSM8K
+    # extraction for OpenMath-style training answers.
+    evaluator = _build_reward_evaluator(cfg)
     correctness = torch.zeros(B, device=device)
     for b in range(B):
         gen_text = decode_generated_tokens(
@@ -205,8 +219,8 @@ def compute_reward(
             generated_tokens[b],
             mask_token_id=cfg.get("base_model", {}).get("mask_token_id"),
         )
-        correct = check_math_correctness(gen_text, reference_answer[b])
-        correctness[b] = 1.0 if correct else 0.0
+        decision = evaluator.evaluate(gen_text, reference_answer[b])
+        correctness[b] = 1.0 if decision.correct else 0.0
 
     if getattr(trajectory, "completion_step", None) is not None:
         used_steps = trajectory.completion_step.to(device).float().clamp(min=1.0, max=float(T))
@@ -526,7 +540,7 @@ def configure_grpo_trainability(policy, soft_mask_module, cfg: dict) -> List[nn.
     setting ``grpo.train_heads`` to include ``unmask`` and ``remask``.
     """
     gc = cfg.get("grpo", {})
-    train_heads = _head_set(gc.get("train_heads"))
+    train_heads = parse_head_set(gc.get("train_heads"))
     pol_inner = policy.module if hasattr(policy, "module") else policy
     if train_heads is not None:
         head_modules = {
@@ -874,7 +888,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
         if is_main and gc.get("train_heads") is not None:
             print(
                 "[GRPO] train_heads="
-                f"{list(_head_set(gc.get('train_heads')) or [])}; "
+                f"{list(parse_head_set(gc.get('train_heads')) or [])}; "
                 f"include_logprob={list(_include_heads_for_logprob(cfg) or [])}; "
                 f"train_soft_mask={bool(gc.get('train_soft_mask', True))}"
             )

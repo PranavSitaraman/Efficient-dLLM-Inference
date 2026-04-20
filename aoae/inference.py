@@ -18,14 +18,8 @@ from dataclasses import dataclass, field
 import json
 
 
-def _as_head_set(value):
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return {p.strip() for p in value.split(",") if p.strip()}
-    return {str(p).strip() for p in value if str(p).strip()}
-
 from .cache import DKVCacheManager
+from .experiment_utils import parse_head_set
 from .models.composed_prediction import compose_prediction
 from .models.policy import apply_unmask_budget, call_policy
 from .models.soft_mask import call_soft_mask
@@ -374,7 +368,7 @@ def aoae_inference(
 
         # --- Record trajectory for GRPO ---
         if trajectory is not None:
-            include_heads = _as_head_set(
+            include_heads = parse_head_set(
                 cfg.get("grpo", {}).get(
                     "include_heads_in_logprob",
                     cfg.get("grpo", {}).get("train_heads"),

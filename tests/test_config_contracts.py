@@ -45,6 +45,7 @@ def test_paper_config_enables_full_aoae_stack():
     ]
     assert cfg["grpo"]["thrash_normalization"] == "response_length"
     assert cfg["grpo"]["cache_speed_source"] == "none"
+    assert cfg["grpo"]["min_checkpoint_reward"] < 0.0
     assert cfg["grpo"]["train_heads"] == ["cache", "access"]
     assert cfg["grpo"]["include_heads_in_logprob"] == ["cache", "access"]
     assert cfg["grpo"]["train_soft_mask"] is False
@@ -58,4 +59,5 @@ def test_paper_config_enables_full_aoae_stack():
     assert cfg["inference"]["verifier"]["acceptance_mode"] == "argmax_match"
     assert cfg["inference"]["verifier"]["rejection_action"] == "remask"
     assert cfg["inference"]["verifier"]["recompute_after_reject"] is True
-    assert cfg["inference"]["drafter"]["decode_mode"] == "s_mode"
+    assert cfg["inference"]["drafter"]["confidence_threshold"] == 0.7
+    assert cfg["inference"]["drafter"]["aux_compute_ratio"] == 0.35

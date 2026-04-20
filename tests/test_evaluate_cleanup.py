@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import torch
 
 from aoae.evaluate import EvalResult
+from aoae.checkpoints import GRPO_TRAIN_CONTRACT_VERSION, build_grpo_config_fingerprint
 
 
 def _base_cfg(tmp_path):
@@ -184,6 +185,35 @@ def test_speculative_eval_points_come_from_config_sweep(tmp_path):
     assert point_cfg["inference"]["primary_every_n"] == 1
     assert point_cfg["inference"]["primary_agree_threshold"] == 0.98
     assert "primary_every_n" not in cfg["inference"]
+
+
+def test_eval_auto_checkpoint_allows_low_shaped_reward(tmp_path):
+    import json
+    import aoae.evaluate as mod
+
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    ckpt = out_dir / "policy_final.pt"
+    ckpt.write_text("checkpoint")
+    cfg = _base_cfg(tmp_path)
+    cfg["base_model"]["backend"] = "dual"
+    cfg["logging"]["output_dir"] = str(out_dir)
+    cfg["soft_mask"] = {"top_k": 5}
+    cfg["policy"] = {"d_model": 128}
+    cfg["prism"] = {"hidden_dim": 256}
+    cfg["grpo"] = {"min_checkpoint_reward": 0.0}
+    cfg["data"]["train_dataset"] = "demo"
+    cfg["data"]["train_split"] = "train"
+
+    metadata = {
+        "stage": "grpo",
+        "train_contract_version": GRPO_TRAIN_CONTRACT_VERSION,
+        "config_fingerprint": build_grpo_config_fingerprint(cfg),
+        "best_reward": -0.25,
+    }
+    (out_dir / "grpo_training_metadata.json").write_text(json.dumps(metadata))
+
+    assert mod._resolve_valid_auto_policy_checkpoint(None, cfg) == str(ckpt)
 
 
 def test_explicit_policy_temperatures_override_config_sweep(tmp_path):

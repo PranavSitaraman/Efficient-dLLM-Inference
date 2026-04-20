@@ -55,7 +55,7 @@ def run_preflight(config_path: str, strict_moe: bool = False) -> Dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="AOAE preflight check")
-    parser.add_argument("--config", default="configs/default.yaml", help="YAML config path.")
+    parser.add_argument("--config", default="configs/llada21_hard.yaml", help="YAML config path.")
     parser.add_argument(
         "--strict_moe",
         action="store_true",

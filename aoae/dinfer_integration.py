@@ -19,6 +19,7 @@ from typing import Optional, Dict, Tuple, List
 from dataclasses import dataclass
 
 from .cache import DKVCacheManager
+from .inference import _max_prob_and_argmax
 from .models.composed_prediction import compose_prediction
 from .models.policy import call_policy
 from .models.soft_mask import call_soft_mask
@@ -31,14 +32,6 @@ from .positional_cache import (
     update_positional_state,
     compute_next_h_access_metrics,
 )
-
-
-def _max_prob_and_argmax(logits: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Return max softmax probability and argmax token without full probs."""
-    logits_f = logits.float()
-    max_logits, max_tok = logits_f.max(dim=-1)
-    max_prob = torch.exp(max_logits - torch.logsumexp(logits_f, dim=-1))
-    return max_prob.type_as(logits), max_tok
 
 
 def _pad_response_hidden_states(
@@ -94,21 +87,10 @@ def _primary_forward_with_blockwise_diagnostics(
     dual_model,
     input_ids: torch.LongTensor,
 ):
-    """Call primary diagnostics compatibly across older/newer wrappers."""
     diagnostics_fn = getattr(dual_model, "primary_forward_with_diagnostics", None)
     if diagnostics_fn is None:
         raise AttributeError("dual_model is missing primary_forward_with_diagnostics")
-    try:
-        return diagnostics_fn(
-            input_ids,
-            output_attentions=False,
-            output_kv=True,
-        )
-    except TypeError as exc:
-        message = str(exc)
-        if "output_attentions" not in message and "output_kv" not in message:
-            raise
-        return diagnostics_fn(input_ids)
+    return diagnostics_fn(input_ids)
 
 
 def _observe_blockwise_kv_dynamics(
@@ -125,37 +107,18 @@ def _observe_blockwise_kv_dynamics(
     layer_kv: Optional[List[Tuple[torch.Tensor, torch.Tensor]]],
     valid_mask: torch.Tensor,
 ) -> None:
-    """Compat wrapper for newer/older tracker.observe_step signatures."""
-    try:
-        dynamics_tracker.observe_step(
-            layer_hiddens=layer_hiddens,
-            max_prob=max_prob,
-            mask_ind=mask_ind,
-            agreement=agreement,
-            u_t=u_t,
-            r_t=r_t,
-            kappa_t=kappa_t,
-            q_t=q_t,
-            layer_kv=layer_kv,
-            layer_attentions=None,
-            valid_mask=valid_mask,
-        )
-    except TypeError as exc:
-        message = str(exc)
-        if "valid_mask" not in message:
-            raise
-        dynamics_tracker.observe_step(
-            layer_hiddens=layer_hiddens,
-            max_prob=max_prob,
-            mask_ind=mask_ind,
-            agreement=agreement,
-            u_t=u_t,
-            r_t=r_t,
-            kappa_t=kappa_t,
-            q_t=q_t,
-            layer_kv=layer_kv,
-            layer_attentions=None,
-        )
+    dynamics_tracker.observe_step(
+        layer_hiddens=layer_hiddens,
+        max_prob=max_prob,
+        mask_ind=mask_ind,
+        agreement=agreement,
+        u_t=u_t,
+        r_t=r_t,
+        kappa_t=kappa_t,
+        q_t=q_t,
+        layer_kv=layer_kv,
+        layer_attentions=None,
+    )
 
 
 @dataclass

@@ -17,7 +17,7 @@ Efficient-dLLM-Inference/
 │   ├── train_grpo.py     # AOAE policy training
 │   └── models/           # Base model wrappers, policy, PRISM, soft routing, dual model
 ├── configs/
-│   ├── default.yaml      # Main 8B dense training/eval config
+│   ├── llada21_hard.yaml      # Main 8B dense training/eval config
 │   ├── paper.yaml        # Main paper config
 │   ├── poc1.yaml         # PoC 1 soft-routing tradeoff sweep
 │   ├── poc2.yaml         # PoC 2 reuse-signal sweep
@@ -40,7 +40,7 @@ Generated artifacts live in `outputs/` and are gitignored.
 
 | Config | Purpose |
 | --- | --- |
-| `configs/default.yaml` | Main single-run training and eval path on `GSAI-ML/LLaDA-8B-Instruct` |
+| `configs/llada21_hard.yaml` | Main single-run training and eval path on `GSAI-ML/LLaDA-8B-Instruct` |
 | `configs/paper.yaml` | Main paper-oriented speculative AOAE config for integrated experiments and end-to-end training |
 | `configs/poc1.yaml` | PoC 1: soft-routing speed/quality tradeoff |
 | `configs/poc2.yaml` | PoC 2: training-free KV-reuse agreement signal study |
@@ -67,27 +67,27 @@ pip install -e .
 Environment and runtime check:
 
 ```bash
-aoae preflight --config configs/default.yaml
+aoae preflight --config configs/llada21_hard.yaml
 ```
 
 Run baseline eval only:
 
 ```bash
-aoae eval --config configs/default.yaml --max_samples 50
+aoae eval --config configs/llada21_hard.yaml --max_samples 50
 ```
 
 Train end to end:
 
 ```bash
-aoae train --config configs/default.yaml --stage prism
-aoae train --config configs/default.yaml --stage grpo
-aoae eval --config configs/default.yaml --checkpoint outputs/default/policy_final.pt
+aoae train --config configs/llada21_hard.yaml --stage prism
+aoae train --config configs/llada21_hard.yaml --stage grpo
+aoae eval --config configs/llada21_hard.yaml --checkpoint outputs/llada21_hard/policy_final.pt
 ```
 
 Run the integrated local pipeline:
 
 ```bash
-aoae pipeline --config configs/default.yaml
+aoae pipeline --config configs/llada21_hard.yaml
 ```
 
 For configs with `hardware.tp_size > 1`, `aoae` now auto-relaunches itself under `torchrun` with the same local environment defaults used by the SLURM wrappers.
@@ -174,12 +174,12 @@ The local CLI will automatically use `torchrun` for these workflows when the sel
 ## Important commands
 
 ```bash
-aoae train --config configs/default.yaml --stage prism
-aoae train --config configs/default.yaml --stage grpo --resume auto
-aoae eval --config configs/default.yaml --checkpoint outputs/default/policy_final.pt
-aoae pipeline --config configs/default.yaml
+aoae train --config configs/llada21_hard.yaml --stage prism
+aoae train --config configs/llada21_hard.yaml --stage grpo --resume auto
+aoae eval --config configs/llada21_hard.yaml --checkpoint outputs/llada21_hard/policy_final.pt
+aoae pipeline --config configs/llada21_hard.yaml
 
-aoae pipeline --config configs/paper.yaml --mode speculative
+aoae pipeline --config configs/paper.yaml
 aoae eval --config configs/paper.yaml --checkpoint outputs/paper/policy_best.pt --mode speculative
 aoae tau-sweep --config configs/poc1.yaml
 aoae reuse-sweep --config configs/poc2.yaml
@@ -202,6 +202,7 @@ Single eval runs write:
 
 For speculative runs, `configs/paper.yaml` defines `evaluation.speculative_sweep.points`: named AOAE operating points that sweep verifier cadence, agreement threshold, unmask budget, remasking, K-spec skip, and `tau_pi`. The normal baseline rows provide the blockwise verifier-quality anchors; the speculative sweep starts at a fully verified AOAE point and then runs progressively more aggressive AOAE points. Passing `--policy_temperatures 0.5,1.0,1.5` intentionally overrides this with a temperature-only sweep for focused ablations. `cache_hit_rate` in eval artifacts is the stable-cache commit survival rate; `stable_cache_fraction`, `spec_cache_fraction`, and `combined_cache_fraction` report actual occupancy of the persistent stable cache, transient speculative frontier, and their union.
 Prompt construction now uses a robust fallback: `data.use_chat_template=auto` attempts tokenizer chat formatting whenever the tokenizer supports it (including runtime/default templates), and falls back cleanly to plain text when unavailable. Non-chat prompts now encode with special tokens enabled, and `data.math_prompt_style=auto` adds a GSM8K-targeted final-answer format instruction when evaluating GSM8K. For confidence-style baselines, terminal unresolved masks are force-completed before scoring so accuracy is computed on complete responses.
+GRPO checkpoints are resolved by training-contract and config fingerprint. Eval loads a contract-valid trained checkpoint even when its shaped reward is negative; low scalar reward is reported as an outcome, not silently replaced by the default heuristic policy.
 
 Paper/POC workflows additionally write sweep summaries under:
 
@@ -353,19 +354,19 @@ Tunable via `grpo.stability_lambda` in the config; good range is 5–20.
 
 ```bash
 # Stage 1: Train PRISM quality adapter (optional, improves policy input)
-aoae train --config configs/default.yaml --stage prism
+aoae train --config configs/llada21_hard.yaml --stage prism
 
 # Stage 2: Train AOAE policy via GRPO
-aoae train --config configs/default.yaml --stage grpo
+aoae train --config configs/llada21_hard.yaml --stage grpo
 
 # Resume from latest checkpoint
-aoae train --config configs/default.yaml --stage grpo --resume auto
+aoae train --config configs/llada21_hard.yaml --stage grpo --resume auto
 
 # End-to-end pipeline (PRISM → GRPO → Eval)
-aoae pipeline --config configs/default.yaml
+aoae pipeline --config configs/llada21_hard.yaml
 
 # Evaluate a trained policy
-aoae eval --config configs/default.yaml --checkpoint outputs/default/policy_final.pt
+aoae eval --config configs/llada21_hard.yaml --checkpoint outputs/llada21_hard/policy_final.pt
 ```
 
 ### Key Tuning Knobs
@@ -374,24 +375,24 @@ aoae eval --config configs/default.yaml --checkpoint outputs/default/policy_fina
 | --- | --- | --- | --- |
 | **α** (speed exponent) | `grpo.alpha` | 1.0 | Higher = more aggressive speed reward |
 | **β** (thrash penalty) | `grpo.beta` | 0.1 | Higher = stronger penalty for cache invalidation |
-| **w_cache** (cache F1 weight) | `grpo.cache_quality_weight` | 0.05 | Higher = stronger gradient for cache decisions |
+| **w_cache** (cache F1 weight) | `grpo.cache_quality_weight` | 0.02 | Higher = stronger gradient for cache decisions |
 | **λ** (stability sharpness) | `grpo.stability_lambda` | 10.0 | Higher = sharper stable/unstable distinction |
-| **w_access** (access F1 weight) | `grpo.access_reward_weight` | 0.1 | Higher = stronger gradient for access prediction |
+| **w_access** (access F1 weight) | `grpo.access_reward_weight` | 0.0 | Higher = stronger gradient for access prediction |
 | **w_unresolved** | `grpo.unresolved_penalty_weight` | 0.25 | Higher = harsher penalty for leftover masks |
-| **G** (group size) | `grpo.group_size` | 4 | More rollouts = lower variance advantages |
+| **G** (group size) | `grpo.group_size` | 8 | More rollouts = lower variance advantages |
 | **ε** (clip range) | `grpo.clip_eps` | 0.2 | Standard PPO/GRPO clip range |
 | **τ_π** (policy temp) | `grpo.policy_temperature` | 1.0 | < 1 = more deterministic; > 1 = more exploration |
 | **T** (rollout steps) | `grpo.rollout_steps` | 16 | Training-time diffusion horizon (eval uses `inference.steps`) |
 | **L_gen** (rollout length) | `grpo.rollout_gen_length` | 128 | Training-time decode budget (eval uses `inference.gen_length`) |
 
-Eval-time Pareto points vary inference controls: `cache.kspec_skip`, `inference.primary_every_n`, `inference.primary_agree_threshold`, `inference.max_unmask_fraction_per_step` or `inference.max_unmask_tokens_per_step`, `inference.disable_remask`, positional-cache settings, and `policy_temperature` per point under `evaluation.speculative_sweep.points`. K-spec skip is a one-step drafter shortcut; skipped positions are not treated as freshly verified agreement, so conservative AOAE points disable it while the baseline rows provide verifier-quality blockwise anchors.
+Eval-time Pareto points vary inference controls: verifier schedule budget, `inference.primary_agree_threshold`, `inference.max_unmask_fraction_per_step` or `inference.max_unmask_tokens_per_step`, `inference.disable_remask`, positional-cache settings, and `policy_temperature` per point under `evaluation.speculative_sweep.points`. The legacy accepted-reuse shortcut is disabled for canonical AOAE; `K_spec` is a transient draft frontier, while the baseline rows provide verifier-quality blockwise anchors.
 
 ### Hyperparameter Sweep
 
 The GRPO sweep script (`slurm/grpo_sweep.sh`) searches over α and cache quality weight:
 
 ```bash
-sbatch slurm/grpo_sweep.sh configs/default.yaml
+sbatch slurm/grpo_sweep.sh configs/llada21_hard.yaml
 ```
 
 This generates a grid of `alpha ∈ {0.5, 1.0, 2.0} × cache_quality_weight ∈ {0.0, 0.05, 0.1}` and trains each configuration independently.

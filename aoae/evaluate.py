@@ -7,7 +7,7 @@ Runs inference on GSM8K / MATH benchmarks and computes:
   - Pareto curves from config-defined speculative operating points
 
 Usage:
-    python3 -m aoae.evaluate --config configs/default.yaml --checkpoint outputs/default/policy_final.pt
+    python3 -m aoae.evaluate --config configs/llada21_hard.yaml --checkpoint outputs/llada21_hard/policy_final.pt
 """
 
 import os
@@ -67,13 +67,18 @@ def _resolve_valid_auto_policy_checkpoint(
     explicit: Optional[str],
     cfg: Dict[str, Any],
 ) -> Optional[str]:
-    """Auto-detect a policy checkpoint only when artifacts pass the quality gate."""
+    """Auto-detect a policy checkpoint when artifacts match this config.
+
+    Evaluation should measure the trained policy even when its shaped GRPO
+    reward is negative.  A negative reward is an experimental outcome, not a
+    reason to silently replace the checkpoint with the default heuristic policy.
+    """
     if explicit:
         return explicit
     output_dir = str(cfg.get("logging", {}).get("output_dir", "") or "")
     if not output_dir:
         return None
-    status = inspect_grpo_artifacts(output_dir, cfg)
+    status = inspect_grpo_artifacts(output_dir, cfg, enforce_min_reward=False)
     if not bool(status.get("valid")):
         return None
     return resolve_policy_checkpoint(None, output_dir)
@@ -1999,7 +2004,7 @@ if __name__ == "__main__":
         return values
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/default.yaml")
+    parser.add_argument("--config", type=str, default="configs/llada21_hard.yaml")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--max_samples", type=int, default=None)
     parser.add_argument("--mode", type=str, default="standard",

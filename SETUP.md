@@ -23,7 +23,7 @@ pip install -e .
 ```bash
 python3 -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.device_count())"
 python3 -c "import transformers; print(transformers.__version__)"
-aoae preflight --config configs/default.yaml
+aoae preflight --config configs/llada21_hard.yaml
 aoae test
 ```
 
@@ -31,7 +31,7 @@ aoae test
 
 | Config | Use case |
 | --- | --- |
-| `configs/default.yaml` | Main 8B training/eval path |
+| `configs/llada21_hard.yaml` | Main 8B training/eval path |
 | `configs/paper.yaml` | Main paper suite |
 | `configs/poc1.yaml` | PoC 1 tau sweep |
 | `configs/poc2.yaml` | PoC 2 reuse sweep |
@@ -42,7 +42,7 @@ aoae test
 ## Local usage
 
 ```bash
-aoae pipeline --config configs/default.yaml
+aoae pipeline --config configs/llada21_hard.yaml
 
 aoae tau-sweep --config configs/poc1.yaml --max_samples 50
 aoae reuse-sweep --config configs/poc2.yaml --max_samples 50
@@ -56,9 +56,9 @@ If a config sets `hardware.tp_size > 1`, the local `aoae` CLI will relaunch itse
 Training / eval:
 
 ```bash
-sbatch slurm/train.sh prism configs/default.yaml
-sbatch slurm/train.sh grpo configs/default.yaml auto
-sbatch slurm/eval.sh configs/default.yaml outputs/default/policy_final.pt
+sbatch slurm/train.sh prism configs/llada21_hard.yaml
+sbatch slurm/train.sh grpo configs/llada21_hard.yaml auto
+sbatch slurm/eval.sh configs/llada21_hard.yaml outputs/llada21_hard/policy_final.pt
 ```
 
 Paper / POCs:

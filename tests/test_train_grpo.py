@@ -268,7 +268,7 @@ def test_compute_reward_cache_quality_f1_adds_positive_reward():
 
 def test_compute_reward_prefers_trajectory_effective_flops():
     from aoae.train_grpo import compute_reward
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     tokenizer = MagicMock()
     tokenizer.decode.return_value = "42"
@@ -299,19 +299,115 @@ def test_compute_reward_prefers_trajectory_effective_flops():
         },
     }
 
-    with patch("aoae.train_grpo.check_math_correctness", return_value=True):
-        reward, components = compute_reward(
-            generated_tokens=torch.tensor([[1, 2, 3, 4]]),
-            reference_answer=["42"],
-            tokenizer=tokenizer,
-            trajectory=traj,
-            cfg=cfg,
-            T=16,
-        )
+    reward, components = compute_reward(
+        generated_tokens=torch.tensor([[1, 2, 3, 4]]),
+        reference_answer=["42"],
+        tokenizer=tokenizer,
+        trajectory=traj,
+        cfg=cfg,
+        T=16,
+    )
 
     assert abs(components["effective_flops"].item() - 0.25) < 1e-6
     assert abs(components["speed_factor"].item() - 0.75) < 1e-6
     assert abs(reward.item() - 0.75) < 1e-6
+
+
+def test_compute_reward_uses_same_gsm8k_rule_as_eval():
+    from aoae.train_grpo import compute_reward
+    from unittest.mock import MagicMock
+
+    tokenizer = MagicMock()
+    tokenizer.decode.return_value = "The answer is 42"
+    traj = SimpleNamespace(
+        completion_step=torch.tensor([1.0]),
+        effective_flops=torch.tensor([0.0]),
+        aux_compute_units=torch.tensor([0.0]),
+        verifier_compute_units=torch.tensor([0.0]),
+        baseline_compute_units=torch.tensor([1.0]),
+        thrash_counts=[],
+        cached_fractions=[],
+        stable_cached_fractions=[],
+        spec_cached_fractions=[],
+        actions=[],
+        final_tokens=torch.tensor([[1, 2, 3]]),
+        access_metrics={},
+        cache_quality_f1=[],
+    )
+    cfg = {
+        "base_model": {"mask_token_id": 99},
+        "data": {"eval_dataset": "openai/gsm8k"},
+        "evaluation": {"task_type": "math"},
+        "grpo": {
+            "alpha": 1.0,
+            "beta": 0.0,
+            "access_reward_weight": 0.0,
+            "cache_quality_weight": 0.0,
+            "unresolved_penalty_weight": 0.0,
+        },
+    }
+
+    reward, components = compute_reward(
+        generated_tokens=torch.tensor([[1, 2, 3]]),
+        reference_answer=["#### 42"],
+        tokenizer=tokenizer,
+        trajectory=traj,
+        cfg=cfg,
+        T=1,
+    )
+
+    assert components["correctness"].item() == 0.0
+    assert reward.item() == 0.0
+
+
+def test_compute_reward_uses_train_dataset_answer_format_when_different_from_eval():
+    from aoae.train_grpo import compute_reward
+    from unittest.mock import MagicMock
+
+    tokenizer = MagicMock()
+    tokenizer.decode.return_value = "The answer is 42"
+    traj = SimpleNamespace(
+        completion_step=torch.tensor([1.0]),
+        effective_flops=torch.tensor([0.0]),
+        aux_compute_units=torch.tensor([0.0]),
+        verifier_compute_units=torch.tensor([0.0]),
+        baseline_compute_units=torch.tensor([1.0]),
+        thrash_counts=[],
+        cached_fractions=[],
+        stable_cached_fractions=[],
+        spec_cached_fractions=[],
+        actions=[],
+        final_tokens=torch.tensor([[1, 2, 3]]),
+        access_metrics={},
+        cache_quality_f1=[],
+    )
+    cfg = {
+        "base_model": {"mask_token_id": 99},
+        "data": {
+            "train_dataset": "nvidia/OpenMathInstruct-2",
+            "eval_dataset": "openai/gsm8k",
+        },
+        "evaluation": {"task_type": "math"},
+        "grpo": {
+            "alpha": 1.0,
+            "beta": 0.0,
+            "access_reward_weight": 0.0,
+            "cache_quality_weight": 0.0,
+            "unresolved_penalty_weight": 0.0,
+        },
+    }
+
+    reward, components = compute_reward(
+        generated_tokens=torch.tensor([[1, 2, 3]]),
+        reference_answer=["42"],
+        tokenizer=tokenizer,
+        trajectory=traj,
+        cfg=cfg,
+        T=1,
+    )
+
+    assert components["correctness"].item() == 1.0
+    assert reward.item() == 1.0
 
 
 def test_configure_grpo_trainability_freezes_unmask_remask_and_soft_mask():

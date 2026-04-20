@@ -102,7 +102,7 @@ def _required_world_size(argv_list: List[str]) -> int:
         return 1
 
     if command in {"train", "eval"}:
-        config_path = _extract_flag_value(args, "--config", "configs/default.yaml")
+        config_path = _extract_flag_value(args, "--config", "configs/llada21_hard.yaml")
         return _config_tp_size(config_path)
 
     if command == "pipeline":
@@ -289,7 +289,7 @@ PASSTHROUGH_COMMANDS = [
 
 
 def add_eval_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", type=str, default="configs/default.yaml", help="Path to YAML config file.")
+    parser.add_argument("--config", type=str, default="configs/llada21_hard.yaml", help="Path to YAML config file.")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to trained AOAE policy checkpoint (.pt).")
     parser.add_argument("--max_samples", type=int, default=None, help="Max samples to evaluate (None = full dataset).")
     parser.add_argument("--mode", type=str, default="standard", choices=["standard", "speculative"], help="'standard' for single-model, 'speculative' for dual-model.")
@@ -385,7 +385,7 @@ def run_eval_command(args: argparse.Namespace):
     cfg = apply_eval_overrides(cfg, args)
 
     if args.dry_run:
-        out_dir = cfg.setdefault("logging", {}).get("output_dir", "outputs/default/")
+        out_dir = cfg.setdefault("logging", {}).get("output_dir", "outputs/llada21_hard/")
         os.makedirs(out_dir, exist_ok=True)
         print(f"[DryRun] Config parsed OK. Output dir ready: {out_dir}")
         return None
@@ -433,11 +433,12 @@ def run_pipeline_command(args: argparse.Namespace):
     prism_path = os.path.join(output_dir, "prism_adapter.pt") if output_dir else ""
     final_policy_path = os.path.join(output_dir, "policy_final.pt") if output_dir else ""
     latest_policy_ckpt = find_latest_checkpoint(output_dir)
-    grpo_status = inspect_grpo_artifacts(output_dir, cfg) if output_dir else {
+    grpo_status = inspect_grpo_artifacts(output_dir, cfg, enforce_min_reward=False) if output_dir else {
         "valid": False,
         "reason": "missing_output_dir",
         "checkpoint_path": None,
     }
+    grpo_quality_status = inspect_grpo_artifacts(output_dir, cfg, enforce_min_reward=True) if output_dir else grpo_status
     resume_status = inspect_grpo_resume_candidate(output_dir, cfg) if output_dir else {
         "valid": False,
         "reason": "missing_output_dir",
@@ -448,7 +449,8 @@ def run_pipeline_command(args: argparse.Namespace):
         report = run_preflight(args.config, strict_moe=args.strict_moe)
         print(json.dumps(report, indent=2))
 
-    if cfg.get("base_model", {}).get("backend") != "dual":
+    is_dual_backend = cfg.get("base_model", {}).get("backend") == "dual"
+    if not is_dual_backend:
         print(
             "[Pipeline] Using a single-model dense/HF config. "
             "This path is a reference/dev pipeline, not the canonical paper speculative AOAE setup."
@@ -473,10 +475,16 @@ def run_pipeline_command(args: argparse.Namespace):
         and bool(grpo_status.get("valid"))
     ):
         print(f"[Pipeline] Found existing final GRPO checkpoint at {final_policy_path}; skipping GRPO training.")
+        if not bool(grpo_status.get("quality_ok", True)):
+            print(
+                "[Pipeline] Note: checkpoint matches the current config but is below "
+                f"min_checkpoint_reward={grpo_status.get('min_checkpoint_reward')}; "
+                "evaluation will still load it instead of falling back to the default policy."
+            )
     elif not args.skip_grpo:
         if final_policy_path and os.path.exists(final_policy_path):
             print(
-                "[Pipeline] Existing GRPO artifacts are stale or below the minimum quality bar "
+                "[Pipeline] Existing GRPO artifacts do not match the current run contract "
                 f"({grpo_status.get('reason')}); retraining."
             )
         nested_grpo = ["train", "--config", args.config, "--stage", "grpo"]
@@ -493,8 +501,14 @@ def run_pipeline_command(args: argparse.Namespace):
             nested_grpo.extend(["--resume", resume_value])
         _run_nested_cli(nested_grpo)
         ran_grpo = True
-        grpo_status = inspect_grpo_artifacts(output_dir, cfg) if output_dir else grpo_status
+        grpo_status = inspect_grpo_artifacts(output_dir, cfg, enforce_min_reward=False) if output_dir else grpo_status
+        grpo_quality_status = inspect_grpo_artifacts(output_dir, cfg, enforce_min_reward=True) if output_dir else grpo_quality_status
         resume_status = inspect_grpo_resume_candidate(output_dir, cfg) if output_dir else resume_status
+        if bool(grpo_status.get("valid")) and not bool(grpo_status.get("quality_ok", True)):
+            print(
+                "[Pipeline] Completed GRPO checkpoint is below the configured reward threshold "
+                f"({grpo_quality_status.get('reason')}); continuing to evaluation with the trained checkpoint."
+            )
     elif not bool(grpo_status.get("valid")) and args.checkpoint is None:
         print(
             "[Pipeline] No valid GRPO checkpoint is available for evaluation "
@@ -509,11 +523,17 @@ def run_pipeline_command(args: argparse.Namespace):
         checkpoint = resolve_policy_checkpoint(None, cfg.get("logging", {}).get("output_dir", ""))
     if checkpoint is None and ran_grpo and output_dir and bool(grpo_status.get("valid")):
         checkpoint = resolve_policy_checkpoint(None, output_dir)
+    # Auto-select evaluation mode: speculative for dual backends, standard for all others.
+    # An explicit --mode flag from the user always wins.
+    if args.mode is not None:
+        eval_mode = args.mode
+    else:
+        eval_mode = "speculative" if is_dual_backend else "standard"
     eval_args = argparse.Namespace(
         config=args.config,
         checkpoint=checkpoint,
         max_samples=args.max_samples,
-        mode=args.mode,
+        mode=eval_mode,
         reuse_signal_method=None,
         reuse_signal_threshold=None,
         track_kv_dynamics=False,
@@ -546,7 +566,7 @@ def run_pipeline_command(args: argparse.Namespace):
         "--config",
         args.config,
         "--mode",
-        args.mode,
+        eval_mode,
     ]
     if checkpoint is not None:
         nested_eval.extend(["--checkpoint", checkpoint])
@@ -569,7 +589,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     train_parser = subparsers.add_parser("train", help="Run PRISM or GRPO training.")
-    train_parser.add_argument("--config", type=str, default="configs/default.yaml", help="Path to YAML config file.")
+    train_parser.add_argument("--config", type=str, default="configs/llada21_hard.yaml", help="Path to YAML config file.")
     train_parser.add_argument("--stage", type=str, choices=["prism", "grpo"], required=True, help="Training stage to run.")
     train_parser.add_argument("--resume", type=str, default=None, help="Resume GRPO training from checkpoint or use 'auto'.")
     train_parser.set_defaults(func=run_train_command)
@@ -579,7 +599,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.set_defaults(func=run_eval_command)
 
     preflight_parser = subparsers.add_parser("preflight", help="Run environment and runtime checks.")
-    preflight_parser.add_argument("--config", default="configs/default.yaml", help="YAML config path.")
+    preflight_parser.add_argument("--config", default="configs/llada21_hard.yaml", help="YAML config path.")
     preflight_parser.add_argument("--strict_moe", action="store_true", help="Fail if required MoE ops are missing.")
     preflight_parser.set_defaults(
         func=lambda args: print(json.dumps(run_preflight(args.config, strict_moe=args.strict_moe), indent=2))
@@ -590,7 +610,7 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--resume", type=str, default=None, help="Resume GRPO training from checkpoint or use 'auto'.")
     pipeline_parser.add_argument("--checkpoint", type=str, default=None, help="Optional explicit checkpoint for the eval step.")
     pipeline_parser.add_argument("--max_samples", type=int, default=None, help="Optional evaluation cap.")
-    pipeline_parser.add_argument("--mode", type=str, default="standard", choices=["standard", "speculative"], help="Evaluation mode for the final stage.")
+    pipeline_parser.add_argument("--mode", type=str, default=None, choices=["standard", "speculative"], help="Evaluation mode for the final stage. Defaults to 'speculative' for dual backends and 'standard' otherwise.")
     pipeline_parser.add_argument("--policy_temperatures", type=str, default=None, help="Comma-separated tau_pi values for speculative evaluation.")
     pipeline_parser.add_argument("--skip_preflight", action="store_true", help="Skip preflight checks.")
     pipeline_parser.add_argument("--skip_prism", action="store_true", help="Skip PRISM training.")

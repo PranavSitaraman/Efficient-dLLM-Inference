@@ -1,6 +1,6 @@
 {
   "stage": "grpo",
-  "output_dir": "outputs/default/",
+  "output_dir": "outputs/llada21_hard/",
   "backend": "hf",
   "used_dual_model": false,
   "train_dataset": "nvidia/OpenMathInstruct-2",
@@ -15,9 +15,9 @@
   "rollout_gen_length": 128,
   "normalize_advantage_std": false,
   "best_reward": -0.2147498499506559,
-  "best_checkpoint": "outputs/default/policy_best.pt",
-  "final_checkpoint": "outputs/default/policy_final.pt",
-  "resume_from": "outputs/default/policy_latest.pt",
+  "best_checkpoint": "outputs/llada21_hard/policy_best.pt",
+  "final_checkpoint": "outputs/llada21_hard/policy_final.pt",
+  "resume_from": "outputs/llada21_hard/policy_latest.pt",
   "seed": 42,
   "runtime": {
     "host": "holygpu8a11204.rc.fas.harvard.edu",

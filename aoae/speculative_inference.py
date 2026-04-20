@@ -17,7 +17,10 @@ import torch.nn.functional as F
 from typing import Any, Optional, List, Dict, Tuple
 from dataclasses import dataclass, field
 
+import json
+
 from .cache import SpeculativeCacheBookkeeper
+from .experiment_utils import parse_head_set
 from .models.composed_prediction import compose_prediction_dual
 from .models.dual_model import DualModelWrapper, DualModelOutput
 from .models.policy import apply_unmask_budget, call_policy
@@ -30,7 +33,6 @@ from .positional_cache import (
     update_positional_state,
     compute_next_h_access_metrics,
 )
-import json
 
 
 @dataclass
@@ -264,16 +266,6 @@ def _should_run_verifier(
     return bool((frontier.numel_per_batch() >= budget).any().item())
 
 
-def _as_head_set(value: Any) -> Optional[set]:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        parts = [p.strip() for p in value.split(",") if p.strip()]
-    else:
-        parts = [str(p).strip() for p in value if str(p).strip()]
-    return {p for p in parts}
-
-
 def _apply_frozen_action_heads(
     actions: Dict[str, torch.Tensor],
     *,
@@ -288,7 +280,7 @@ def _apply_frozen_action_heads(
     schedule and remasking is reserved for the authoritative verifier.
     """
     gc = cfg.get("grpo", {})
-    train_heads = _as_head_set(gc.get("train_heads"))
+    train_heads = parse_head_set(gc.get("train_heads"))
     if train_heads is None:
         return actions
 
@@ -858,7 +850,7 @@ def speculative_inference(
 
         # --- Record trajectory ---
         if record_trajectory and trajectory is not None:
-            include_heads = _as_head_set(
+            include_heads = parse_head_set(
                 cfg.get("grpo", {}).get(
                     "include_heads_in_logprob",
                     cfg.get("grpo", {}).get("train_heads"),

@@ -6,7 +6,7 @@ the training dataset.  The base model is frozen; only the adapter MLP
 is updated with binary cross-entropy loss.
 
 Usage:
-    python3 -m aoae.train_prism --config configs/default.yaml
+    python3 -m aoae.train_prism --config configs/llada21_hard.yaml
 """
 
 import os
@@ -152,7 +152,7 @@ def main(cfg: dict):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/default.yaml")
+    parser.add_argument("--config", type=str, default="configs/llada21_hard.yaml")
     args = parser.parse_args()
 
     with open(args.config) as f:

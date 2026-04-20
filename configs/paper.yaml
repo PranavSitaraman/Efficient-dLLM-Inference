@@ -56,7 +56,6 @@ cache:
   # Deprecated accepted-reuse shortcut. Disabled for the canonical paper path
   # because K_spec must be validated, not skipped as if it were persistent KV.
   kspec_skip: false
-  legacy_accepted_reuse: false
   # Reuse the prompt and drafter cache between verifier events; reset on high
   # verifier rejection.
   prefix_kv_cache: true
@@ -75,7 +74,10 @@ grpo:
   cache_quality_weight: 0.02       # dense κ_t signal; kept small so correctness dominates
   stability_lambda: 10.0           # soft stability exponent λ (maps drift∈[0,0.2] → contrast)
   unresolved_penalty_weight: 0.25  # penalty for lingering [M] tokens at end of rollout
-  min_checkpoint_reward: 0.0
+  # AOAE's shaped reward includes compute and unresolved-mask penalties, so
+  # valid trained checkpoints can have negative scalar reward. Contract/version
+  # matching, not this threshold, controls whether eval may load a checkpoint.
+  min_checkpoint_reward: -1.0
   lr: 3.0e-4
   weight_decay: 0.01
   epochs: 3                        # ↑ from 2 — more epochs for larger max_steps
@@ -115,9 +117,7 @@ inference:
     prism_accept_threshold: 0.5
     recompute_after_reject: true
   drafter:
-    decode_mode: "s_mode"
     confidence_threshold: 0.7
-    cache_policy: "prefix"
     aux_compute_ratio: 0.35
   primary_agree_threshold: 0.85
   aux_cache_reset_threshold: 0.35

@@ -64,7 +64,7 @@ inference:
     use_block_diffusion: true
     max_post_steps: 16
     gen_length: 512
-    eos_early_stop: true
+    eos_early_stop: false
     enable_mbe: false
     speed:
       threshold: 0.5

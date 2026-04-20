@@ -27,7 +27,7 @@ if [[ "$MASTER_ADDR" == "localhost" ]]; then
 fi
 
 STAGE="${1:-prism}"
-CONFIG="${2:-configs/default.yaml}"
+CONFIG="${2:-configs/llada21_hard.yaml}"
 RESUME="${3:-auto}"
 if [[ $# -ge 3 ]]; then
   shift 3

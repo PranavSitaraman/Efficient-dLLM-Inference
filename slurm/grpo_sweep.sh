@@ -2,7 +2,7 @@
 # GRPO hyperparameter sweep launcher.
 #
 # Submits one SLURM job per trial. Each trial gets a unique config YAML
-# (generated from configs/default.yaml with overrides) and a unique output_dir.
+# (generated from configs/llada21_hard.yaml with overrides) and a unique output_dir.
 #
 # Usage:
 #   bash slurm/grpo_sweep.sh [--partition <p>] [--account <a>] [--dry-run]
@@ -29,7 +29,7 @@ ALPHA_VALUES=(0.5 1.0 2.0)
 CACHE_Q_VALUES=(0.0 0.05 0.1)
 
 # ---- Defaults ---------------------------------------------------------
-BASE_CONFIG="configs/default.yaml"
+BASE_CONFIG="configs/llada21_hard.yaml"
 PARTITION="${GRPO_PARTITION:-gpu_a100}"
 ACCOUNT="${GRPO_ACCOUNT:-kempner_sham_lab}"
 DRY_RUN=0

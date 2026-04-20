@@ -1005,15 +1005,6 @@ class TestComposedPrediction:
         assert torch.allclose(composed[0, 2], logits[0, 2] * 1.5)
         assert torch.allclose(composed[0, 3], logits[0, 3] * 1.5)
 
-    def test_entropy_reduction(self):
-        from aoae.models.composed_prediction import compute_composition_entropy
-        logits = torch.randn(2, 10, VOCAB)
-        cache_probs = torch.ones(2, 10)
-        ent_base = compute_composition_entropy(logits, cache_probs, gamma=0.0)
-        ent_composed = compute_composition_entropy(logits, cache_probs, gamma=1.0)
-        # Sharpening should reduce entropy
-        assert (ent_composed <= ent_base + 1e-5).all()
-
     def test_sample_shape(self):
         from aoae.models.composed_prediction import sample_from_composed
         logits = torch.randn(2, 10, VOCAB)

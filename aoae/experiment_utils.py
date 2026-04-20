@@ -8,6 +8,15 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 
+def parse_head_set(value: Any) -> Optional[set]:
+    """Parse a head specification (str, list, or None) into a set of strings."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return {p.strip() for p in value.split(",") if p.strip()}
+    return {str(p).strip() for p in value if str(p).strip()}
+
+
 SUMMARY_METHOD_ALIASES: dict[str, tuple[str, ...]] = {
     # Legacy baseline names kept for backward compatibility with older sweep scripts.
     "block_smode": ("block_smode", "llada21_speed_mode"),

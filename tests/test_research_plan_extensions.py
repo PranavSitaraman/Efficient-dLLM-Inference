@@ -4,10 +4,10 @@ import torch
 def test_preflight_report_contains_runtime_and_backend():
     from aoae.preflight import run_preflight
 
-    report = run_preflight("configs/default.yaml", strict_moe=False)
+    report = run_preflight("configs/llada21_hard.yaml", strict_moe=False)
     assert "runtime" in report
     assert "backend" in report
-    assert report["config_path"] == "configs/default.yaml"
+    assert report["config_path"] == "configs/llada21_hard.yaml"
     assert "torch_version" in report["runtime"]
 
 

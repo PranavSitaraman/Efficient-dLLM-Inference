@@ -307,7 +307,7 @@ The reward is:
       + w_q\, F1_{\text{access}},
     \label{eq:reward}
 \end{equation}
-where $r(\cdot)$ is task correctness; $\overline{\text{Thrash}}$ penalizes remasking stable-cached positions only; $f_{\text{unresolved}}$ penalizes leftover $\mask$ tokens; $\overline{F1}_{\text{cache}}$ is a soft precision-recall signal rewarding $\kappa_t$ for committing low-drift positions; and $F1_{\text{access}}$ measures whether $\cQ_t$ anticipates actual modifications over the next $H$ steps.
+where $r(\cdot)$ is the task-appropriate correctness evaluator for the rollout reference source (and the official final-answer rule for GSM8K); $\overline{\text{Thrash}}$ penalizes remasking stable-cached positions only; $f_{\text{unresolved}}$ penalizes leftover $\mask$ tokens; $\overline{F1}_{\text{cache}}$ is a soft precision-recall signal rewarding $\kappa_t$ for committing low-drift positions; and $F1_{\text{access}}$ measures whether $\cQ_t$ anticipates actual modifications over the next $H$ steps.
 The multiplicative speed term ensures incorrect generations receive zero reward regardless of speed, preventing the reward hacking observed with additive formulations~\cite{jazbec2025learning}.
 
 \paragraph{GRPO objective.}

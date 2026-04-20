@@ -128,7 +128,7 @@ def test_inspect_grpo_artifacts_accepts_matching_metadata(tmp_path):
     assert status["reason"] == "ok"
 
 
-def test_inspect_grpo_resume_candidate_rejects_completed_low_reward_run(tmp_path):
+def test_inspect_grpo_resume_candidate_rejects_completed_run_before_reward_gate(tmp_path):
     out_dir = tmp_path / "outputs"
     out_dir.mkdir()
     (out_dir / "policy_latest.pt").write_text("x")
@@ -154,7 +154,42 @@ def test_inspect_grpo_resume_candidate_rejects_completed_low_reward_run(tmp_path
     status = inspect_grpo_resume_candidate(str(out_dir), cfg)
 
     assert status["valid"] is False
-    assert status["reason"] == "reward_below_threshold"
+    assert status["reason"] == "already_complete"
+
+    strict_status = inspect_grpo_resume_candidate(str(out_dir), cfg, enforce_min_reward=True)
+    assert strict_status["valid"] is False
+    assert strict_status["reason"] == "reward_below_threshold"
+
+
+def test_inspect_grpo_artifacts_can_load_low_reward_checkpoint_for_eval(tmp_path):
+    out_dir = tmp_path / "outputs"
+    out_dir.mkdir()
+    (out_dir / "policy_final.pt").write_text("x")
+    cfg = {
+        "base_model": {"backend": "dual"},
+        "soft_mask": {"top_k": 5},
+        "policy": {"d_model": 128},
+        "prism": {"hidden_dim": 256},
+        "grpo": {"min_checkpoint_reward": 0.0},
+        "inference": {"steps": 16},
+        "data": {"train_dataset": "demo", "train_split": "train"},
+    }
+    metadata = {
+        "stage": "grpo",
+        "train_contract_version": GRPO_TRAIN_CONTRACT_VERSION,
+        "config_fingerprint": build_grpo_config_fingerprint(cfg),
+        "best_reward": -0.25,
+    }
+    (out_dir / "grpo_training_metadata.json").write_text(json.dumps(metadata))
+
+    eval_status = inspect_grpo_artifacts(str(out_dir), cfg, enforce_min_reward=False)
+    strict_status = inspect_grpo_artifacts(str(out_dir), cfg, enforce_min_reward=True)
+
+    assert eval_status["valid"] is True
+    assert eval_status["reason"] == "ok"
+    assert eval_status["quality_ok"] is False
+    assert strict_status["valid"] is False
+    assert strict_status["reason"] == "reward_below_threshold"
 
 
 def test_cli_eval_dry_run_creates_output_dir(tmp_path):
@@ -379,6 +414,8 @@ def test_cli_pipeline_delegates_to_canonical_subcommands(monkeypatch, tmp_path):
     status_iter = iter(
         [
             {"valid": False, "reason": "missing_checkpoint", "checkpoint_path": None},
+            {"valid": False, "reason": "missing_checkpoint", "checkpoint_path": None},
+            {"valid": True, "reason": "ok", "checkpoint_path": f"{tmp_path / 'out'}/policy_final.pt"},
             {"valid": True, "reason": "ok", "checkpoint_path": f"{tmp_path / 'out'}/policy_final.pt"},
         ]
     )
@@ -536,7 +573,7 @@ def test_cli_pipeline_retrains_when_final_checkpoint_is_stale(monkeypatch, tmp_p
 
     monkeypatch.setattr(mod, "run_preflight", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(mod, "main", lambda argv=None: calls.append(tuple(argv)) or 0)
-    monkeypatch.setattr(mod, "resolve_policy_checkpoint", lambda checkpoint, output_dir: checkpoint or f"{output_dir}/policy_latest.pt")
+    monkeypatch.setattr(mod, "resolve_policy_checkpoint", lambda checkpoint, output_dir: checkpoint or f"{output_dir}/policy_final.pt")
 
     mod.run_pipeline_command(
         SimpleNamespace(
@@ -560,7 +597,7 @@ def test_cli_pipeline_retrains_when_final_checkpoint_is_stale(monkeypatch, tmp_p
     ]
 
 
-def test_cli_pipeline_does_not_resume_failed_completed_grpo_run(monkeypatch, tmp_path):
+def test_cli_pipeline_uses_completed_low_reward_checkpoint_for_eval(monkeypatch, tmp_path):
     import aoae.cli as mod
 
     out_dir = tmp_path / "out"
@@ -595,7 +632,7 @@ def test_cli_pipeline_does_not_resume_failed_completed_grpo_run(monkeypatch, tmp
 
     monkeypatch.setattr(mod, "run_preflight", lambda *args, **kwargs: {"ok": True})
     monkeypatch.setattr(mod, "main", lambda argv=None: calls.append(tuple(argv)) or 0)
-    monkeypatch.setattr(mod, "resolve_policy_checkpoint", lambda checkpoint, output_dir: checkpoint or f"{output_dir}/policy_latest.pt")
+    monkeypatch.setattr(mod, "resolve_policy_checkpoint", lambda checkpoint, output_dir: checkpoint or f"{output_dir}/policy_final.pt")
 
     mod.run_pipeline_command(
         SimpleNamespace(
@@ -608,34 +645,42 @@ def test_cli_pipeline_does_not_resume_failed_completed_grpo_run(monkeypatch, tmp
             skip_preflight=False,
             skip_prism=False,
             skip_grpo=False,
-            skip_eval=True,
+            skip_eval=False,
             skip_baselines=False,
             strict_moe=False,
         )
     )
 
     assert calls == [
-        ("train", "--config", str(cfg_path), "--stage", "grpo"),
+        (
+            "eval",
+            "--config",
+            str(cfg_path),
+            "--mode",
+            "standard",
+            "--checkpoint",
+            f"{out_dir}/policy_final.pt",
+        ),
     ]
 
 
 def test_cli_normalizes_legacy_prism_train_invocation():
-    assert _normalize_legacy_cli_argv(["train", "prism", "configs/default.yaml"]) == [
+    assert _normalize_legacy_cli_argv(["train", "prism", "configs/llada21_hard.yaml"]) == [
         "train",
         "--stage",
         "prism",
         "--config",
-        "configs/default.yaml",
+        "configs/llada21_hard.yaml",
     ]
 
 
 def test_cli_normalizes_legacy_grpo_train_invocation_with_resume():
-    assert _normalize_legacy_cli_argv(["train", "grpo", "configs/default.yaml", "auto"]) == [
+    assert _normalize_legacy_cli_argv(["train", "grpo", "configs/llada21_hard.yaml", "auto"]) == [
         "train",
         "--stage",
         "grpo",
         "--config",
-        "configs/default.yaml",
+        "configs/llada21_hard.yaml",
         "--resume",
         "auto",
     ]

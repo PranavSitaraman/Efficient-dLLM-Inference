@@ -14,16 +14,16 @@
   "rollout_steps": 16,
   "rollout_gen_length": 128,
   "normalize_advantage_std": true,
-  "best_reward": 0.05182438778798678,
+  "best_reward": -0.051335779623419515,
   "best_checkpoint": "outputs/paper/policy_best.pt",
   "final_checkpoint": "outputs/paper/policy_final.pt",
   "resume_from": null,
   "seed": 42,
-  "train_contract_version": 2,
-  "config_fingerprint": "e99e433726425d68ba9accd399ff009bfb7ec1cffa15d1ae7a5ed5728dc9819b",
+  "train_contract_version": 3,
+  "config_fingerprint": "95cfd69359e6a5b0db22cad774e7f9eb4ba145dca445f2fdcee9975f7722899b",
   "runtime": {
-    "host": "holygpu8a13104.rc.fas.harvard.edu",
-    "pid": 1930808,
+    "host": "holygpu8a15603.rc.fas.harvard.edu",
+    "pid": 3078101,
     "python_version": "3.10.19",
     "torch_version": "2.9.0+cu128",
     "cuda_available": true,
@@ -34,6 +34,6 @@
     ],
     "vllm_version": "0.11.2",
     "transformers_version": "4.57.1",
-    "git_commit": "ba9f0a838c9bcf3732dacff027f59e416ff1b873"
+    "git_commit": "02e5d367f89fd7017ae02969b807d0ee75fa61d2"
   }
 }

@@ -97,13 +97,18 @@ def resolve_sidecar_artifact(
 
 
 def build_grpo_config_fingerprint(cfg: Dict[str, object]) -> str:
-    """Build a stable fingerprint for GRPO-relevant config sections."""
+    """Build a stable fingerprint for GRPO-relevant config sections.
+
+    ``min_checkpoint_reward`` is a post-training quality gate, not a training
+    hyperparameter, so it is excluded from the fingerprint.
+    """
+    grpo = {k: v for k, v in cfg.get("grpo", {}).items() if k != "min_checkpoint_reward"}
     tracked = {
         "base_model": cfg.get("base_model", {}),
         "soft_mask": cfg.get("soft_mask", {}),
         "policy": cfg.get("policy", {}),
         "prism": cfg.get("prism", {}),
-        "grpo": cfg.get("grpo", {}),
+        "grpo": grpo,
         "inference": cfg.get("inference", {}),
         "data": {
             "train_dataset": cfg.get("data", {}).get("train_dataset"),
@@ -134,8 +139,20 @@ def read_grpo_training_metadata(output_dir: str) -> Optional[Dict[str, object]]:
     return data
 
 
-def inspect_grpo_artifacts(output_dir: str, cfg: Dict[str, object]) -> Dict[str, object]:
-    """Determine whether existing GRPO artifacts are safe to reuse."""
+def inspect_grpo_artifacts(
+    output_dir: str,
+    cfg: Dict[str, object],
+    *,
+    enforce_min_reward: bool = True,
+) -> Dict[str, object]:
+    """Determine whether existing GRPO artifacts match the current run contract.
+
+    ``enforce_min_reward`` is intentionally optional.  The contract checks
+    (metadata, training-version, config fingerprint) answer whether a checkpoint
+    belongs to this config and is safe to load.  The reward threshold is only a
+    policy decision for reusing/skipping experiments; it must not make eval fall
+    back to an untrained policy after a completed training run.
+    """
     status: Dict[str, object] = {
         "valid": False,
         "reason": "missing_output_dir",
@@ -170,7 +187,10 @@ def inspect_grpo_artifacts(output_dir: str, cfg: Dict[str, object]) -> Dict[str,
 
     min_reward = float(cfg.get("grpo", {}).get("min_checkpoint_reward", 0.0))
     best_reward = metadata.get("best_reward")
-    if best_reward is None or float(best_reward) < min_reward:
+    status["best_reward"] = best_reward
+    status["min_checkpoint_reward"] = min_reward
+    status["quality_ok"] = best_reward is not None and float(best_reward) >= min_reward
+    if enforce_min_reward and not bool(status["quality_ok"]):
         status["reason"] = "reward_below_threshold"
         return status
 
@@ -179,7 +199,12 @@ def inspect_grpo_artifacts(output_dir: str, cfg: Dict[str, object]) -> Dict[str,
     return status
 
 
-def inspect_grpo_resume_candidate(output_dir: str, cfg: Dict[str, object]) -> Dict[str, object]:
+def inspect_grpo_resume_candidate(
+    output_dir: str,
+    cfg: Dict[str, object],
+    *,
+    enforce_min_reward: bool = False,
+) -> Dict[str, object]:
     """Determine whether an existing GRPO checkpoint is safe to resume from.
 
     Resume eligibility is intentionally stricter than merely "a checkpoint file
@@ -223,7 +248,10 @@ def inspect_grpo_resume_candidate(output_dir: str, cfg: Dict[str, object]) -> Di
 
     min_reward = float(cfg.get("grpo", {}).get("min_checkpoint_reward", 0.0))
     best_reward = metadata.get("best_reward")
-    if best_reward is None or float(best_reward) < min_reward:
+    status["best_reward"] = best_reward
+    status["min_checkpoint_reward"] = min_reward
+    status["quality_ok"] = best_reward is not None and float(best_reward) >= min_reward
+    if enforce_min_reward and not bool(status["quality_ok"]):
         status["reason"] = "reward_below_threshold"
         return status
 

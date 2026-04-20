@@ -122,28 +122,3 @@ def compose_prediction_dual(
     composed = primary_logits + torch.nan_to_num(gamma * alpha_k * aux_log_probs, nan=0.0)
 
     return composed
-
-
-def compute_composition_entropy(
-    base_logits: torch.Tensor,
-    cache_probs: torch.Tensor,
-    gamma: float = 0.5,
-) -> torch.Tensor:
-    """Compute per-position entropy of the composed distribution.
-
-    Useful for diagnostics: verifying that entropy is preserved at
-    uncertain positions and reduced at stable ones.
-
-    Args:
-        base_logits: [B, L, V] raw logits.
-        cache_probs: [B, L] cache probabilities.
-        gamma: Composition strength.
-
-    Returns:
-        entropy: [B, L] per-position entropy in nats.
-    """
-    composed_logits = compose_prediction(base_logits, cache_probs, gamma)
-    probs = F.softmax(composed_logits, dim=-1)
-    log_probs = F.log_softmax(composed_logits, dim=-1)
-    entropy = -(torch.nan_to_num(probs * log_probs, nan=0.0)).sum(dim=-1)
-    return entropy
