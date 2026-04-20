@@ -44,9 +44,9 @@ aoae test
 ```bash
 aoae pipeline --config configs/default.yaml
 
-aoae tau-sweep --config configs/poc1.yaml --max_samples 100
-aoae reuse-sweep --config configs/poc2.yaml --max_samples 100
-aoae paper-suite --config configs/paper.yaml --max_samples 100
+aoae tau-sweep --config configs/poc1.yaml --max_samples 50
+aoae reuse-sweep --config configs/poc2.yaml --max_samples 50
+aoae paper-suite --config configs/paper.yaml --max_samples 50
 ```
 
 If a config sets `hardware.tp_size > 1`, the local `aoae` CLI will relaunch itself under `torchrun` automatically.
@@ -64,18 +64,18 @@ sbatch slurm/eval.sh configs/default.yaml outputs/default/policy_final.pt
 Paper / POCs:
 
 ```bash
-sbatch slurm/paper.sh suite configs/paper.yaml --max_samples 100
-sbatch slurm/paper.sh poc1 configs/poc1.yaml --max_samples 100
-sbatch slurm/paper.sh poc2 configs/poc2.yaml --max_samples 100
-sbatch slurm/paper.sh ablations configs/paper.yaml --max_samples 100
-sbatch slurm/paper.sh routing configs/llada21_hard.yaml configs/llada21_soft.yaml --max_samples 100
+sbatch slurm/paper.sh suite configs/paper.yaml --max_samples 50
+sbatch slurm/paper.sh poc1 configs/poc1.yaml --max_samples 50
+sbatch slurm/paper.sh poc2 configs/poc2.yaml --max_samples 50
+sbatch slurm/paper.sh ablations configs/paper.yaml --max_samples 50
+sbatch slurm/paper.sh routing configs/llada21_hard.yaml configs/llada21_soft.yaml --max_samples 50
 ```
 
 Workflow wrapper:
 
 ```bash
 bash reproduce.sh --slurm
-bash reproduce.sh --slurm --workflow paper --max_samples 100
+bash reproduce.sh --slurm --workflow paper --max_samples 50
 ```
 
 ## Troubleshooting
@@ -83,4 +83,4 @@ bash reproduce.sh --slurm --workflow paper --max_samples 100
 - OOM: reduce `inference.gen_length`, `grpo.group_size`, or `max_samples`.
 - Missing dInfer / vLLM MoE ops: rerun `aoae preflight --config configs/llada21_flash.yaml --strict_moe`.
 - HF model access issues: authenticate with `huggingface-cli login`.
-- Unexpected runtime drift after a dependency change: rerun `aoae test` and a small `aoae eval --max_samples 10`.
+- Unexpected runtime drift after a dependency change: rerun `aoae test` and a small `aoae eval --max_samples 50`.

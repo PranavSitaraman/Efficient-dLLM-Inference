@@ -4,5 +4,5 @@ __pycache__/
 external/
 .pytest_cache/
 outputs/
-results/
 logs/
+results/

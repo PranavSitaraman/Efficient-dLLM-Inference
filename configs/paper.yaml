@@ -1,9 +1,9 @@
 # Canonical speculative AOAE config.
 #
-# The paper path is lossy self-speculation: a hard-routed auxiliary takes
-# cheap draft steps while the normal verifier runs every primary_every_n steps
-# or sooner when agreement drops. K_spec is a transient verifier frontier;
-# K_stable is a separate learned persistent stability cache. This config keeps
+# The paper path is lossy self-speculation: a hard-routed auxiliary takes cheap
+# draft microsteps while the normal verifier validates an accumulated frontier.
+# K_spec is transient verification debt; K_stable is a separate learned
+# persistent stability cache. This config keeps
 # KV-dynamics diagnostics off by default so reproduction measures the intended
 # speed/quality trade-off rather than the analysis overhead.
 
@@ -53,9 +53,10 @@ cache:
   enabled: true
   # K_stable is learned but separate from the drafter/verifier frontier.
   stable_kv_cache: false
-  # K_spec is transient; with primary_every_n > 1 most speedup comes from
-  # auxiliary-only draft microsteps, not from treating K_spec as persistent.
-  kspec_skip: true
+  # Deprecated accepted-reuse shortcut. Disabled for the canonical paper path
+  # because K_spec must be validated, not skipped as if it were persistent KV.
+  kspec_skip: false
+  legacy_accepted_reuse: false
   # Reuse the prompt and drafter cache between verifier events; reset on high
   # verifier rejection.
   prefix_kv_cache: true
@@ -85,6 +86,9 @@ grpo:
   max_grad_norm: 1.0
   policy_temperature: 1.0
   normalize_advantage_std: true    # recommended for group_size ≥ 8
+  train_heads: ["cache", "access"] # u/r are deterministic: drafter schedule + verifier rejection
+  include_heads_in_logprob: ["cache", "access"]
+  train_soft_mask: false
   rollout_steps: 16                # training-time horizon; eval still uses inference.steps
   rollout_gen_length: 128          # training-time decode budget; eval remains 256
 
@@ -95,7 +99,26 @@ inference:
   fallback_unmask: true
   max_unmask_fraction_per_step: 0.125
   disable_remask: false
-  primary_every_n: 6
+  # Compatibility alias only. The canonical scheduler below is candidate-budget
+  # based because s-mode and q-mode draft different numbers of tokens per step.
+  primary_every_n: 4
+  verifier_schedule:
+    mode: "candidate_budget"
+    draft_token_budget: 12
+    min_draft_microsteps: 1
+    max_draft_microsteps: 4
+    force_first_last: true
+  verifier:
+    acceptance_mode: "argmax_match"
+    rejection_action: "remask"
+    use_prism_score: false
+    prism_accept_threshold: 0.5
+    recompute_after_reject: true
+  drafter:
+    decode_mode: "s_mode"
+    confidence_threshold: 0.7
+    cache_policy: "prefix"
+    aux_compute_ratio: 0.35
   primary_agree_threshold: 0.85
   aux_cache_reset_threshold: 0.35
   positional_cache:
@@ -141,7 +164,7 @@ data:
   use_chat_template: "auto"
   math_prompt_style: "auto"
   gsm8k_num_fewshot: 0
-  eval_max_samples: 100
+  eval_max_samples: 50
   max_prompt_len: 512
   max_answer_len: 256
 
@@ -151,8 +174,8 @@ evaluation:
     - "llada21_speed_mode"
     - "llada21_quality_mode"
     - "fast_dllm"
-  # The Pareto frontier is not a scalar tau_pi sweep. The verifier cadence,
-  # agreement threshold, remasking pressure, K_spec skip, and unmask budget are
+  # The Pareto frontier is not a scalar tau_pi sweep. The verifier budget,
+  # agreement threshold, remasking pressure, drafter cache, and unmask budget are
   # first-order quality/speed controls, so the default paper eval runs named
   # AOAE operating points across those knobs. Verifier-quality blockwise anchors
   # are already produced by the baseline rows; duplicating them inside the
@@ -168,34 +191,42 @@ evaluation:
           "cache.kspec_skip": false
           "cache.prefix_kv_cache": true
           "inference.speculative_schedule": "aoae"
-          "inference.primary_every_n": 1
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 4
+          "inference.verifier_schedule.max_draft_microsteps": 1
           "inference.primary_agree_threshold": 0.98
           "inference.max_unmask_fraction_per_step": 0.0625
           "inference.disable_remask": false
       - name: "balanced"
         policy_temperature: 1.0
         overrides:
-          "cache.kspec_skip": true
+          "cache.kspec_skip": false
           "inference.speculative_schedule": "aoae"
-          "inference.primary_every_n": 3
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 8
+          "inference.verifier_schedule.max_draft_microsteps": 3
           "inference.primary_agree_threshold": 0.92
           "inference.max_unmask_fraction_per_step": 0.125
           "inference.disable_remask": false
       - name: "fast"
         policy_temperature: 1.25
         overrides:
-          "cache.kspec_skip": true
+          "cache.kspec_skip": false
           "inference.speculative_schedule": "aoae"
-          "inference.primary_every_n": 6
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 12
+          "inference.verifier_schedule.max_draft_microsteps": 4
           "inference.primary_agree_threshold": 0.85
           "inference.max_unmask_fraction_per_step": 0.1875
           "inference.disable_remask": false
       - name: "fastest"
         policy_temperature: 1.5
         overrides:
-          "cache.kspec_skip": true
+          "cache.kspec_skip": false
           "inference.speculative_schedule": "aoae"
-          "inference.primary_every_n": 8
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 16
+          "inference.verifier_schedule.max_draft_microsteps": 4
           "inference.primary_agree_threshold": 0.75
           "inference.max_unmask_fraction_per_step": 0.25
           "inference.disable_remask": true

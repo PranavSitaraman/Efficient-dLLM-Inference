@@ -45,8 +45,15 @@ def test_paper_config_enables_full_aoae_stack():
     ]
     assert cfg["grpo"]["thrash_normalization"] == "response_length"
     assert cfg["grpo"]["cache_speed_source"] == "none"
+    assert cfg["grpo"]["train_heads"] == ["cache", "access"]
+    assert cfg["grpo"]["include_heads_in_logprob"] == ["cache", "access"]
+    assert cfg["grpo"]["train_soft_mask"] is False
     assert cfg["policy"]["init_unmask_bias"] < 0
     assert cfg["policy"]["init_remask_bias"] < 0
     assert cfg["policy"]["init_cache_bias"] < 0
     assert cfg["inference"]["max_unmask_fraction_per_step"] <= 0.125
     assert cfg["inference"]["positional_cache"]["enabled"] is True
+    assert cfg["inference"]["verifier_schedule"]["mode"] == "candidate_budget"
+    assert cfg["inference"]["verifier_schedule"]["draft_token_budget"] == 12
+    assert cfg["inference"]["verifier"]["acceptance_mode"] == "argmax_match"
+    assert cfg["inference"]["drafter"]["decode_mode"] == "s_mode"

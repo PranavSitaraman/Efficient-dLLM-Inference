@@ -4,10 +4,9 @@ Policy-controlled speculative-frontier / stable-cache bookkeepers.
 Two distinct state pools are maintained (per kv_cache_staleness.md):
 
   K_spec  (SpeculativeKVCache; legacy class name) — transient speculative
-    frontier / speculative-accept state with one-step lifetime.
-    Conceptually this is NOT a persistent KV cache. In the current k=1
-    implementation it is materialized as a one-step verifier hint / reuse mask
-    and is replaced every step.
+    frontier of drafted-but-not-yet-verified positions. Conceptually this is
+    NOT a persistent KV cache; the runtime stores proposal tokens in
+    DraftFrontier and mirrors the frontier mask here for metrics/contracts.
 
   K_stable (StableKVCache) — persistent, multi-step KV cache.
     Positions where the policy's κ_t head predicts stable KV across future
@@ -29,12 +28,11 @@ import torch
 # ---------------------------------------------------------------------------
 
 class SpeculativeKVCache:
-    """K_spec: transient speculative frontier / one-step speculative-accept state.
+    """K_spec: transient speculative frontier mask.
 
-    Despite the legacy class name, this is not a persistent cache. It stores
-    the short-lived speculative state that bridges the drafter and verifier.
-    In the current k=1 runtime this is represented as the previous step's
-    accepted / reusable positions and is replaced entirely each step.
+    Despite the legacy class name, this is not a persistent cache. It mirrors
+    the set of positions drafted by the auxiliary and not yet consumed by the
+    primary verifier. Proposal tokens/logits live in DraftFrontier.
     """
 
     def __init__(self, batch_size: int, seq_len: int, device: torch.device):
@@ -45,15 +43,15 @@ class SpeculativeKVCache:
             batch_size, seq_len, dtype=torch.bool, device=device
         )
 
-    def accept(self, agreement: torch.Tensor):
-        """Replace the one-step speculative frontier mask (not a union)."""
-        self.cached = agreement.bool()
+    def accept(self, frontier_mask: torch.Tensor):
+        """Replace the mirrored frontier mask with the runtime DraftFrontier."""
+        self.cached = frontier_mask.bool()
 
     def get_cached_mask(self) -> torch.BoolTensor:
         return self.cached
 
     def cached_fraction(self) -> torch.Tensor:
-        """[B] legacy metric name for the current K_spec frontier occupancy."""
+        """[B] fraction of positions currently awaiting verification."""
         return self.cached.float().mean(dim=-1)
 
     def reset(self):
@@ -160,7 +158,7 @@ class SpeculativeCacheBookkeeper:
     # --- New two-cache API (called from speculative_inference.py Phase 3) ---
 
     def step_spec(self, agreement: torch.Tensor):
-        """Phase 3a: Update the transient K_spec frontier for the next step."""
+        """Phase 3a: mirror the transient K_spec frontier."""
         self.spec.accept(agreement)
 
     def step_stable(self, kappa_t: torch.Tensor, r_t: torch.Tensor):

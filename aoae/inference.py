@@ -17,6 +17,14 @@ from typing import Optional, List, Dict, Tuple, Any
 from dataclasses import dataclass, field
 import json
 
+
+def _as_head_set(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return {p.strip() for p in value.split(",") if p.strip()}
+    return {str(p).strip() for p in value if str(p).strip()}
+
 from .cache import DKVCacheManager
 from .models.composed_prediction import compose_prediction
 from .models.policy import apply_unmask_budget, call_policy
@@ -366,7 +374,13 @@ def aoae_inference(
 
         # --- Record trajectory for GRPO ---
         if trajectory is not None:
-            lp = pol_inner.log_prob(policy_out, actions)
+            include_heads = _as_head_set(
+                cfg.get("grpo", {}).get(
+                    "include_heads_in_logprob",
+                    cfg.get("grpo", {}).get("train_heads"),
+                )
+            )
+            lp = pol_inner.log_prob(policy_out, actions, include_heads=include_heads)
             trajectory.actions.append({k: v.detach() for k, v in actions.items()})
             trajectory.log_probs.append(lp.detach())
             trajectory.policy_outputs.append(

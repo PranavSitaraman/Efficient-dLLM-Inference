@@ -344,7 +344,7 @@ def _gsm8k_allows_leading_scalar_prefix(prefix: str) -> bool:
     cleaned = cleaned.replace(r"\boxed{", "")
     cleaned = cleaned.replace(r"\(", "")
     cleaned = cleaned.replace(r"\[", "")
-    cleaned = re.sub(r"[\s*_`~#$>:;,\-={}\[\]()\"']+", "", cleaned)
+    cleaned = re.sub(r"[\s*_`~#$<>:;,\-={}\[\]()\"']+", "", cleaned)
     return cleaned == ""
 
 
@@ -422,6 +422,9 @@ def extract_gsm8k_llada_answer(text: str) -> str:
             candidate = _extract_gsm8k_llada_from_line(matches[-1])
             if candidate != _GSM8K_INVALID_ANS:
                 return candidate
+            first_numeric = _extract_first_numeric_candidate(matches[-1])
+            if first_numeric is not None:
+                return _normalize_gsm8k_llada_answer(first_numeric)
 
     multiline_candidate = _extract_gsm8k_llada_multiline_answer(text)
     if multiline_candidate != _GSM8K_INVALID_ANS:

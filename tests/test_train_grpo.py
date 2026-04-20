@@ -264,3 +264,92 @@ def test_compute_reward_cache_quality_f1_adds_positive_reward():
     expected_boost = 0.1 * ((0.9 + 0.8 + 0.85) / 3.0)
     actual_boost = reward_with_f1[0].item() - reward_no_f1[0].item()
     assert abs(actual_boost - expected_boost) < 1e-5
+
+
+def test_compute_reward_prefers_trajectory_effective_flops():
+    from aoae.train_grpo import compute_reward
+    from unittest.mock import MagicMock, patch
+
+    tokenizer = MagicMock()
+    tokenizer.decode.return_value = "42"
+    traj = SimpleNamespace(
+        completion_step=torch.tensor([16.0]),
+        effective_flops=torch.tensor([0.25]),
+        aux_compute_units=torch.tensor([1.0]),
+        verifier_compute_units=torch.tensor([3.0]),
+        baseline_compute_units=torch.tensor([16.0]),
+        thrash_counts=[],
+        cached_fractions=[],
+        stable_cached_fractions=[torch.tensor([0.9])],
+        spec_cached_fractions=[],
+        actions=[],
+        final_tokens=torch.tensor([[1, 2, 3, 4]]),
+        access_metrics={},
+        cache_quality_f1=[],
+    )
+    cfg = {
+        "base_model": {"mask_token_id": 99},
+        "grpo": {
+            "alpha": 1.0,
+            "beta": 0.0,
+            "cache_speed_source": "none",
+            "access_reward_weight": 0.0,
+            "cache_quality_weight": 0.0,
+            "unresolved_penalty_weight": 0.0,
+        },
+    }
+
+    with patch("aoae.train_grpo.check_math_correctness", return_value=True):
+        reward, components = compute_reward(
+            generated_tokens=torch.tensor([[1, 2, 3, 4]]),
+            reference_answer=["42"],
+            tokenizer=tokenizer,
+            trajectory=traj,
+            cfg=cfg,
+            T=16,
+        )
+
+    assert abs(components["effective_flops"].item() - 0.25) < 1e-6
+    assert abs(components["speed_factor"].item() - 0.75) < 1e-6
+    assert abs(reward.item() - 0.75) < 1e-6
+
+
+def test_configure_grpo_trainability_freezes_unmask_remask_and_soft_mask():
+    from aoae.models.policy import AOAEPolicy
+    from aoae.models.soft_mask import SoftMaskedState
+    from aoae.train_grpo import configure_grpo_trainability
+
+    cfg = {
+        "policy": {
+            "d_model": 16,
+            "n_layers": 1,
+            "n_heads": 4,
+            "dropout": 0.0,
+            "use_positional_features": False,
+            "use_age_feature": False,
+            "use_last_action_feature": False,
+            "boundary_head": {"enabled": False},
+        },
+        "soft_mask": {
+            "top_k": 2,
+            "omega_s_init": 0.8,
+            "omega_a_init": 1.0,
+            "omega_b_init": 2.0,
+        },
+        "grpo": {
+            "train_heads": ["cache", "access"],
+            "include_heads_in_logprob": ["cache", "access"],
+            "train_soft_mask": False,
+        },
+    }
+    policy = AOAEPolicy(cfg, input_dim=8)
+    soft_mask = SoftMaskedState(cfg, torch.randn(11, 8))
+
+    trainable = configure_grpo_trainability(policy, soft_mask, cfg)
+
+    assert trainable
+    assert not any(p.requires_grad for p in policy.head_unmask.parameters())
+    assert not any(p.requires_grad for p in policy.head_remask.parameters())
+    assert all(p.requires_grad for p in policy.head_cache.parameters())
+    assert all(p.requires_grad for p in policy.head_access.parameters())
+    assert not any(p.requires_grad for p in soft_mask.parameters())

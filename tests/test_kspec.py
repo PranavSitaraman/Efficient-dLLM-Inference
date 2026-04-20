@@ -1,8 +1,18 @@
 """
-Unit tests for K_spec KV skip implementation.
+Tests for K_spec / DraftFrontier semantics.
 
-Tests _kspec_find_clusters and forward_with_kspec_cache using a mock that
-implements forward_replace_with_cache without loading any real model weights.
+Section 1-5: _kspec_find_clusters and forward_with_kspec_cache — test the base_model
+utility functions that remain in aoae/models/base_model.py. These are NOT the canonical
+inference path; kspec_skip is disabled in speculative_inference.py. They remain here
+because the underlying algorithms still live in base_model.
+
+Section 6 (TestDraftFrontier): canonical tests for the transient K_spec accumulating
+frontier. These test the semantics that speculative_inference.py actually uses:
+  - frontier accumulates across aux microsteps
+  - cleared after a verifier event
+  - authoritative argmax validation accepts/rejects per stored token
+  - probability threshold and PRISM gate modes
+  - age tracking across aux steps
 
 Run with:
     ./dlm_env/bin/python -m pytest tests/test_kspec.py -v
@@ -18,6 +28,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from aoae.models.base_model import _kspec_find_clusters
+from aoae.speculative_inference import DraftFrontier
 
 
 # ---------------------------------------------------------------------------
@@ -380,3 +391,129 @@ class TestClusterCoverage:
             f"non_agreed={non_agreed.tolist()}\nclusters={clusters}\n"
             f"covered={sorted(covered)}\nexpected={sorted(expected)}"
         )
+
+
+class TestDraftFrontier:
+    def test_accumulates_across_aux_steps(self):
+        """Frontier accumulates proposals from multiple aux microsteps before a verifier event."""
+        frontier = DraftFrontier(batch_size=1, seq_len=4, device=torch.device("cpu"))
+        tokens = torch.tensor([[10, 11, 12, 13]])
+
+        frontier.add(torch.tensor([[True, False, False, False]]), tokens)
+        assert frontier.mask.tolist() == [[True, False, False, False]]
+
+        frontier.add(torch.tensor([[False, False, True, False]]), tokens)
+        assert frontier.mask.tolist() == [[True, False, True, False]]
+        assert frontier.token_ids.tolist() == [[10, -1, 12, -1]]
+        assert frontier.numel_per_batch().item() == 2
+
+    def test_clear_after_verifier_event(self):
+        """Frontier is completely cleared after the verifier consumes it."""
+        frontier = DraftFrontier(batch_size=1, seq_len=4, device=torch.device("cpu"))
+        tokens = torch.tensor([[10, 11, 12, 13]])
+        frontier.add(torch.tensor([[True, True, True, True]]), tokens)
+        assert frontier.mask.any()
+
+        frontier.clear()
+
+        assert not frontier.mask.any()
+        assert frontier.token_ids.tolist() == [[-1, -1, -1, -1]]
+        assert frontier.scores.sum().item() == 0.0
+        assert frontier.age.sum().item() == 0.0
+
+    def test_authoritative_argmax_validation(self):
+        """Verifier authoritatively accepts matching tokens, rejects mismatches."""
+        frontier = DraftFrontier(batch_size=1, seq_len=3, device=torch.device("cpu"))
+        tokens = torch.tensor([[0, 0, 2]])
+        frontier.add(torch.tensor([[True, True, True]]), tokens)
+        primary_logits = torch.tensor(
+            [[[5.0, 0.0, 0.0], [0.0, 6.0, 0.0], [0.0, 0.0, 7.0]]],
+            dtype=torch.float32,
+        )
+
+        accepted, rejected = frontier.validate(
+            primary_logits,
+            {"inference": {"verifier": {"acceptance_mode": "argmax_match"}}},
+        )
+
+        assert accepted.tolist() == [[True, False, True]]
+        assert rejected.tolist() == [[False, True, False]]
+
+    def test_prob_threshold_validation(self):
+        """Probability threshold mode accepts when primary assigns sufficient probability."""
+        frontier = DraftFrontier(batch_size=1, seq_len=2, device=torch.device("cpu"))
+        tokens = torch.tensor([[0, 1]])
+        frontier.add(torch.tensor([[True, True]]), tokens)
+        # pos 0: draft=0, primary assigns 0.9 to token 0 → accept
+        # pos 1: draft=1, primary assigns 0.3 to token 1 → reject (< 0.5 threshold)
+        primary_logits = torch.tensor(
+            [[[10.0, 0.0], [0.0, 0.6]]],  # softmax: pos0 → [0.9999, 0.0001]; pos1 → [0.35, 0.65]
+            dtype=torch.float32,
+        )
+        accepted, rejected = frontier.validate(
+            primary_logits,
+            {"inference": {"verifier": {"acceptance_mode": "prob_threshold", "primary_prob_threshold": 0.5}}},
+        )
+        # pos 0: p(token 0) ≈ 0.9999 ≥ 0.5 → accept
+        # pos 1: p(token 1) ≈ 0.65 ≥ 0.5 → accept
+        assert accepted[:, 0].all()
+        assert accepted[:, 1].all()
+
+    def test_empty_frontier_returns_zeros(self):
+        """Validating an empty frontier returns all-zeros (no accepts, no rejects)."""
+        frontier = DraftFrontier(batch_size=2, seq_len=5, device=torch.device("cpu"))
+        primary_logits = torch.randn(2, 5, 10)
+        accepted, rejected = frontier.validate(
+            primary_logits, {"inference": {"verifier": {"acceptance_mode": "argmax_match"}}},
+        )
+        assert not accepted.any()
+        assert not rejected.any()
+
+    def test_only_frontier_positions_validated(self):
+        """validate() only considers positions in the frontier mask."""
+        frontier = DraftFrontier(batch_size=1, seq_len=4, device=torch.device("cpu"))
+        tokens = torch.tensor([[1, 0, 0, 0]])
+        frontier.add(torch.tensor([[True, False, False, False]]), tokens)
+        # Primary argmax is token 1 at pos 0 (agrees) and token 0 elsewhere.
+        primary_logits = torch.zeros(1, 4, 3)
+        primary_logits[0, 0, 1] = 10.0  # pos 0 argmax = 1 → matches draft token 1
+        primary_logits[0, 1, 2] = 10.0  # pos 1 argmax = 2, but not in frontier
+
+        accepted, rejected = frontier.validate(
+            primary_logits, {"inference": {"verifier": {"acceptance_mode": "argmax_match"}}},
+        )
+        assert accepted.tolist() == [[True, False, False, False]]
+        assert rejected.tolist() == [[False, False, False, False]]
+
+    def test_age_tracking(self):
+        """step_age increments age at active frontier positions only."""
+        frontier = DraftFrontier(batch_size=1, seq_len=3, device=torch.device("cpu"))
+        tokens = torch.tensor([[5, 6, 7]])
+        frontier.add(torch.tensor([[True, False, True]]), tokens)
+
+        frontier.step_age()
+        frontier.step_age()
+
+        assert frontier.age[0, 0].item() == 2.0
+        assert frontier.age[0, 1].item() == 0.0  # not in frontier
+        assert frontier.age[0, 2].item() == 2.0
+
+    def test_batch_accept_reject_independently(self):
+        """Each batch item is validated independently."""
+        frontier = DraftFrontier(batch_size=2, seq_len=2, device=torch.device("cpu"))
+        # item 0: draft [0, 1]; item 1: draft [0, 1]
+        tokens = torch.tensor([[0, 1], [0, 1]])
+        frontier.add(torch.ones(2, 2, dtype=torch.bool), tokens)
+        # item 0: primary argmax = [0, 0] → pos 0 accept, pos 1 reject
+        # item 1: primary argmax = [1, 1] → pos 0 reject, pos 1 accept
+        logits = torch.zeros(2, 2, 3)
+        logits[0, 0, 0] = 10.0; logits[0, 1, 0] = 10.0
+        logits[1, 0, 1] = 10.0; logits[1, 1, 1] = 10.0
+
+        accepted, rejected = frontier.validate(
+            logits, {"inference": {"verifier": {"acceptance_mode": "argmax_match"}}},
+        )
+        assert accepted[0].tolist() == [True, False]
+        assert rejected[0].tolist() == [False, True]
+        assert accepted[1].tolist() == [False, True]
+        assert rejected[1].tolist() == [True, False]

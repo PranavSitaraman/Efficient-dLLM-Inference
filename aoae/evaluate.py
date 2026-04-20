@@ -122,6 +122,13 @@ class EvalResult:
     primary_partial_steps: float = 0.0
     primary_verified_positions: float = 0.0
     primary_full_equiv_positions: float = 0.0
+    verifier_call_rate: float = 0.0
+    draft_microsteps: float = 0.0
+    mean_frontier_size: float = 0.0
+    frontier_accept_rate: float = 0.0
+    frontier_reject_rate: float = 0.0
+    drafter_cache_resets: float = 0.0
+    effective_flops: float = 0.0
 
 
 _DEFAULT_BASELINE_METHODS = [
@@ -144,12 +151,17 @@ _SPECULATIVE_POINT_OVERRIDE_ALIASES = {
     "steps": "inference.steps",
     "gen_length": "inference.gen_length",
     "primary_every_n": "inference.primary_every_n",
+    "verifier_schedule_mode": "inference.verifier_schedule.mode",
+    "draft_token_budget": "inference.verifier_schedule.draft_token_budget",
+    "max_draft_microsteps": "inference.verifier_schedule.max_draft_microsteps",
+    "min_draft_microsteps": "inference.verifier_schedule.min_draft_microsteps",
+    "acceptance_mode": "inference.verifier.acceptance_mode",
+    "compose_gamma": "inference.compose_gamma",
     "primary_agree_threshold": "inference.primary_agree_threshold",
     "aux_cache_reset_threshold": "inference.aux_cache_reset_threshold",
     "max_unmask_fraction_per_step": "inference.max_unmask_fraction_per_step",
     "max_unmask_tokens_per_step": "inference.max_unmask_tokens_per_step",
     "disable_remask": "inference.disable_remask",
-    "compose_gamma": "inference.compose_gamma",
     "reuse_signal_method": "inference.reuse_signal.method",
     "reuse_signal_threshold": "inference.reuse_signal.threshold",
     "positional_cache_enabled": "inference.positional_cache.enabled",
@@ -948,6 +960,13 @@ def evaluate_speculative(
     total_primary_partial_steps = 0.0
     total_primary_verified_positions = 0.0
     total_primary_full_equiv_positions = 0.0
+    total_verifier_call_rate = 0.0
+    total_draft_microsteps = 0.0
+    total_frontier_size = 0.0
+    total_frontier_accept_rate = 0.0
+    total_frontier_reject_rate = 0.0
+    total_drafter_cache_resets = 0.0
+    total_effective_flops = 0.0
     boundary_dist_counter: collections.Counter[str] = collections.Counter()
     evaluator = build_evaluator(cfg)
     scoring_rule = getattr(evaluator, "evaluator_name", describe_evaluator(cfg))
@@ -1042,6 +1061,8 @@ def evaluate_speculative(
                     stats["aux_only_steps"] = int(getattr(traj, "aux_only_steps", 0))
                     total_steps = stats["primary_steps"] + stats["aux_only_steps"]
                     stats["primary_skip_ratio"] = stats["aux_only_steps"] / max(total_steps, 1)
+                    stats["verifier_call_rate"] = stats["primary_steps"] / max(total_steps, 1)
+                    stats["draft_microsteps"] = stats["aux_only_steps"]
                     stats["total_commits"] = int(getattr(traj, "total_stable_commits", 0))
                     stats["total_invalidations"] = int(getattr(traj, "total_stable_invalidations", 0))
                     stats["stable_cache_fraction"] = _mean_fraction_series(
@@ -1055,12 +1076,18 @@ def evaluate_speculative(
                     )
                     stats["draft_accepts"] = int(getattr(traj, "draft_accepts", 0))
                     stats["draft_rejects"] = int(getattr(traj, "draft_rejects", 0))
+                    stats["frontier_accept_rate"] = float(getattr(traj, "frontier_accept_rate", 0.0))
+                    stats["frontier_reject_rate"] = float(getattr(traj, "frontier_reject_rate", 0.0))
+                    stats["mean_frontier_size"] = float(getattr(traj, "mean_frontier_size", 0.0))
                     stats["mean_agreement"] = float(traj.mean_agreement_rate)
                     stats["agreement_observations"] = int(getattr(traj, "agreement_observations", 0))
                     stats["reuse_mean_safe_reuse"] = float(traj.mean_agreement_rate)
                     stats["safe_reuse_observations"] = int(getattr(traj, "agreement_observations", 0))
                     stats["reuse_mean_js_divergence"] = 0.0
                     stats["drafter_cache_resets"] = int(getattr(traj, "drafter_cache_resets", 0))
+                    eff = getattr(traj, "effective_flops", None)
+                    if eff is not None:
+                        stats["effective_flops"] = float(eff.float().mean().item())
                     am = traj.access_metrics
                     stats["access_access_rate"] = float(am.get("access_rate", 0.0))
                     stats["access_access_mandatory_rate"] = float(am.get("access_mandatory_rate", 0.0))
@@ -1163,6 +1190,13 @@ def evaluate_speculative(
         total_primary_partial_steps += float(stats.get("primary_partial_steps", 0.0))
         total_primary_verified_positions += float(stats.get("primary_verified_positions", 0.0))
         total_primary_full_equiv_positions += float(stats.get("primary_full_equiv_positions", 0.0))
+        total_verifier_call_rate += float(stats.get("verifier_call_rate", 0.0))
+        total_draft_microsteps += float(stats.get("draft_microsteps", stats.get("aux_only_steps", 0.0)))
+        total_frontier_size += float(stats.get("mean_frontier_size", 0.0))
+        total_frontier_accept_rate += float(stats.get("frontier_accept_rate", 0.0))
+        total_frontier_reject_rate += float(stats.get("frontier_reject_rate", 0.0))
+        total_drafter_cache_resets += float(stats.get("drafter_cache_resets", 0.0))
+        total_effective_flops += float(stats.get("effective_flops", 0.0))
         try:
             bd = json.loads(stats.get("boundary_distribution", "{}"))
             for k, v in bd.items():
@@ -1225,6 +1259,13 @@ def evaluate_speculative(
     primary_partial_steps = total_primary_partial_steps / max(total, 1)
     primary_verified_positions = total_primary_verified_positions / max(total, 1)
     primary_full_equiv_positions = total_primary_full_equiv_positions / max(total, 1)
+    verifier_call_rate = total_verifier_call_rate / max(total, 1)
+    draft_microsteps = total_draft_microsteps / max(total, 1)
+    mean_frontier_size = total_frontier_size / max(total, 1)
+    frontier_accept_rate = total_frontier_accept_rate / max(total, 1)
+    frontier_reject_rate = total_frontier_reject_rate / max(total, 1)
+    drafter_cache_resets = total_drafter_cache_resets / max(total, 1)
+    effective_flops = total_effective_flops / max(total, 1)
 
     return EvalResult(
         method="Speculative-AOAE",
@@ -1268,6 +1309,13 @@ def evaluate_speculative(
         primary_partial_steps=primary_partial_steps,
         primary_verified_positions=primary_verified_positions,
         primary_full_equiv_positions=primary_full_equiv_positions,
+        verifier_call_rate=verifier_call_rate,
+        draft_microsteps=draft_microsteps,
+        mean_frontier_size=mean_frontier_size,
+        frontier_accept_rate=frontier_accept_rate,
+        frontier_reject_rate=frontier_reject_rate,
+        drafter_cache_resets=drafter_cache_resets,
+        effective_flops=effective_flops,
     )
 
 

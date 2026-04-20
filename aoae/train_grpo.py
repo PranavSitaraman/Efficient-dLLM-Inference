@@ -51,6 +51,19 @@ AnyTrajectory = Union[AOAETrajectory, SpeculativeTrajectory]
 _MAX_IMPORTANCE_LOG_RATIO = 20.0
 
 
+def _head_set(value: Any) -> Optional[set]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return {p.strip() for p in value.split(",") if p.strip()}
+    return {str(p).strip() for p in value if str(p).strip()}
+
+
+def _include_heads_for_logprob(cfg: dict) -> Optional[set]:
+    gc = cfg.get("grpo", {})
+    return _head_set(gc.get("include_heads_in_logprob", gc.get("train_heads")))
+
+
 # ======================================================================
 # Training logger (WandB + JSONL + enriched console output)
 # ======================================================================
@@ -155,9 +168,9 @@ def compute_reward(
       effective_flops = (used_steps / T) * (1 - mean_cache_for_speed)
       speed_factor    = (1 - effective_flops)^alpha
 
-    By default, transient K_spec agreement is logged but not credited as free
-    persistent cache. This keeps GRPO from treating broad auxiliary-primary
-    agreement as zero compute and collapsing to one-step all-unmask decoding.
+    By default, transient K_spec frontier occupancy is logged but not credited
+    as free persistent cache. Speculative trajectories instead provide explicit
+    aux/verifier compute accounting.
 
     Args:
         generated_tokens: [B, L_gen] generated response tokens.
@@ -195,12 +208,6 @@ def compute_reward(
         correct = check_math_correctness(gen_text, reference_answer[b])
         correctness[b] = 1.0 if correct else 0.0
 
-    # --- Speed factor (compute-aware proxy for wall-time speedup) ---
-    #
-    # K_spec is a transient agreement frontier, not a learned persistent cache.
-    # Crediting it directly made broad argmax agreement look like zero compute.
-    # Cache-speed credit is therefore opt-in and source-specific; the paper
-    # config keeps it disabled while stable KV reuse is still an ablation.
     if getattr(trajectory, "completion_step", None) is not None:
         used_steps = trajectory.completion_step.to(device).float().clamp(min=1.0, max=float(T))
     else:
@@ -224,21 +231,28 @@ def compute_reward(
         # fraction corresponds to the only operational cache-like set they have.
         mean_stable_cached = mean_combined_cached
 
-    cache_speed_source = str(gc.get("cache_speed_source", "none")).lower()
-    if cache_speed_source in ("stable", "k_stable", "persistent"):
+    trajectory_eff = getattr(trajectory, "effective_flops", None)
+    if trajectory_eff is not None:
+        effective_flops = trajectory_eff.to(device).float().clamp(min=0.0)
         mean_cached = mean_stable_cached
-    elif cache_speed_source in ("spec", "k_spec", "transient"):
-        mean_cached = mean_spec_cached
-    elif cache_speed_source in ("combined", "union", "all"):
-        mean_cached = mean_combined_cached
     else:
-        mean_cached = torch.zeros(B, device=device)
+        # Fallback for legacy/single-model trajectories. K_spec is transient and
+        # never credited by default; stable cache credit remains source-gated.
+        cache_speed_source = str(gc.get("cache_speed_source", "none")).lower()
+        if cache_speed_source in ("stable", "k_stable", "persistent"):
+            mean_cached = mean_stable_cached
+        elif cache_speed_source in ("spec", "k_spec", "transient"):
+            mean_cached = mean_spec_cached
+        elif cache_speed_source in ("combined", "union", "all"):
+            mean_cached = mean_combined_cached
+        else:
+            mean_cached = torch.zeros(B, device=device)
 
-    cache_speed_credit_cap = float(gc.get("cache_speed_credit_cap", 1.0))
-    mean_cached = mean_cached.clamp(0.0, max(0.0, min(cache_speed_credit_cap, 1.0)))
-
-    used_steps_frac = used_steps / float(T)                                   # [B] in [0,1]
-    effective_flops = used_steps_frac * (1.0 - mean_cached)                   # [B] in [0,1]
+        cache_speed_credit_cap = float(gc.get("cache_speed_credit_cap", 1.0))
+        mean_cached = mean_cached.clamp(0.0, max(0.0, min(cache_speed_credit_cap, 1.0)))
+        used_steps_frac = used_steps / float(T)                               # [B] in [0,1]
+        effective_flops = used_steps_frac * (1.0 - mean_cached)               # [B] in [0,1]
+    used_steps_frac = used_steps / float(T)
     speed_factor = (1.0 - effective_flops.clamp(0.0, 1.0)).pow(alpha)         # [B] in [0,1]
 
     # --- Cache thrashing penalty ---
@@ -315,6 +329,24 @@ def compute_reward(
         "correctness":         correctness,
         "speed_factor":        speed_factor,
         "effective_flops":     effective_flops,
+        "aux_compute_units":    (
+            getattr(trajectory, "aux_compute_units", torch.zeros(B, device=device))
+            .to(device).float()
+            if getattr(trajectory, "aux_compute_units", None) is not None
+            else torch.zeros(B, device=device)
+        ),
+        "verifier_compute_units": (
+            getattr(trajectory, "verifier_compute_units", torch.zeros(B, device=device))
+            .to(device).float()
+            if getattr(trajectory, "verifier_compute_units", None) is not None
+            else torch.zeros(B, device=device)
+        ),
+        "baseline_compute_units": (
+            getattr(trajectory, "baseline_compute_units", torch.zeros(B, device=device))
+            .to(device).float()
+            if getattr(trajectory, "baseline_compute_units", None) is not None
+            else torch.zeros(B, device=device)
+        ),
         "used_steps_frac":     used_steps_frac,
         "mean_cached_fraction": mean_cached,
         "mean_combined_cached_fraction": mean_combined_cached,
@@ -326,7 +358,7 @@ def compute_reward(
         "unresolved_penalty":   unresolved_penalty,
         "cache_f1_reward":      cache_f1_reward,
         "access_reward":        access_reward,
-        "mean_spec_cached":     mean_spec_cached,   # K_spec (agreement, one-step)
+        "mean_spec_cached":     mean_spec_cached,   # transient draft frontier
     }
 
     return reward, components
@@ -342,6 +374,7 @@ def compute_grpo_loss(
     trajectories: List[Dict],
     advantages: torch.Tensor,
     clip_eps: float,
+    include_heads_in_logprob: Optional[set] = None,
 ) -> torch.Tensor:
     """
     Compute clipped GRPO surrogate loss.
@@ -413,7 +446,11 @@ def compute_grpo_loss(
                 last_action_feature=last_action_feat,
             )
             pol_inner = policy.module if hasattr(policy, 'module') else policy
-            new_lp = pol_inner.log_prob(policy_out, actions)  # [1]
+            new_lp = pol_inner.log_prob(
+                policy_out,
+                actions,
+                include_heads=include_heads_in_logprob,
+            )  # [1]
 
             # Importance ratio
             log_ratio = new_lp - old_lp
@@ -478,6 +515,46 @@ def build_rollout_cfg(cfg: dict) -> dict:
         inference_cfg["gen_length"] = int(rollout_gen_length)
 
     return rollout_cfg
+
+
+def configure_grpo_trainability(policy, soft_mask_module, cfg: dict) -> List[nn.Parameter]:
+    """Freeze deterministic heads and return parameters for the optimizer.
+
+    The canonical draft-frontier setup trains the cache/access policy while
+    unmasking follows a fixed drafter-confidence schedule and rejection is
+    handled by the verifier. Full four-head training remains available by
+    setting ``grpo.train_heads`` to include ``unmask`` and ``remask``.
+    """
+    gc = cfg.get("grpo", {})
+    train_heads = _head_set(gc.get("train_heads"))
+    pol_inner = policy.module if hasattr(policy, "module") else policy
+    if train_heads is not None:
+        head_modules = {
+            "unmask": getattr(pol_inner, "head_unmask", None),
+            "u_t": getattr(pol_inner, "head_unmask", None),
+            "remask": getattr(pol_inner, "head_remask", None),
+            "r_t": getattr(pol_inner, "head_remask", None),
+            "cache": getattr(pol_inner, "head_cache", None),
+            "kappa_t": getattr(pol_inner, "head_cache", None),
+            "access": getattr(pol_inner, "head_access", None),
+            "q_t": getattr(pol_inner, "head_access", None),
+            "boundary": getattr(pol_inner, "head_boundary", None),
+            "ell_t": getattr(pol_inner, "head_boundary", None),
+        }
+        for module in {m for m in head_modules.values() if m is not None}:
+            for p in module.parameters():
+                p.requires_grad_(False)
+        for name, module in head_modules.items():
+            if module is not None and name in train_heads:
+                for p in module.parameters():
+                    p.requires_grad_(True)
+
+    if not bool(gc.get("train_soft_mask", True)):
+        sm_inner = soft_mask_module.module if hasattr(soft_mask_module, "module") else soft_mask_module
+        for p in sm_inner.parameters():
+            p.requires_grad_(False)
+
+    return [p for p in list(policy.parameters()) + list(soft_mask_module.parameters()) if p.requires_grad]
 
 
 def split_group_trajectory(trajectory: Any, group_size: int) -> List[Dict[str, Any]]:
@@ -675,6 +752,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
     soft_mask = None
     optimizer = None
     scheduler = None
+    _logger = None
     global_step = 0
     accum_step = 0
     start_epoch = 0
@@ -755,12 +833,21 @@ def train(cfg: dict, resume_from: Optional[str] = None):
         if is_main:
             print(f"Policy parameters: {n_params:,} ({n_params / 1e6:.2f}M)")
 
+        # Freeze deterministic/non-canonical heads before DDP construction.
+        # DDP snapshots the trainable parameter set when it is built; freezing
+        # heads afterward leaves reducer buckets expecting gradients for heads
+        # intentionally excluded from the GRPO likelihood.
+        configure_grpo_trainability(policy, soft_mask, cfg)
+
         # Wrap policy in DDP for multi-GPU gradient sync
         if is_distributed:
             from torch.nn.parallel import DistributedDataParallel as DDP
             policy = DDP(policy, device_ids=[local_rank])
-            # soft_mask has learnable gating params too
-            soft_mask = DDP(soft_mask, device_ids=[local_rank])
+            # Only wrap soft_mask in DDP if it has parameters that require gradients.
+            # When train_soft_mask=false, configure_grpo_trainability freezes all its
+            # params, and DDP raises RuntimeError on a fully-frozen module.
+            if any(p.requires_grad for p in soft_mask.parameters()):
+                soft_mask = DDP(soft_mask, device_ids=[local_rank])
 
         # PRISM adapter (optional — load if checkpoint exists, else skip)
         prism_path = os.path.join(lc["output_dir"], "prism_adapter.pt")
@@ -775,8 +862,22 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                 print("No PRISM adapter found — policy will not receive quality scores.")
             prism = None
 
-        # --- Optimizer (over all trainable params including DDP wrappers) ---
-        trainable_params = list(policy.parameters()) + list(soft_mask.parameters())
+        # --- Optimizer (over configured trainable params including DDP wrappers) ---
+        trainable_params = [
+            p for p in list(policy.parameters()) + list(soft_mask.parameters())
+            if p.requires_grad
+        ]
+        if not trainable_params:
+            raise RuntimeError(
+                "No trainable GRPO parameters. Check grpo.train_heads and grpo.train_soft_mask."
+            )
+        if is_main and gc.get("train_heads") is not None:
+            print(
+                "[GRPO] train_heads="
+                f"{list(_head_set(gc.get('train_heads')) or [])}; "
+                f"include_logprob={list(_include_heads_for_logprob(cfg) or [])}; "
+                f"train_soft_mask={bool(gc.get('train_soft_mask', True))}"
+            )
         optimizer = AdamW(
             trainable_params,
             lr=gc["lr"],
@@ -960,6 +1061,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         trajectories=trajectories,
                         advantages=advantages.to(device),
                         clip_eps=gc["clip_eps"],
+                        include_heads_in_logprob=_include_heads_for_logprob(cfg),
                     )
                     _last_grpo_loss = float(grpo_loss.item())
                     # Scale loss for gradient accumulation

@@ -2336,29 +2336,36 @@ class TestAOAESpeculativeInferenceLoop:
         )
         assert torch.equal(verified, expected)
 
-    def test_kspec_skip_does_not_self_confirm_skipped_positions(self, monkeypatch):
+    def test_kspec_frontier_accumulates_then_authoritative_verifier_consumes_it(self):
         from aoae.speculative_inference import speculative_inference
 
         cfg = {
             "base_model": {"mask_token_id": MASK_ID},
             "cache": {
                 "enabled": True,
-                "kspec_skip": True,
+                "kspec_skip": False,
                 "stable_kv_cache": False,
-                "prefix_kv_cache": True,
+                "prefix_kv_cache": False,
             },
             "grpo": {"thrash_age_decay": 0.0},
             "inference": {
                 "steps": 2,
                 "gen_length": 3,
                 "temperature": 0.0,
-                "fallback_unmask": True,
+                "fallback_unmask": False,
                 "disable_remask": False,
                 "compose_gamma": 0.0,
-                "primary_every_n": 1,
                 "primary_agree_threshold": 0.0,
                 "force_primary_first_last": False,
                 "aux_cache_reset_threshold": 1.1,
+                "verifier_schedule": {
+                    "mode": "candidate_budget",
+                    "draft_token_budget": 2,
+                    "min_draft_microsteps": 1,
+                    "max_draft_microsteps": 2,
+                    "force_first_last": False,
+                },
+                "verifier": {"acceptance_mode": "argmax_match"},
                 "positional_cache": {"enabled": False},
                 "reuse_signal": {"method": "argmax_match"},
             },
@@ -2366,28 +2373,39 @@ class TestAOAESpeculativeInferenceLoop:
         }
 
         class DummyDualModel:
-            def __init__(self):
-                self.kspec_masks = []
-
             @staticmethod
-            def _logits(batch, length):
+            def _aux_logits(batch, length):
                 logits = torch.zeros(batch, length, 3)
                 logits[..., 0] = 5.0
                 return logits
 
-            def auxiliary_forward_with_cache(self, input_ids):
-                return self._logits(input_ids.shape[0], input_ids.shape[1]), object()
+            @staticmethod
+            def _primary_logits(input_ids):
+                logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], 3)
+                logits[..., 0] = 5.0
+                # Reject the middle drafted response position by preferring token 1.
+                logits[:, -2, :] = torch.tensor([0.0, 6.0, 0.0])
+                return logits
 
-            def auxiliary_forward_replace_with_cache(self, input_ids, resp_slice, aux_past_kv):
-                del aux_past_kv
-                return self._logits(input_ids.shape[0], resp_slice.stop - resp_slice.start), object()
+            def auxiliary_forward(self, input_ids):
+                return self._aux_logits(input_ids.shape[0], input_ids.shape[1])
 
-            def primary_forward_with_kspec(self, input_ids, resp_slice, aux_past_kv, k_spec_mask):
-                del aux_past_kv
-                self.kspec_masks.append(k_spec_mask.detach().clone())
-                return self._logits(input_ids.shape[0], resp_slice.stop - resp_slice.start), object()
+            def primary_forward(self, input_ids):
+                return self._primary_logits(input_ids)
 
-        class ZeroPolicy:
+            def dual_forward_resp(self, input_ids, resp_slice, need_hidden=False, need_all_hidden=False):
+                del need_hidden, need_all_hidden
+                return types.SimpleNamespace(
+                    primary_logits=self._primary_logits(input_ids)[:, resp_slice, :],
+                    auxiliary_logits=self._aux_logits(input_ids.shape[0], input_ids.shape[1])[:, resp_slice, :],
+                    primary_hidden=None,
+                    primary_hidden_states=None,
+                )
+
+        class DraftAllPolicy:
+            def __init__(self):
+                self.calls = 0
+
             def __call__(
                 self,
                 H_t,
@@ -2403,8 +2421,9 @@ class TestAOAESpeculativeInferenceLoop:
                 del H_t, step_frac, temperature, confidence, quality_scores, agreement
                 del age_feature, last_action_feature
                 zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                ones = torch.ones_like(zeros)
                 return {
-                    "unmask_probs": zeros,
+                    "unmask_probs": ones * mask_ind.float(),
                     "remask_probs": zeros,
                     "cache_probs": zeros,
                     "access_probs": zeros,
@@ -2414,8 +2433,12 @@ class TestAOAESpeculativeInferenceLoop:
             def sample_actions(self, policy_out, mask_ind):
                 del policy_out
                 zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                ones = torch.ones_like(zeros)
+                self.calls += 1
+                if self.calls > 1:
+                    ones = zeros
                 return {
-                    "u_t": zeros,
+                    "u_t": ones * mask_ind.float(),
                     "r_t": zeros,
                     "kappa_t": zeros,
                     "q_t": zeros,
@@ -2430,16 +2453,9 @@ class TestAOAESpeculativeInferenceLoop:
                 weighted = torch.zeros_like(hidden)
                 return hidden, confidence, entropy, weighted
 
-        def fake_reuse_signal(resp_logits, aux_logits, cfg, state=None):
-            del aux_logits, cfg
-            return torch.ones(resp_logits.shape[:2], dtype=torch.bool), state, {}
-
-        monkeypatch.setattr("aoae.speculative_inference.compute_reuse_signal", fake_reuse_signal)
-        dual_model = DummyDualModel()
-
-        _, traj = speculative_inference(
-            dual_model=dual_model,
-            policy=ZeroPolicy(),
+        output, traj = speculative_inference(
+            dual_model=DummyDualModel(),
+            policy=DraftAllPolicy(),
             soft_mask_module=DummySoftMask(),
             prism_adapter=None,
             prompt_ids=torch.tensor([[1]], dtype=torch.long),
@@ -2447,10 +2463,14 @@ class TestAOAESpeculativeInferenceLoop:
             collect_stats=True,
         )
 
-        assert len(dual_model.kspec_masks) == 2
-        assert not dual_model.kspec_masks[0].any()
-        assert dual_model.kspec_masks[1].all()
+        assert traj.aux_only_steps == 1
+        assert traj.primary_steps == 1
+        assert traj.draft_accepts == 2
+        assert traj.draft_rejects == 1
         assert [float(x.item()) for x in traj.spec_cached_fractions] == pytest.approx([1.0, 0.0])
+        assert output[0, -2].item() == MASK_ID
+        assert traj.frontier_accept_rate == pytest.approx(2 / 3)
+        assert traj.frontier_reject_rate == pytest.approx(1 / 3)
 
     def test_aux_only_steps_do_not_remask_or_commit_stable_cache(self, monkeypatch):
         from aoae.speculative_inference import speculative_inference
@@ -2562,10 +2582,11 @@ class TestAOAESpeculativeInferenceLoop:
 
         assert traj.primary_steps == 1
         assert traj.aux_only_steps == 2
-        assert [float(x.item()) for x in traj.cached_fractions[:2]] == [0.0, 0.0]
-        assert float(traj.cached_fractions[-1].item()) == pytest.approx(1.0)
+        assert [float(x.item()) for x in traj.stable_cached_fractions[:2]] == [0.0, 0.0]
+        assert float(traj.stable_cached_fractions[-1].item()) == pytest.approx(1.0)
+        assert [float(x.item()) for x in traj.spec_cached_fractions[:2]] == pytest.approx([1 / 3, 2 / 3])
         assert traj.total_stable_commits == 3
-        assert traj.agreement_observations == 1
+        assert traj.agreement_observations == 3
 
     def test_prism_keeps_aux_prefix_cache_on_draft_steps(self):
         from aoae.speculative_inference import speculative_inference
@@ -2574,8 +2595,6 @@ class TestAOAESpeculativeInferenceLoop:
             "base_model": {"mask_token_id": MASK_ID},
             "cache": {
                 "enabled": True,
-                "kspec_skip": True,
-                "stable_kv_cache": False,
                 "prefix_kv_cache": True,
             },
             "grpo": {"thrash_age_decay": 0.0},
@@ -2703,8 +2722,6 @@ class TestAOAESpeculativeInferenceLoop:
             "base_model": {"mask_token_id": MASK_ID},
             "cache": {
                 "enabled": True,
-                "kspec_skip": True,
-                "stable_kv_cache": False,
                 "prefix_kv_cache": True,
             },
             "grpo": {"thrash_age_decay": 0.0},
@@ -2806,7 +2823,6 @@ class TestAOAESpeculativeInferenceLoop:
         assert "prism=on" in out
         assert "kv_tracking=off" in out
         assert "aux_cache=on" in out
-        assert "kspec_skip=on" in out
         assert "primary_cache_fastpath=off" in out
         assert "verifier_mode=full_hidden_with_aux_cache" in out
         assert "primary_every_n=1" in out
@@ -3173,18 +3189,22 @@ class TestHFBlockCausalBias:
         out = model.forward_block_causal(input_ids, block_length=2)
         assert out.shape == (1, 4, 8)
 
-    def test_hf_path_uses_attention_mask_when_model_requests_it(self):
+    def test_hf_path_drops_4d_mask_for_attention_mask_style_models(self):
+        # Models whose forward signature only has attention_mask (2D HF convention)
+        # reshape it via .view(B,-1)[:, None, None, :], turning [B,1,L,L] into
+        # [B,1,1,L²] which then fails when added to [B,H,L,L] bias.  Drop it.
         from aoae.models.base_model import LLaDABaseModel
 
         class DummyOut:
             def __init__(self):
                 self.logits = torch.randn(1, 4, 8)
 
+        received = {}
+
         class DummyHFModel(torch.nn.Module):
             def forward(self, input_ids, attention_mask=None):
                 del input_ids
-                assert attention_mask is not None
-                assert attention_mask.shape == (1, 1, 4, 4)
+                received["mask"] = attention_mask
                 return DummyOut()
 
         model = object.__new__(LLaDABaseModel)
@@ -3197,6 +3217,41 @@ class TestHFBlockCausalBias:
         input_ids = torch.ones((1, 4), dtype=torch.long)
         out = model.forward_block_causal(input_ids, block_length=2)
         assert out.shape == (1, 4, 8)
+        assert received["mask"] is None, "4D float mask must be dropped for attention_mask-style models"
+
+    def test_hf_path_routes_4d_mask_to_attention_bias_for_both_style_models(self):
+        # LLaDA-8B-Instruct has both attention_mask and attention_bias in its
+        # forward signature.  The model preprocesses attention_mask via
+        # .view(B,-1)[:, None, None, :], so a 4D float block mask must be
+        # passed only as attention_bias (additive, used as-is).
+        from aoae.models.base_model import LLaDABaseModel
+
+        class DummyOut:
+            def __init__(self):
+                self.logits = torch.randn(1, 4, 8)
+
+        received = {}
+
+        class DummyHFModel(torch.nn.Module):
+            def forward(self, input_ids, attention_mask=None, attention_bias=None):
+                del input_ids
+                received["mask"] = attention_mask
+                received["bias"] = attention_bias
+                return DummyOut()
+
+        model = object.__new__(LLaDABaseModel)
+        torch.nn.Module.__init__(model)
+        model._backend = "hf"
+        model.dtype = torch.float32
+        model._block_length = 2
+        model.model = DummyHFModel()
+
+        input_ids = torch.ones((1, 4), dtype=torch.long)
+        out = model.forward_block_causal(input_ids, block_length=2)
+        assert out.shape == (1, 4, 8)
+        # 4D mask must arrive as attention_bias only, NOT as attention_mask
+        assert received["mask"] is None, "4D float mask must not be passed as attention_mask"
+        assert received["bias"] is not None and received["bias"].shape == (1, 1, 4, 4)
 
 
 class TestDInferCacheReuse:

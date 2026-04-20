@@ -152,7 +152,7 @@ class TestEndToEndReward:
 
         gen_tokens = torch.randint(0, 50, (1, 16))
         cfg = {"grpo": {"alpha": 1.0, "beta": 0.1, "access_reward_weight": 0.0}}
-        reward = compute_reward(gen_tokens, reference, tokenizer, traj, cfg, T=64)
+        reward, _ = compute_reward(gen_tokens, reference, tokenizer, traj, cfg, T=64)
         assert reward.shape == (1,)
         assert reward[0].item() > 0
 
@@ -386,7 +386,9 @@ class TestGRPOTrainingStep:
             for t in range(n_steps):
                 logits = torch.randn(1, 10, VOCAB)
                 mask_ind = torch.randint(0, 2, (1, 10)).bool()
-                H, _, entropy, weighted_embeds = sm(logits, mask_ind, t / n_steps)
+                H, _, entropy, weighted_embeds = sm(
+                    logits, mask_ind, t / n_steps, return_weighted=True
+                )
                 out = pol(H, mask_ind, t / n_steps)
                 actions = pol.sample_actions(out, mask_ind)
                 old_lp = pol.log_prob(out, actions)

@@ -156,6 +156,22 @@ def _init_vllm_distributed(tp_size: int = 1):
     from vllm import distributed as vllm_dist
     local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
 
+    def _vllm_world_initialized() -> bool:
+        get_world_group = getattr(vllm_dist, "get_world_group", None)
+        if not callable(get_world_group):
+            # Older/fake vLLM shims in tests do not expose get_world_group. If
+            # PyTorch distributed is already initialized, treat that as enough
+            # for the shim; real vLLM exposes get_world_group and is checked
+            # above before model-parallel initialization.
+            return torch.distributed.is_initialized()
+        try:
+            get_world_group()
+            return True
+        except AssertionError:
+            return False
+        except Exception:
+            return False
+
     if torch.cuda.is_available():
         device_count = torch.cuda.device_count()
         if local_rank >= device_count:
@@ -165,7 +181,12 @@ def _init_vllm_distributed(tp_size: int = 1):
             )
         torch.cuda.set_device(local_rank)
 
-    if not torch.distributed.is_initialized():
+    if torch.distributed.is_initialized():
+        world_size = torch.distributed.get_world_size()
+        rank = torch.distributed.get_rank()
+        if not _vllm_world_initialized():
+            vllm_dist.init_distributed_environment(world_size, rank, "env://", local_rank, "nccl")
+    else:
         if tp_size > 1 and "RANK" not in os.environ:
             raise RuntimeError(
                 f"tp_size={tp_size} requires multi-process launch (e.g., torchrun). "
@@ -177,17 +198,12 @@ def _init_vllm_distributed(tp_size: int = 1):
         if os.environ.get("MASTER_ADDR") == "localhost":
             os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ.setdefault("NCCL_SOCKET_FAMILY", "AF_INET")
+        world_size = int(os.environ.get("WORLD_SIZE", str(tp_size)))
+        rank = int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
+        vllm_dist.init_distributed_environment(world_size, rank, "env://", local_rank, "nccl")
 
-        torch.distributed.init_process_group(
-            backend="nccl",
-            world_size=tp_size,
-            rank=int(os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0"))),
-        )
-
-    world_size = torch.distributed.get_world_size()
-    rank = torch.distributed.get_rank()
-    vllm_dist.init_distributed_environment(world_size, rank, "env://", rank, "nccl")
-    vllm_dist.initialize_model_parallel(tp_size, backend="nccl")
+    if not vllm_dist.model_parallel_is_initialized():
+        vllm_dist.initialize_model_parallel(tp_size, backend="nccl")
 
 
 def _cleanup_vllm_distributed() -> None:
@@ -495,6 +511,9 @@ class LLaDABaseModel(nn.Module):
 
     def _init_dinfer_vllm(self, name_or_path: str):
         """Initialize dInfer MoE model with vLLM tensor parallelism."""
+        # Must patch before any vLLM import: on MIG clusters CUDA_VISIBLE_DEVICES
+        # contains UUID strings and vLLM calls int() on them at module import time.
+        _patch_vllm_uuid_device_ids()
         try:
             from vllm.config import VllmConfig, ParallelConfig, set_current_vllm_config
             from transformers import AutoConfig
@@ -889,8 +908,22 @@ class LLaDABaseModel(nn.Module):
         """
         style = self._infer_hf_attention_style(model)
         if style == "attention_mask":
+            # Models that only have attention_mask (2D HF convention) cannot
+            # accept a 4D float block mask: they reshape it via .view(B, -1)
+            # which flattens [B,1,L,L] → [B,L²] and then expands to [B,1,1,L²],
+            # causing a broadcast mismatch against the internal [B,H,L,L] bias.
+            if attention_mask.dim() == 4:
+                return {}
             return {"attention_mask": attention_mask}
         if style == "attention_bias":
+            return {"attention_bias": attention_mask}
+        # "both" style: model has attention_mask (2D HF convention, internally
+        # preprocessed via .view(B,-1)[:, None, None, :]) AND attention_bias
+        # (additive 4D float, used as-is).  For a 4D float block mask, pass it
+        # only as attention_bias to bypass the destructive 2D preprocessing;
+        # the model adds bidirectional bias only when attention_bias is None,
+        # so our mask replaces it correctly at full precision.
+        if attention_mask.dim() == 4:
             return {"attention_bias": attention_mask}
         return {
             "attention_mask": attention_mask,
@@ -1097,17 +1130,16 @@ class LLaDABaseModel(nn.Module):
         aux_past_kv: object,
         k_spec_mask: torch.BoolTensor,
     ) -> Tuple[torch.Tensor, object]:
-        """Primary forward with the current k=1 K_spec frontier / skip hint.
+        """Legacy accepted-reuse primary forward.
 
         Reuses aux_past_kv (K/V from the auxiliary model) at positions marked by
-        k_spec_mask. For each contiguous cluster of non-K_spec response positions
+        k_spec_mask. For each contiguous cluster of non-skipped response positions
         the model runs forward_replace_with_cache, so only those tokens incur
         primary Q/K/V projection cost.
 
-        IMPORTANT: despite the legacy name, K_spec is conceptually a transient
-        speculative frontier, not a persistent cache. The current runtime uses
-        the frontier as a one-step, lossy reuse hint under the hypothesis
-        aux K/V ≈ pri K/V at those positions.
+        IMPORTANT: canonical AOAE does not use this function for K_spec
+        validation. It is retained only as a disabled legacy ablation because
+        skipped primary computation cannot validate unverified drafted tokens.
 
         Args:
             full_input_ids: [B, L_total] — full prompt + response sequence.
@@ -1115,7 +1147,7 @@ class LLaDABaseModel(nn.Module):
             aux_past_kv:    KV cache from the auxiliary forward this step.
                             Used as the starting cache; aux K/V already injected at
                             ALL positions (prompt + agreed response) by construction.
-            k_spec_mask:    [B, L_gen] bool — current one-step K_spec frontier.
+            k_spec_mask:    [B, L_gen] bool — legacy accepted-reuse skip mask.
                             True = reuse aux K/V and skip primary there.
 
         Returns:
@@ -1133,7 +1165,7 @@ class LLaDABaseModel(nn.Module):
         L_gen = resp_slice.stop - P
         dev = full_input_ids.device
 
-        # All positions in the one-step K_spec frontier → skip primary entirely;
+        # All positions skipped → caller uses aux_logits everywhere.
         # caller uses aux_logits everywhere.
         if k_spec_mask.all():
             return (

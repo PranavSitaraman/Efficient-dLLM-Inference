@@ -76,6 +76,10 @@ def test_forward_hidden_only_uses_last_hidden_state_when_available(monkeypatch):
 
 
 def test_forward_hidden_only_passes_attention_mask_to_new_hf_backbone():
+    # LLaDA-8B-Instruct exposes both attention_mask and attention_bias.
+    # 4D float block masks must be routed only to attention_bias because the
+    # model preprocesses attention_mask via .view(B,-1)[:, None, None, :],
+    # which would flatten [B,1,L,L] → [B,1,1,L²] causing a shape mismatch.
     import aoae.models.base_model as mod
 
     batch_size, seq_len, hidden_dim, vocab_size = 2, 3, 4096, 126464
@@ -83,10 +87,14 @@ def test_forward_hidden_only_passes_attention_mask_to_new_hf_backbone():
     expected_mask = torch.zeros(batch_size, 1, seq_len, seq_len)
     base_model._make_attention_mask = lambda *args, **kwargs: expected_mask
 
+    received = {}
+
     class DummyBackbone(torch.nn.Module):
-        def forward(self, input_ids, attention_mask=None, output_hidden_states=False):
+        def forward(self, input_ids, attention_mask=None, attention_bias=None,
+                    output_hidden_states=False):
             del input_ids, output_hidden_states
-            assert attention_mask is expected_mask
+            received["mask"] = attention_mask
+            received["bias"] = attention_bias
             return types.SimpleNamespace(
                 last_hidden_state=torch.randn(batch_size, seq_len, hidden_dim)
             )
@@ -99,6 +107,9 @@ def test_forward_hidden_only_passes_attention_mask_to_new_hf_backbone():
     )
 
     assert extracted.shape == (batch_size, seq_len, hidden_dim)
+    # 4D mask must arrive only as attention_bias, not as attention_mask
+    assert received["mask"] is None
+    assert received["bias"] is expected_mask
 
 
 def test_prism_adapter_raises_clear_error_on_hidden_dim_mismatch():

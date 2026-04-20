@@ -73,7 +73,7 @@ aoae preflight --config configs/default.yaml
 Run baseline eval only:
 
 ```bash
-aoae eval --config configs/default.yaml --max_samples 100
+aoae eval --config configs/default.yaml --max_samples 50
 ```
 
 Train end to end:
@@ -97,13 +97,13 @@ For configs with `hardware.tp_size > 1`, `aoae` now auto-relaunches itself under
 PoC 1 soft-routing tradeoff:
 
 ```bash
-aoae tau-sweep --config configs/poc1.yaml --max_samples 100
+aoae tau-sweep --config configs/poc1.yaml --max_samples 50
 ```
 
 PoC 2 reuse-signal study:
 
 ```bash
-aoae reuse-sweep --config configs/poc2.yaml --max_samples 100
+aoae reuse-sweep --config configs/poc2.yaml --max_samples 50
 ```
 
 Routing-only hard vs soft comparison:
@@ -112,19 +112,19 @@ Routing-only hard vs soft comparison:
 aoae routing-sweep \
   --hard_config configs/llada21_hard.yaml \
   --soft_config configs/llada21_soft.yaml \
-  --max_samples 100
+  --max_samples 50
 ```
 
 Ablation matrix:
 
 ```bash
-aoae ablations --config configs/paper.yaml --max_samples 100
+aoae ablations --config configs/paper.yaml --max_samples 50
 ```
 
 Run the full paper suite:
 
 ```bash
-aoae paper-suite --config configs/paper.yaml --max_samples 100
+aoae paper-suite --config configs/paper.yaml --max_samples 50
 ```
 
 The paper suite runs the routing sweep, PoC 1, PoC 2, the ablation matrix, and
@@ -145,17 +145,17 @@ Local:
 
 ```bash
 bash reproduce.sh
-bash reproduce.sh --workflow paper --max_samples 100
-bash reproduce.sh --workflow poc1 --max_samples 100
-bash reproduce.sh --workflow poc2 --max_samples 100
+bash reproduce.sh --workflow paper --max_samples 50
+bash reproduce.sh --workflow poc1 --max_samples 50
+bash reproduce.sh --workflow poc2 --max_samples 50
 ```
 
 SLURM:
 
 ```bash
 bash reproduce.sh --slurm
-bash reproduce.sh --slurm --workflow paper --max_samples 100
-bash reproduce.sh --slurm --workflow ablations --max_samples 100
+bash reproduce.sh --slurm --workflow paper --max_samples 50
+bash reproduce.sh --slurm --workflow ablations --max_samples 50
 ```
 
 Supported workflows:

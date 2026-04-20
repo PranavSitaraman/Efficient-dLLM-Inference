@@ -238,11 +238,11 @@ class DualModelWrapper(nn.Module):
         aux_past_kv: object,
         k_spec_mask: torch.BoolTensor,
     ) -> Tuple[torch.Tensor, object]:
-        """Soft-routed primary forward with the current k=1 K_spec skip hint.
+        """Soft-routed primary forward with the legacy accepted-reuse skip hint.
 
-        Reuses aux_past_kv at positions marked in the transient K_spec frontier
-        (k_spec_mask=True). Only contiguous clusters of non-K_spec response
-        positions are forwarded through the primary model.
+        This is not the canonical verifier path. It is retained for the
+        accepted-reuse ablation, where positions already considered reusable
+        are skipped and only contiguous non-skipped clusters are forwarded.
 
         Caller must merge agreed positions after return:
             resp_logits = torch.where(k_spec_mask[..., None], aux_logits, returned)

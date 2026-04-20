@@ -114,7 +114,7 @@ data:
   use_chat_template: "auto"
   math_prompt_style: "auto"
   gsm8k_num_fewshot: 0
-  eval_max_samples: 100
+  eval_max_samples: 50
   max_prompt_len: 4096
   max_answer_len: 512
 

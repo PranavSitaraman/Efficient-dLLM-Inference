@@ -376,6 +376,7 @@ class AOAEPolicy(nn.Module):
         self,
         policy_out: Dict[str, torch.Tensor],
         actions: Dict[str, torch.Tensor],
+        include_heads: Optional[set] = None,
     ) -> torch.Tensor:
         """
         Compute log pi_phi(a_t | s_t) = sum over positions and heads of
@@ -391,12 +392,17 @@ class AOAEPolicy(nn.Module):
         total = torch.zeros(actions["u_t"].shape[0], device=actions["u_t"].device)
 
         heads = [
-            ("u_t", "unmask_probs"),
-            ("r_t", "remask_probs"),
-            ("kappa_t", "cache_probs"),
-            ("q_t", "access_probs"),
+            ("unmask", "u_t", "unmask_probs"),
+            ("remask", "r_t", "remask_probs"),
+            ("cache", "kappa_t", "cache_probs"),
+            ("access", "q_t", "access_probs"),
         ]
-        for key, prob_key in heads:
+        include = None
+        if include_heads is not None:
+            include = {str(h) for h in include_heads}
+        for head_name, key, prob_key in heads:
+            if include is not None and head_name not in include and key not in include:
+                continue
             if key not in actions or prob_key not in policy_out:
                 continue
             a = actions[key]        # [B, L]
@@ -408,7 +414,11 @@ class AOAEPolicy(nn.Module):
                 lp = lp * (1.0 - actions["q_t_mandatory"].float())
             total = total + lp.sum(dim=-1)  # [B]
 
-        if "ell_t" in actions and "boundary_probs" in policy_out:
+        if (
+            "ell_t" in actions
+            and "boundary_probs" in policy_out
+            and (include is None or "boundary" in include or "ell_t" in include)
+        ):
             probs = policy_out["boundary_probs"].clamp(1e-7, 1.0)
             idx = actions["ell_t"].long().unsqueeze(-1)
             lp_b = torch.log(torch.gather(probs, dim=-1, index=idx).squeeze(-1))
@@ -500,5 +510,7 @@ class DefaultPolicy(nn.Module):
         self,
         policy_out: Dict[str, torch.Tensor],
         actions: Dict[str, torch.Tensor],
+        include_heads: Optional[set] = None,
     ) -> torch.Tensor:
+        del include_heads
         return torch.zeros(actions["u_t"].shape[0], device=actions["u_t"].device)
