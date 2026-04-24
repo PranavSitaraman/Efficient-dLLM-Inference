@@ -37,7 +37,6 @@ aoae test
 | `configs/poc2.yaml` | PoC 2 reuse sweep |
 | `configs/llada21_hard.yaml` | Routing sweep hard baseline |
 | `configs/llada21_soft.yaml` | Routing sweep soft config |
-| `configs/llada21_flash.yaml` | Large MoE / dInfer runtime |
 
 ## Local usage
 
@@ -77,10 +76,3 @@ Workflow wrapper:
 bash reproduce.sh --slurm
 bash reproduce.sh --slurm --workflow paper --max_samples 50
 ```
-
-## Troubleshooting
-
-- OOM: reduce `inference.gen_length`, `grpo.group_size`, or `max_samples`.
-- Missing dInfer / vLLM MoE ops: rerun `aoae preflight --config configs/llada21_flash.yaml --strict_moe`.
-- HF model access issues: authenticate with `huggingface-cli login`.
-- Unexpected runtime drift after a dependency change: rerun `aoae test` and a small `aoae eval --max_samples 50`.

@@ -104,6 +104,18 @@ inference:
   # Compatibility alias only. The canonical scheduler below is candidate-budget
   # based because s-mode and q-mode draft different numbers of tokens per step.
   primary_every_n: 4
+  llada21_official:
+    use_block_diffusion: true
+    max_post_steps: 16
+    gen_length: 512
+    eos_early_stop: false   # masked diffusion fills all positions; EOS is just another token
+    enable_mbe: false
+    speed:
+      threshold: 0.5
+      editing_threshold: 0.0
+    quality:
+      threshold: 0.7
+      editing_threshold: 0.5
   verifier_schedule:
     mode: "candidate_budget"
     draft_token_budget: 12
@@ -170,6 +182,9 @@ data:
 
 evaluation:
   task_type: "math"
+  debug_logging: false      # set true to print first 3 decoded samples per method
+  save_predictions: true    # save eval_predictions.json for post-hoc analysis
+  max_saved_predictions: 50
   baseline_methods:
     - "llada21_speed_mode"
     - "llada21_quality_mode"
@@ -247,5 +262,10 @@ logging:
 hardware:
   seed: 42
   bf16: true
-  tp_size: 1 #2
+  # tp_size=1: vLLM's expert-parallel path (tp_size>1 + enable_expert_parallel=True)
+  # produces degraded outputs on LLaDA2.1-mini MoE — tokens routed to experts on
+  # the other rank are not aggregated correctly, dropping GSM8K accuracy from
+  # ~70% to ~12%. Single-GPU eval keeps all 256 experts on one rank and matches
+  # the diagnostic baseline. Not fingerprint-tracked, safe to change.
+  tp_size: 1
   deterministic: false

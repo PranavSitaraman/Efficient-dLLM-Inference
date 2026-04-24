@@ -191,7 +191,7 @@ if $USE_SLURM; then
                 --gres="$GRPO_GRES" \
                 --partition="$GRPO_PARTITION" \
                 --account="$GRPO_ACCOUNT" \
-                slurm/train_a100.sh grpo "$CONFIG" ${GRPO_RESUME:+"$GRPO_RESUME"})
+                slurm/train.sh grpo "$CONFIG" ${GRPO_RESUME:+"$GRPO_RESUME"})
             echo "GRPO job: $GRPO_JOB"
             ;;
         paper)

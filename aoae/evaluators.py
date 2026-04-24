@@ -14,9 +14,11 @@ from typing import Any, Dict, Optional
 
 from .code_eval import evaluate_code_sample
 from .tasks import (
-    check_gsm8k_correctness_official,
+    check_gsm8k_correctness_llada,
     check_math_correctness,
     extract_answer,
+    extract_gsm8k_llada_answer,
+    extract_gsm8k_llada_reference,
     extract_gsm8k_official_answer,
     is_gsm8k_dataset,
 )
@@ -39,13 +41,24 @@ class BaseEvaluator:
 
 
 class MathEvaluator(BaseEvaluator):
+    """GSM8K evaluator using flexible answer extraction for masked-diffusion models.
+
+    LLaDA-style masked diffusion models often express answers as "The answer is X"
+    or via `\\boxed{}` rather than the strict `#### X` marker required by the
+    OpenAI official GSM8K grader.  The LLaDA extractor tries all common formats
+    in priority order (official marker → boxed → answer lines → last number),
+    recovering the ground-truth comparison without overfitting to a single format.
+    The reference is still extracted using the official `#### X` pattern, which is
+    always present in the GSM8K dataset's reference strings.
+    """
+
     task_type = "math"
 
     def __init__(self, cfg: Dict[str, Any]):
         self.eval_dataset = str(cfg.get("data", {}).get("eval_dataset", "") or "")
-        self.uses_gsm8k_official = is_gsm8k_dataset(cfg)
-        if self.uses_gsm8k_official:
-            self.evaluator_name = "gsm8k_official_openai"
+        self.uses_gsm8k = is_gsm8k_dataset(cfg)
+        if self.uses_gsm8k:
+            self.evaluator_name = "gsm8k_llada_flexible"
         else:
             self.evaluator_name = "math_heuristic_fallback"
             warnings.warn(
@@ -57,13 +70,13 @@ class MathEvaluator(BaseEvaluator):
 
     def evaluate(self, generated: str, reference: str, sample: Optional[Dict[str, Any]] = None) -> EvalDecision:
         del sample
-        if self.uses_gsm8k_official:
-            pred = extract_gsm8k_official_answer(generated)
-            gold = extract_gsm8k_official_answer(reference)
-            ok = check_gsm8k_correctness_official(generated, reference)
+        if self.uses_gsm8k:
+            pred = extract_gsm8k_llada_answer(generated)
+            gold = extract_gsm8k_llada_reference(reference)
+            ok = check_gsm8k_correctness_llada(generated, reference)
             return EvalDecision(
                 correct=bool(ok),
-                detail="gsm8k_official_openai",
+                detail="gsm8k_llada_flexible",
                 extracted_prediction=pred,
                 extracted_reference=gold,
             )
@@ -93,7 +106,6 @@ class CodeEvaluator(BaseEvaluator):
 
     @staticmethod
     def _normalize(s: str) -> str:
-        # Strip trailing whitespace differences to reduce formatting noise.
         return re.sub(r"[ \t]+$", "", s or "", flags=re.MULTILINE).strip()
 
     def evaluate(self, generated: str, reference: str, sample: Optional[Dict[str, Any]] = None) -> EvalDecision:
@@ -107,7 +119,6 @@ class CodeEvaluator(BaseEvaluator):
             )
             return EvalDecision(correct=bool(r.passed), detail=f"code_exec:{r.status}")
 
-        # Deterministic fallback for non-executable code datasets.
         g = self._normalize(generated)
         r = self._normalize(reference)
         return EvalDecision(correct=(g == r), detail="code_string_match")
@@ -116,7 +127,7 @@ class CodeEvaluator(BaseEvaluator):
 def describe_evaluator(cfg: Dict[str, Any]) -> str:
     task_type = str(cfg.get("evaluation", {}).get("task_type", "math")).lower()
     if task_type == "math":
-        return "gsm8k_official_openai" if is_gsm8k_dataset(cfg) else "math_heuristic_fallback"
+        return "gsm8k_llada_flexible" if is_gsm8k_dataset(cfg) else "math_heuristic_fallback"
     if task_type == "code":
         return "code_exec_or_string_match"
     return f"unknown:{task_type}"

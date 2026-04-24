@@ -40,11 +40,11 @@ from .models.policy import AOAEPolicy, DefaultPolicy
 from .models.prism import PRISMAdapter
 from .inference import (
     aoae_inference,
-    uniform_decode,
-    confidence_threshold_decode,
     block_smode_decode,
+    confidence_threshold_decode,
     llada21_official_decode,
     resolve_llada21_official_settings,
+    uniform_decode,
 )
 from .dinfer_integration import (
     run_blockwise_speculative_inference,
@@ -228,11 +228,14 @@ def _summarize_generation(
     )
     generation_cap = _configured_generation_cap(cfg, method)
     visible_tokens = int(summary["visible_token_count"])
+    mask_remaining = int(summary["mask_tokens_remaining"])
     summary["generation_cap"] = generation_cap
+    # Flag as truncated if: hit length cap without EOS, OR masks still remain
+    # (remaining masks indicate the inference loop ran out of steps before
+    # fully unmasking the generation buffer).
     summary["truncated_generation"] = bool(
-        generation_cap > 0
-        and not bool(summary["has_eos"])
-        and visible_tokens >= generation_cap
+        (generation_cap > 0 and not bool(summary["has_eos"]) and visible_tokens >= generation_cap)
+        or mask_remaining > 0
     )
     summary["generated_text"] = summary["decoded_text"]
     summary["generated_tokens"] = visible_tokens
@@ -883,7 +886,20 @@ def evaluate_baseline(
 
     accuracy = correct / max(total, 1)
     avg_time = total_time / max(total, 1)
-    avg_nfe = T
+    # For official LLaDA modes using block diffusion the actual NFE is
+    # max_post_steps × n_blocks, not the global T (which is the AOAE horizon).
+    llada_mode = _llada21_mode_for_method(method)
+    if llada_mode is not None:
+        llada_s = resolve_llada21_official_settings(cfg, mode=llada_mode)
+        if llada_s["use_block_diffusion"]:
+            gen_len = llada_s["gen_length"]
+            block_len = llada_s["block_length"]
+            n_blocks = (gen_len + block_len - 1) // block_len
+            avg_nfe = llada_s["max_post_steps"] * n_blocks
+        else:
+            avg_nfe = T
+    else:
+        avg_nfe = T
     # TPS = actual generated tokens / wall time
     avg_tps = total_gen_tokens / max(total_time, 1e-6)
 

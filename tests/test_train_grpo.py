@@ -37,6 +37,19 @@ def test_build_rollout_cfg_applies_training_overrides_without_mutating_source():
     assert cfg["inference"]["gen_length"] == 256
 
 
+def test_include_heads_for_logprob_parses_configured_head_subset():
+    from aoae.train_grpo import _include_heads_for_logprob
+
+    cfg = {
+        "grpo": {
+            "train_heads": ["unmask", "remask", "cache", "access"],
+            "include_heads_in_logprob": ["cache", "access"],
+        }
+    }
+
+    assert _include_heads_for_logprob(cfg) == {"cache", "access"}
+
+
 def test_split_group_trajectory_returns_per_sample_views():
     from aoae.train_grpo import split_group_trajectory
 
@@ -314,6 +327,13 @@ def test_compute_reward_prefers_trajectory_effective_flops():
 
 
 def test_compute_reward_uses_same_gsm8k_rule_as_eval():
+    """Training reward and eval evaluator share the same flexible GSM8K extractor.
+
+    The flexible extractor recovers numerical answers from prose like
+    "The answer is 42", which masked-diffusion models often produce.
+    Both training (compute_reward) and eval (build_evaluator) go through
+    build_evaluator → MathEvaluator → check_gsm8k_correctness_llada.
+    """
     from aoae.train_grpo import compute_reward
     from unittest.mock import MagicMock
 
@@ -356,8 +376,9 @@ def test_compute_reward_uses_same_gsm8k_rule_as_eval():
         T=1,
     )
 
-    assert components["correctness"].item() == 0.0
-    assert reward.item() == 0.0
+    # Flexible extractor finds "42" in "The answer is 42" — correctness = 1.
+    assert components["correctness"].item() == 1.0
+    assert reward.item() == 1.0
 
 
 def test_compute_reward_uses_train_dataset_answer_format_when_different_from_eval():

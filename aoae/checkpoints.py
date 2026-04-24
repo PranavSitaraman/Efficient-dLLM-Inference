@@ -96,20 +96,34 @@ def resolve_sidecar_artifact(
     return None
 
 
+_INFERENCE_EVAL_ONLY_KEYS = frozenset({
+    # Baseline-only inference settings — not part of GRPO rollouts.
+    # Adding new eval-only sub-sections here avoids fingerprint churn.
+    "llada21_official",
+})
+
+
 def build_grpo_config_fingerprint(cfg: Dict[str, object]) -> str:
     """Build a stable fingerprint for GRPO-relevant config sections.
 
-    ``min_checkpoint_reward`` is a post-training quality gate, not a training
-    hyperparameter, so it is excluded from the fingerprint.
+    Excluded from fingerprint:
+    - ``min_checkpoint_reward``: post-training quality gate, not a hyperparameter.
+    - ``inference.llada21_official``, ``inference.reuse_signal``,
+      ``inference.block_length``: evaluation-only settings that do not affect
+      GRPO rollouts and must not invalidate checkpoints when changed.
     """
     grpo = {k: v for k, v in cfg.get("grpo", {}).items() if k != "min_checkpoint_reward"}
+    inference = {
+        k: v for k, v in cfg.get("inference", {}).items()
+        if k not in _INFERENCE_EVAL_ONLY_KEYS
+    }
     tracked = {
         "base_model": cfg.get("base_model", {}),
         "soft_mask": cfg.get("soft_mask", {}),
         "policy": cfg.get("policy", {}),
         "prism": cfg.get("prism", {}),
         "grpo": grpo,
-        "inference": cfg.get("inference", {}),
+        "inference": inference,
         "data": {
             "train_dataset": cfg.get("data", {}).get("train_dataset"),
             "train_split": cfg.get("data", {}).get("train_split"),

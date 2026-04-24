@@ -79,270 +79,163 @@
 % ======================================================================
 \begin{abstract}
 % ======================================================================
-Masked diffusion language models (MDLMs) generate text by iteratively unmasking tokens in parallel, but most inference methods still use fixed confidence thresholds or block schedules.
-We propose \textbf{Any-Order Adaptive Editing (AOAE)}, a lossy self-speculative framework for MoE MDLMs with three contributions.
-First, a fast hard-routed drafter accumulates cheap draft microsteps into a transient frontier $\cK_{\text{spec}}$, while a normal-quality verifier validates the frontier: accepting matching tokens, remasking rejections, and resetting the drafter cache when rejection grows high.
-The composition knob $\gamma$ controls the speed--quality tradeoff; at $\gamma{=}0$ the verifier distribution is preserved and speedup comes only from accepted draft work.
-Second, the learned stability cache $\cK_{\text{stable}}$ persists verified KV states across steps.
-Third, GRPO trains the cache ($\kappa_t$) and access ($q_t$) heads to predict \emph{which} positions to persist and \emph{when} to refresh them.
+Masked diffusion language models (MDLMs) generate text by iteratively unmasking tokens in parallel, but most inference methods rely on fixed confidence thresholds or block schedules that impose uniform compute regardless of position difficulty.
+We propose \textbf{Any-Order Adaptive Editing (AOAE)}, a self-speculative framework for MoE MDLMs that exploits the natural drafter--verifier split available in a single frozen model under hard versus normal routing.
+The hard-routed drafter (${\sim}$1.4B active parameters) accumulates draft tokens cheaply into a transient frontier $\cK_{\text{spec}}$; the normal verifier periodically validates the frontier, accepting matching tokens and remasking rejections.
+A composition knob $\gamma$ controls speed--quality trade-offs; setting $\gamma{=}0$ preserves the verifier distribution exactly.
+GRPO then trains a lightweight policy (${\sim}$500K parameters) to predict which positions are stable enough to persist in a separate learned cache $\cK_{\text{stable}}$ and which to refresh proactively.
 \end{abstract}
-
-% ======================================================================
-\section{Introduction}
-\label{sec:intro}
-% ======================================================================
-
-Masked diffusion language models (MDLMs) generate text by reversing a token-masking process, producing all positions in parallel rather than left-to-right~\cite{austin2021structured,sahoo2024simple,shi2024simplified,lou2024discrete}.
-Recent scaling has produced frontier-class MDLMs---LLaDA~2.0 at 100B parameters~\cite{nie2025llada2} and LLaDA~2.1~\cite{llada21} with Token-to-Token (T2T) editing---but inference remains governed by static heuristics: fixed confidence thresholds and rigid semi-autoregressive blocks that require per-task tuning, degrade on long sequences~\cite{jazbec2025learning}, and impose uniform compute regardless of position difficulty.
-
-Three lines of work address these limitations. Adaptive token ordering~\cite{kim2025trainworst} and learned RL unmasking policies~\cite{jazbec2025learning} improve accuracy and efficiency, but cover only unmasking. PRISM~\cite{kim2025prism} adds self-correction via learned remasking but uses a fixed threshold. dKV-Cache~\cite{ma2025dkv} and Elastic-Cache~\cite{elastic_cache} accelerate inference by caching stable KV states but constrain the decoding trajectory to block or prefix patterns, sacrificing diffusion's any-order flexibility.
-
-AOAE is built on a simple observation: MoE MDLMs expose a natural drafter--verifier split. With standard hard top-$k$ routing, LLaDA~2.1-mini activates ${\sim}$1.4B of 16B parameters per token; the same frozen model with normal routing acts as a high-quality verifier. The hard-routed drafter runs an aggressive inference shortcut (LLaDA S-mode, dKV/Elastic-style caching, or a learned cache policy), while the verifier periodically validates the accumulated draft frontier. High rejection triggers remasking and drafter-cache reset. This makes the verifier a natural cache-realignment mechanism: the drafter's cache is speculative, and the verifier authoritatively decides what survives.
 
 % ======================================================================
 \section{Background}
 \label{sec:background}
 % ======================================================================
 
-\subsection{Masked Diffusion Models}
-\label{sec:bg_mdm}
-
-Let $\bx_0 = (x_0^1, \dots, x_0^L) \in \cV^L$ be a token sequence with vocabulary $\cV$ and mask token $\mask$.
-The forward process independently corrupts each token:
+Let $\bx_0 = (x_0^1, \dots, x_0^L) \in \cV^L$ be a token sequence with mask token $\mask$.
+The forward process corrupts each token independently:
 \begin{equation}
-    q(x_t^k \mid x_0^k) = \begin{cases}
-        1 - t, & \text{if } x_t^k = x_0^k, \\
-        t, & \text{if } x_t^k = \mask, \\
-        0, & \text{otherwise,}
-    \end{cases}
+    q(x_t^k \mid x_0^k) = \begin{cases} 1{-}t, & x_t^k = x_0^k, \\ t, & x_t^k = \mask, \end{cases}
+    \quad t \in [0,1].
     \label{eq:forward}
 \end{equation}
-for $t \in [0, 1]$.
-A denoising network $p_{\btheta}$ is trained via the ELBO~\cite{ou2024your,sahoo2024simple}:
-\begin{equation}
-    \cL(\btheta) = \E_{t,\, \bx_0,\, \bx_t} \left[ \frac{1}{t} \sum_{k=1}^L \ind[x_t^k = \mask] \log p_{\btheta}(x_0^k \mid \bx_t) \right].
-    \label{eq:elbo}
-\end{equation}
-At inference, the model starts from $\by_T = (\mask, \dots, \mask)$; let $p_t^k := p_{\btheta}(y_0^k{=}\cdot \mid \by_t)$.
-At each step $t$, a sampling strategy selects a subset $\cU_t \subseteq \cM_t$ of masked positions $\cM_t = \{k : y_t^k = \mask\}$ to unmask:
-\begin{equation}
-    y_{t-1}^k = \begin{cases}
-        y \sim p_t^k, & \text{if } k \in \cU_t, \\
-        y_t^k, & \text{otherwise.}
-    \end{cases}
-    \label{eq:sampling}
-\end{equation}
-The choice of $\cU_t$ critically affects both speed and quality~\cite{jazbec2025learning,wu2025fastdllm}.
+A denoising network $p_{\btheta}$ trained via the masked ELBO~\cite{ou2024your,sahoo2024simple} starts from a fully masked response $\by_T = (\mask,\ldots,\mask)$ and iteratively selects positions $\cU_t \subseteq \cM_t$ to unmask.
+The choice of $\cU_t$ governs both speed and quality~\cite{jazbec2025learning,wu2025fastdllm}.
 
-\subsection{Related Caching, Correction, and Policy Methods}
-\label{sec:bg_related}
-
-\paragraph{KV caching.}
-In MDLMs, bidirectional attention makes KV states change across denoising steps, so naive reuse can become stale.
-dKV-Cache~\cite{ma2025dkv} and Elastic-Cache~\cite{elastic_cache} reuse KVs at stable positions but require blockwise or windowed access patterns that constrain the decoding trajectory.
-AOAE keeps these policies plug-and-play for the drafter while giving the verifier authority to reject stale drafts and reset the fast cache.
-
-\paragraph{Self-correction and learned policies.}
-PRISM~\cite{kim2025prism} learns per-token keep/remask scores for self-correction; AOAE uses primary logits directly for validation and treats PRISM as an optional advisory feature or gated-verifier ablation.
-Jazbec et al.~\cite{jazbec2025learning} train a lightweight unmasking policy with GRPO~\cite{shao2024deepseekmath}; AOAE extends this to a full speculative framework, by default training only the cache/access heads while freezing unmask/remask behavior.
+Existing acceleration work falls into three categories.
+\emph{Adaptive unmasking} learns better $\cU_t$ selections~\cite{jazbec2025learning,kim2025trainworst}.
+\emph{KV-cache reuse} freezes stable key-value states across steps~\cite{ma2025dkv,elastic_cache}, but constrains decoding to block or prefix patterns.
+\emph{Self-correction} reverts low-confidence tokens via a learned or threshold policy~\cite{kim2025prism}.
+AOAE integrates all three ideas into a single trainable framework.
 
 % ======================================================================
-\section{Method: Any-Order Adaptive Editing}
+\section{Method}
 \label{sec:method}
 % ======================================================================
 
-AOAE is formalized as a finite-horizon MDP $(\cS, \cA, P, R, T)$ over a dual-model system.
-
 \subsection{Dual-Model MoE Architecture}
-\label{sec:soft_moe}
 
-LLaDA~2.1-mini is a 16B-parameter MoE model with $E{=}128$ routed experts per layer; $k{=}8$ are selected per token via hard top-$k$ routing (${\sim}$1.4B active parameters). AOAE instantiates two operational modes of the \emph{same} frozen model:
+LLaDA~2.1-mini~\cite{llada21} is a 16B-parameter MoE model with $E{=}128$ routed experts; $k{=}8$ are activated per token under hard top-$k$ routing (${\sim}$1.4B active).
+AOAE uses two operational modes of the \emph{same} frozen model:
 
-\paragraph{Drafter (auxiliary).}
-Hard-routed (${\sim}$1.4B active); may run any cheap approximate mode: LLaDA S-mode, prefix reuse, dKV/Elastic-style freezing, or a learned cache policy.
-Each unmasked token is appended to a transient frontier $\cK_{\text{spec}}$ for later verification.
+\textbf{Drafter (auxiliary).}  Hard-routed, 8$\times$ cheaper per token.  Runs an aggressive inference shortcut (S-mode thresholding, prefix-cache reuse).  Each unmasked token is appended to the transient frontier $\cK_{\text{spec}}$.
 
-\paragraph{Verifier (primary).}
-Runs the normal high-quality mode. The soft-routed variant replaces hard routing with temperature-controlled weights:
+\textbf{Verifier (primary).}  Runs the normal mode with optional soft routing:
 \begin{equation}
-    w_i^{\text{soft}} = \frac{\exp(z_i / \tau_r)}{\sum_{j=1}^E \exp(z_j / \tau_r)}, \quad \tau_r \to 0 \text{ recovers hard routing.}
-    \label{eq:soft_route}
+    w_i^{\text{soft}} = \frac{\exp(z_i / \tau_r)}{\sum_j \exp(z_j / \tau_r)}, \quad \tau_r \to 0 \text{ recovers hard routing.}
 \end{equation}
-Both modes share frozen weights; routing is toggled in-place, avoiding two full model copies.
-At each verifier event, the primary validates every stored proposal in $\cK_{\text{spec}}$: a frontier token is accepted iff it matches the primary argmax (configurable to a probability threshold or PRISM gate). Rejected tokens are remasked and evicted from $\cK_{\text{stable}}$; if the frontier rejection rate exceeds threshold $\eta$, the drafter cache $\cC_{\text{aux}}$ is reset and the verifier re-runs on the corrected state.
+Both modes share frozen weights; routing is toggled in-place.
+At each verifier event, the primary scores every position in $\cK_{\text{spec}}$: a frontier token is accepted iff $\arg\max_v p_t^k(v) = \hat{y}^k$ (configurable to a probability threshold).  Rejected tokens are remasked and evicted from $\cK_{\text{stable}}$; if the frontier rejection rate exceeds $\eta$, the drafter cache $\cC_{\text{aux}}$ is reset.
 
-The canonical scheduler verifies after 12 accumulated candidate tokens or 4 draft microsteps (whichever comes first), with forced first/last events. This candidate-budget rule adapts naturally to LLaDA S-mode and Q-mode, which draft different token counts per step.
+\subsection{State, Action, and Policy Architecture}
 
-\subsection{State: Soft-Masked Representations}
-\label{sec:state}
-
-The policy's state must convey predictive uncertainty, not just binary mask indicators.
-Following Hersche et al.~\cite{hersche2025softmasked}, we use a soft-masked embedding per position:
+The policy state uses \emph{soft-masked embeddings}~\cite{hersche2025softmasked}:
 \begin{equation}
-    \bh_t^k = \lambda(p_t^k)\, \mathbf{E}_{\mask} + \bigl(1 - \lambda(p_t^k)\bigr) \sum_{j \in \text{top-}K(p_t^k)} \pi_j^k\, \mathbf{E}_{v_j},
+    \bh_t^k = \lambda(p_t^k)\,\mathbf{E}_{\mask} + (1{-}\lambda(p_t^k))\sum_{j \in \text{top-}K} \pi_j^k\,\mathbf{E}_{v_j},
+    \quad \lambda(p_t^k) = \omega_s \cdot \sigma\!\bigl(\omega_a(-H(p_t^k) - \omega_b)\bigr),
     \label{eq:softmask}
 \end{equation}
-where $\pi_j^k = p_t^k(v_j) / \sum_{j'} p_t^k(v_{j'})$ are renormalized top-$K$ probabilities and the gating function is:
-\begin{equation}
-    \lambda(p_t^k) = \omega_s \cdot \sigma\!\bigl(\omega_a(-H(p_t^k) - \omega_b)\bigr),
-    \label{eq:gating}
-\end{equation}
-with learnable $\omega = (\omega_s, \omega_a, \omega_b)$. At low confidence (high entropy) $\lambda \to \omega_s$ and the mask embedding dominates; at high confidence $\lambda \to 0$ and token embeddings dominate.
+with learnable $\omega = (\omega_s, \omega_a, \omega_b)$ trained jointly via GRPO.
+The state is $s_t = (\bH_t, \bfm_t, \bm{\alpha}_t, \bm{a}_t, \bm{\ell}_t, t/T)$, where $\alpha_t^k$ is the verifier's acceptance signal, $a_t^k$ is a normalized cache age, and $\ell_t^k$ encodes the last action.
 
-The full state is $s_t = (\bH_t, \bfm_t, \bm{\alpha}_t, \bm{a}_t, \bm{\ell}_t, t/T)$, where $\alpha_t^k$ is the authoritative verifier acceptance at frontier positions, $a_t^k$ is a normalized cache/access age feature, and $\ell_t^k$ encodes the last positional action.
-The parameters $\omega$ are trained jointly with the policy via GRPO; to propagate gradients without re-running the base model, \texttt{forward()} stores the weighted token sum $\mathbf{w}_t^k$, which \texttt{recompute\_h\_t()} uses during GRPO backward at ${\sim}$200 MB overhead per rollout group.
-
-\subsection{Action: Four-Head Policy}
-\label{sec:action}
-
-The policy exposes four Bernoulli heads; canonical GRPO freezes unmask/remask and trains only cache/access:
+The policy has four Bernoulli heads; the canonical GRPO configuration freezes unmask/remask and trains only cache/access:
 \begin{align}
-    u_t^k &\sim \text{Ber}\bigl(\sigma(f_{\bphi^{\text{unmask}}}(s_t)^k)\bigr), \quad \text{(Unmask)}, \label{eq:action_u} \\
-    r_t^k &\sim \text{Ber}\bigl(\sigma(f_{\bphi^{\text{remask}}}(s_t)^k)\bigr), \quad \text{(Remask / evict)}, \label{eq:action_r} \\
-    \kappa_t^k &\sim \text{Ber}\bigl(\sigma(f_{\bphi^{\text{cache}}}(s_t)^k)\bigr), \quad \text{(Stable Cache)}, \label{eq:action_c} \\
-    q_t^k &\sim \text{Ber}\bigl(\sigma(f_{\bphi^{\text{access}}}(s_t)^k)\bigr), \quad \text{(Access / Refresh)}, \label{eq:action_z} \\
-    \alpha_t^k &= \ind[\arg\max_v p_t^k(v)=\hat{y}_t^k], \quad \text{(Default verifier accept)}. \label{eq:action_alpha}
+    u_t^k &\sim \text{Ber}(\sigma(f^{\text{unmask}}(s_t)^k)), &
+    r_t^k &\sim \text{Ber}(\sigma(f^{\text{remask}}(s_t)^k)), \\
+    \kappa_t^k &\sim \text{Ber}(\sigma(f^{\text{cache}}(s_t)^k)), &
+    q_t^k &\sim \text{Ber}(\sigma(f^{\text{access}}(s_t)^k)).
 \end{align}
-Validity constraints: $u_t^k = 0$ if unmasked; $r_t^k = 0$ if masked; $\kappa_t^k \cdot r_t^k = 0$ (mutually exclusive); stable commits additionally require $q_t^k = 1$ and $y^k \neq \mask$.
-The joint action log-likelihood factorizes over positions and heads.
-We prefer remask-then-denoise over T2T editing because T2T requires learning $p(x_0^k \mid \bx_t, y_t^k \neq \mask)$ on artificially corrupted inputs---harder than the standard masked objective and incompatible with any-order generation.
+Validity constraints: $u_t^k = 0$ if already unmasked; $r_t^k = 0$ if masked; $\kappa_t^k \cdot r_t^k = 0$.
+Position $k$ enters $\cK_{\text{stable}}$ only when $\kappa_t^k {=} 1$, $q_t^k {=} 1$, $r_t^k {=} 0$, and $y^k \neq \mask$.
 
-\subsection{Inference: Lossy Draft--Validate Loop}
-\label{sec:transition}
+The policy is a 1-layer transformer with $d_\pi{=}128$ (${\sim}$500K parameters).
+
+\subsection{Inference: Draft--Validate Loop}
 
 \begin{algorithm}[!ht]
 \caption{AOAE Draft-Frontier Inference}
 \label{alg:aoae}
 \begin{algorithmic}[1]
-\State \textbf{Init:} response $\by\leftarrow(\mask,\ldots,\mask)$, frontier $\cK_{\text{spec}}\leftarrow\emptyset$, stable cache $\cK_{\text{stable}}\leftarrow\emptyset$, auxiliary cache $\cC_{\text{aux}}\leftarrow\emptyset$
-\For{$t = T, T{-}1, \dots, 1$}
-    \If{verifier schedule does not fire}
-        \State Run drafter $d_t \leftarrow p_{\btheta}^{\text{hard}}(\cdot\mid\bx,\by;\cC_{\text{aux}})$
-        \State Execute frozen/learned unmask action $u_t$; store $(k,\hat{y}^k,d_t^k)$ in $\cK_{\text{spec}}$ for each new token
-        \State Continue to next microstep
+\State \textbf{Init:} $\by{\leftarrow}(\mask,\ldots,\mask)$, $\cK_{\text{spec}}{\leftarrow}\emptyset$, $\cK_{\text{stable}}{\leftarrow}\emptyset$, $\cC_{\text{aux}}{\leftarrow}\emptyset$
+\For{$t = T, \ldots, 1$}
+    \If{verifier does not fire (budget: 12 tokens or 4 microsteps)}
+        \State Drafter step on $(\bx, \by; \cC_{\text{aux}})$; unmask $u_t$; push tokens to $\cK_{\text{spec}}$
+        \State \textbf{continue}
     \EndIf
-    \State Run verifier $p_t \leftarrow p_{\btheta}^{\text{soft}}(\cdot\mid\bx,\by)$ on the current drafted state
-    \For{$(k,\hat{y}^k)\in\cK_{\text{spec}}$}
-        \State $\alpha_t^k \leftarrow \ind[\arg\max_v p_t^k(v)=\hat{y}^k]$ \Comment{or configured probability/PRISM gate}
-        \If{$\alpha_t^k=0$}
-            \State $y^k\leftarrow\mask$; \; $\cK_{\text{stable}}\leftarrow\cK_{\text{stable}}\setminus\{k\}$
-        \EndIf
+    \State Run verifier $p_t \leftarrow p_{\btheta}(\cdot \mid \bx, \by)$
+    \For{$(k, \hat{y}^k) \in \cK_{\text{spec}}$}
+        \State $\alpha_t^k \leftarrow \ind[\arg\max_v p_t^k(v) = \hat{y}^k]$
+        \If{$\alpha_t^k = 0$} remask $y^k$; evict $k$ from $\cK_{\text{stable}}$ \EndIf
     \EndFor
-    \If{frontier rejection rate $>\eta$}
-        \State $\cC_{\text{aux}}\leftarrow\emptyset$; rerun verifier on corrected state
-    \EndIf
-    \State Clear $\cK_{\text{spec}}$; build $s_t$ from verifier logits, acceptance, age, and access features
-    \State Sample/execute $(u_t,r_t,\kappa_t,q_t)$; canonical GRPO freezes $u_t,r_t$ and trains $\kappa_t,q_t$
-    \State Remask positions with $r_t^k=1$; evict from $\cK_{\text{stable}}$
-    \State Unmask selected masked positions from $\tilde{p}_t=\textsc{Compose}(p_t,d_t,\alpha_t,\gamma)$
-    \State Commit $k$ to $\cK_{\text{stable}}$ only if $\kappa_t^k=1$, $q_t^k=1$, $r_t^k=0$, and $y^k\neq\mask$
+    \If{rejection rate $> \eta$} reset $\cC_{\text{aux}}$; re-run verifier \EndIf
+    \State Clear $\cK_{\text{spec}}$; build state $s_t$; sample $(u_t, r_t, \kappa_t, q_t)$
+    \State Remask $r_t^k{=}1$ positions; evict from $\cK_{\text{stable}}$
+    \State Unmask from $\tilde{p}_t = \textsc{Compose}(p_t, d_t, \alpha_t, \gamma)$; commit $\kappa_t{=}1, q_t{=}1, r_t{=}0$ to $\cK_{\text{stable}}$
 \EndFor
 \State \textbf{Return} $\by$
 \end{algorithmic}
 \end{algorithm}
 
-\paragraph{Two-pool cache semantics.}
-$\cK_{\text{spec}}$ accumulates freshly drafted candidates between verifier events and is cleared at each event; it represents \emph{verification debt}, not persistent reuse.
-$\cK_{\text{stable}}$ is populated only post-verification when $\kappa_t^k{=}1$, $q_t^k{=}1$, $r_t^k{=}0$, and evicted by remask or verifier rejection; it is the \emph{learned persistent cache}.
-Conflating the two would corrupt the $\kappa_t$ training signal, so evaluation reports these pools separately: frontier occupancy, stable-cache occupancy, acceptance/rejection rates, drafter cache resets, and effective FLOPs.
+$\cK_{\text{spec}}$ is \emph{transient}: it tracks unvalidated draft work and is cleared at every verifier event.  $\cK_{\text{stable}}$ is \emph{persistent}: it survives across steps and is evicted only by remask or verifier rejection.  The canonical scheduler fires the verifier after 12 accumulated candidate tokens or 4 draft microsteps, with forced first and last events.
 
-The verifier's prompt KV cache is prefilled once and reused throughout. The drafter carries its own fast-path cache $\cC_{\text{aux}}$, which the verifier can clear when rejection spikes, making speculative validation a natural cache-realignment mechanism. Following~\cite{jazbec2025learning}, if $\bu_t = \mathbf{0}$ and $\cM_t \neq \emptyset$, the highest-confidence masked position is unmasked as a fallback (disabled during training to prevent reward hacking).
-
-\subsection{Composed Prediction}
-\label{sec:composed}
-
-We compose the drafter's distribution $d_t^k$ with the verifier's $p_t^k$:
+\paragraph{Composed prediction.}
 \begin{equation}
     \tilde{p}_t^k(v) \propto p_t^k(v) \cdot d_t^k(v)^{\gamma \cdot \alpha_t^k},
     \label{eq:composed}
 \end{equation}
-where $\gamma \geq 0$ controls composition strength and $\alpha_t^k$ is the verifier acceptance mask.
-At $\gamma=0$ the distribution is exactly the verifier distribution, recovering conservative speculation: quality is governed by the primary and speedup comes only from accepted draft work.
-At $\gamma>0$ the composed distribution concentrates on tokens both models favor where the verifier agrees, while the any-order property is preserved by falling back to the verifier on rejection.
-
-\subsection{Policy Architecture}
-\label{sec:architecture}
-
-The steering policy $\pi_{\bphi}$ is a lightweight transformer:
-\begin{enumerate}[leftmargin=*,itemsep=2pt]
-    \item \textbf{Input:} Per-position features $(\bh_t^k, m_t^k, \alpha_t^k, a_t^k, \ell_t^k, t/T)$ plus an optional PRISM score, projected to dimension $d_\pi$.
-    \item \textbf{Backbone:} $N_\pi$-layer transformer with $d_\pi$-dimensional hidden states and full bidirectional attention.
-    \item \textbf{Heads:} Four linear projections for unmask, remask, stable cache ($\kappa_t$), and access/refresh ($q_t$) logits per position.
-\end{enumerate}
-With $N_\pi = 1$ and $d_\pi = 128$, this is ${\sim}$500K parameters ($<$0.01\% of the base model).
-Age features and last-action encodings allow the access head to model temporal revisit patterns from remasking and cache resets.
+where $\gamma \geq 0$ is the composition strength and $\alpha_t^k$ is the acceptance mask.
+At $\gamma{=}0$ the distribution equals the verifier exactly; at $\gamma{>}0$ it concentrates on tokens both models agree on.
 
 \subsection{Positional Speculative Caching}
-\label{sec:positional_spec_cache}
 
-The $\kappa_t$ head predicts which positions are stable enough to persist in KV cache; the $q_t$ head predicts which positions will need compute soon and should be refreshed.
-The executed access set $\cQ_t$ includes all positions modified at step $t$ (mandatory) plus a top-$B$ speculative set predicted from state:
+The access head predicts which positions will need compute within the next $H$ steps.  The executed access set is:
 \begin{equation}
-    \cQ_t = \text{Top-}B\bigl(\{f_{\bphi^{\text{access}}}(s_t)^k\}_{k=1}^L\bigr) \cup \{k : u_t^k = 1 \lor r_t^k = 1\}.
-    \label{eq:Qt_candidates}
+    \cQ_t = \mathrm{Top}\text{-}B\!\bigl(\{f^{\text{access}}(s_t)^k\}_{k}\bigr) \cup \{k : u_t^k{=}1 \lor r_t^k{=}1\},
 \end{equation}
-Unlike fixed windows or block schedules, $\cQ_t$ is predicted from the current state rather than prescribed by position, treating caching as an \emph{access-pattern prediction problem}: allocate refresh budget to positions likely to change soon without forcing the unmask/remask trajectory to become left-to-right or blockwise.
-This mechanism is model-agnostic and compatible with any MDLM that exposes token-wise uncertainty.
+where mandatory positions (those actually changed at step $t$) are always included.  This is model-agnostic and compatible with any MDLM that exposes per-position uncertainty.
 
-\subsection{Training via GRPO}
-\label{sec:optimization}
+\subsection{GRPO Training}
 
-The base model remains frozen. Canonical GRPO trains only the cache ($\kappa_t$) and access ($q_t$) heads; full four-head training and trainable soft-mask gates are retained as ablations.
-
-\paragraph{Reward.}
-Let $c_{\text{aux}}$ be the relative cost of one drafter microstep and $m_t$ the verifier miss fraction after stable-cache reuse:
+The base model is frozen.  Let $c_{\text{aux}}$ be the relative cost of one drafter step and $m_t$ the verifier miss fraction after stable-cache reuse:
 \begin{equation}
-    \text{eff\_flops}
-    =
-    \frac{c_{\text{aux}} N_{\text{aux}} + \sum_{t\in\cV_{\text{verify}}} m_t}{T},
-    \label{eq:mean_cached}
+    \mathrm{eff\_flops} = \frac{c_{\text{aux}} N_{\text{aux}} + \sum_{t \in \cV} m_t}{T}.
 \end{equation}
-where $T$ is the cost of running the verifier at every microstep.
-The reward is:
+The reward combines task correctness, speed, and auxiliary penalties:
 \begin{equation}
-    R = r(\by^*, \hat{\by}) \cdot (1 - \text{eff\_flops})^\alpha
-      - \beta\, \overline{\text{Thrash}}
-      - w_u\, f_{\text{unresolved}}
-      + w_{F1}\, \overline{F1}_{\text{cache}}
-      + w_q\, F1_{\text{access}},
+    R = r(\by^*, \hat{\by}) \cdot (1 - \mathrm{eff\_flops})^\alpha
+      - \beta\,\overline{\mathrm{Thrash}}
+      - w_u\,f_{\text{unresolved}}
+      + w_{F1}\,\overline{F1}_{\text{cache}}
+      + w_q\,F1_{\text{access}},
     \label{eq:reward}
 \end{equation}
-where $r(\cdot)$ is the task-appropriate correctness evaluator for the rollout reference source (and the official final-answer rule for GSM8K); $\overline{\text{Thrash}}$ penalizes remasking stable-cached positions only; $f_{\text{unresolved}}$ penalizes leftover $\mask$ tokens; $\overline{F1}_{\text{cache}}$ is a soft precision-recall signal rewarding $\kappa_t$ for committing low-drift positions; and $F1_{\text{access}}$ measures whether $\cQ_t$ anticipates actual modifications over the next $H$ steps.
-The multiplicative speed term ensures incorrect generations receive zero reward regardless of speed, preventing the reward hacking observed with additive formulations~\cite{jazbec2025learning}.
+where $\overline{\mathrm{Thrash}}$ is the per-token rate of remasking stable-cached positions; $f_{\text{unresolved}}$ penalizes leftover $\mask$ tokens; $\overline{F1}_{\text{cache}}$ rewards $\kappa_t$ for committing low-drift positions; and $F1_{\text{access}}$ measures whether $\cQ_t$ anticipates future modifications.  The multiplicative speed term ensures incorrect answers receive zero reward, preventing speed-gaming~\cite{jazbec2025learning}.
 
-\paragraph{GRPO objective.}
-For each prompt, $G$ trajectories are sampled under $\pi_{\bphi_{\text{old}}}$; with advantage $A^g = R^g - \bar{R}$ and importance ratio $\rho_t^g = \pi_{\bphi}(\mathbf{a}_t^g \mid s_t^g) / \pi_{\bphi_{\text{old}}}(\mathbf{a}_t^g \mid s_t^g)$:
+For each prompt, $G$ trajectories are sampled under $\pi_{\bphi_{\text{old}}}$; with advantage $A^g = R^g - \bar{R}$:
 \begin{equation}
-    \cJ(\bphi) = \E_{\bx, \by^*} \left[ \frac{1}{G} \sum_{g=1}^G \frac{1}{T - \hat{T}_g} \sum_{t=\hat{T}_g}^{T} \min\!\Big\{ \rho_t^g A^g,\; \text{clip}(\rho_t^g, 1{-}\epsilon, 1{+}\epsilon)\, A^g \Big\} \right].
-    \label{eq:grpo}
+    \cJ(\bphi) = \E \left[ \frac{1}{G} \sum_{g=1}^G \frac{1}{T{-}\hat{T}_g} \sum_{t=\hat{T}_g}^{T} \min\!\Big\{ \rho_t^g A^g,\; \mathrm{clip}(\rho_t^g, 1{-}\epsilon, 1{+}\epsilon) A^g \Big\} \right],
 \end{equation}
-KL regularization is omitted since the policy is trained from scratch. In practice, log-ratios are clamped before exponentiation, advantages are normalized by within-group standard deviation, and frozen deterministic heads are excluded from the likelihood ratio.
+where $\rho_t^g = \pi_{\bphi}(a_t^g \mid s_t^g) / \pi_{\bphi_{\text{old}}}(a_t^g \mid s_t^g)$ and log-ratios are clamped before exponentiation.
 
 % ======================================================================
-\section{Experimental Design}
+\section{Experimental Setup}
 \label{sec:experiments}
 % ======================================================================
 
-\paragraph{Setup.}
-LLaDA~2.1-mini (16B MoE, frozen) in dual-model configuration.
-Policy: 1-layer transformer with $d_\pi{=}128$ (${\sim}$500K parameters).
-Canonical configuration: candidate budget 12, max 4 draft microsteps, forced first/last verifier events, argmax-match acceptance.
-Hyperparameters: $K{=}5$, $G{=}8$, $\alpha{=}1.0$, $\beta{=}0.1$, $\epsilon{=}0.2$, $\gamma{=}0.5$, $c_{\text{aux}}{=}0.35$, $w_{F1}{=}0.02$, $w_u{=}0.25$, $w_q{=}0$ initially.
-GRPO trains cache/access heads by default; full four-head training is an ablation.
+\paragraph{Model and policy.}  LLaDA~2.1-mini (16B MoE, frozen).  Policy: 1-layer transformer, $d_\pi{=}128$, ${\sim}$500K parameters.
 
-\paragraph{Datasets.}
-GSM8K~\cite{cobbe2021gsm8k} and MATH~\cite{hendrycks2021math} (mathematical reasoning); HumanEval~\cite{chen2021humaneval} (code generation).
-Policy training uses 50K prompts from OpenMathInstruct-2.
+\paragraph{Canonical configuration.}  Candidate budget 12, max 4 draft microsteps, forced first/last verifier events, argmax-match acceptance.  Hyperparameters: $K{=}5$, $G{=}8$, $\alpha{=}1.0$, $\beta{=}0.1$, $\epsilon{=}0.2$, $\gamma{=}0.5$, $c_{\text{aux}}{=}0.35$.  GRPO trains cache/access heads only.
 
-\paragraph{Metrics.}
-Accuracy (exact match / pass@1), throughput (tokens/sec), NFEs, verifier-call rate, draft microsteps per step, frontier size, frontier acceptance/rejection rates, drafter cache resets, stable-cache occupancy, access F1, effective FLOPs, and refresh ratio $\frac{1}{T}\sum_t |\cQ_t|/L$.
+\paragraph{Data.}  GSM8K~\cite{cobbe2021gsm8k} and MATH~\cite{hendrycks2021math} for evaluation; OpenMathInstruct-2 for policy training (50K prompts, 3 epochs, 2000 steps).
+
+\paragraph{Baselines.}  LLaDA~2.1 speed mode (threshold 0.5, block diffusion), quality mode (threshold 0.7), and Fast-dLLM~\cite{wu2025fastdllm}.
+
+\paragraph{Metrics.}  Accuracy (flexible extraction for masked-diffusion output), throughput (tokens/sec), effective FLOPs, verifier call rate, draft microsteps per step, frontier acceptance/rejection rates, drafter cache resets, stable-cache occupancy, access F1, and refresh ratio.
 
 \paragraph{Ablations.}
 \begin{itemize}[leftmargin=*,itemsep=1pt]
-    \item \textbf{Speculation:} verifier-only; drafter-only; frontier validation; fixed-step vs.\ candidate-budget scheduling; $\gamma=0$ conservative composition.
-    \item \textbf{Caching:} $\cK_{\text{spec}}$ only; $\cK_{\text{stable}}$ only; combined; learned vs.\ heuristic drafter cache; cache-reset thresholds.
-    \item \textbf{Verifier:} primary argmax; probability threshold; PRISM advisory; PRISM-gated acceptance.
-    \item \textbf{Policy:} cache/access-only training; full four-head training; no agreement feature; no access head; $N_\pi \in \{1,2,4\}$.
+    \item \textbf{Speculation}: drafter-only, verifier-only, fixed-step vs.\ candidate-budget scheduling, $\gamma{=}0$ conservative composition.
+    \item \textbf{Caching}: $\cK_{\text{spec}}$ only, $\cK_{\text{stable}}$ only, combined; cache-reset threshold sweep.
+    \item \textbf{Policy}: cache/access-only vs.\ full four-head training; no age feature; $N_\pi \in \{1,2,4\}$.
 \end{itemize}
 
 % ======================================================================
@@ -356,19 +249,9 @@ J.~Austin, D.~Johnson, J.~Ho, D.~Tarlow, and R.~van~den~Berg.
 \newblock In \emph{NeurIPS}, 2021.
 
 \bibitem{sahoo2024simple}
-S.~Sahoo, M.~Arriola, Y.~Schiff, A.~Gokaslan, E.~Marber, S.~Kuleshov, C.~Jones, and V.~Kuleshov.
+S.~Sahoo et~al.
 \newblock Simple and effective masked diffusion language models.
 \newblock In \emph{NeurIPS}, 2024.
-
-\bibitem{shi2024simplified}
-J.~Shi, K.~Han, Z.~Wang, A.~Doucet, and M.~Titsias.
-\newblock Simplified and generalized masked diffusion for discrete data.
-\newblock In \emph{NeurIPS}, 2024.
-
-\bibitem{lou2024discrete}
-A.~Lou, C.~Meng, and S.~Ermon.
-\newblock Discrete diffusion modeling by estimating the ratios of the data distribution.
-\newblock In \emph{ICML}, 2024.
 
 \bibitem{ou2024your}
 J.~Ou, Y.~Song, and P.~Li.
@@ -376,27 +259,27 @@ J.~Ou, Y.~Song, and P.~Li.
 \newblock \emph{arXiv:2406.03736}, 2024.
 
 \bibitem{nie2025llada2}
-S.~Nie, F.~Zhu, Z.~You, X.~Zhang, J.~Feng, Z.~Zhang, C.~Chen, G.~Xu, Y.~Dong, B.~Liu, et~al.
+S.~Nie et~al.
 \newblock Large language diffusion models.
 \newblock \emph{arXiv:2502.09992}, 2025.
 
 \bibitem{llada21}
-S.~Nie, F.~Zhu, C.~Chen, et~al.
+S.~Nie et~al.
 \newblock {LLaDA 2.1}: Speeding up text diffusion via token editing.
 \newblock \emph{arXiv:2602.08676}, 2025.
 
 \bibitem{wu2025fastdllm}
-R.~Wu, Y.~Qiu, D.~Zheng, Z.~Yu, L.~Jiang, and L.~Jiao.
+R.~Wu et~al.
 \newblock Fast-{dLLM}: Training-free fast generation for diffusion large language models.
 \newblock \emph{arXiv preprint}, 2025.
 
 \bibitem{jazbec2025learning}
-M.~Jazbec, T.~X.~Olausson, E.~Hu, P.~Hartout, D.~Yogatama, E.~Mathieu, and M.~Cuturi.
+M.~Jazbec et~al.
 \newblock Learning unmasking policies for diffusion language models.
 \newblock \emph{arXiv:2512.09106}, 2025.
 
 \bibitem{kim2025trainworst}
-J.~Kim, K.~Shah, V.~Kontonis, S.~Kakade, and S.~Chen.
+J.~Kim et~al.
 \newblock Train for the worst, plan for the best: Understanding token ordering in masked diffusions.
 \newblock In \emph{ICML}, 2025.
 
@@ -416,27 +299,27 @@ Q.~Nguyen-Tri, M.~Ranjan, and Z.~Shen.
 \newblock In \emph{ICLR}, 2026.
 
 \bibitem{hersche2025softmasked}
-M.~Hersche, S.~Moor-Smith, T.~Hofmann, and A.~Rahimi.
+M.~Hersche et~al.
 \newblock Soft-masked diffusion language models.
 \newblock \emph{arXiv:2510.17206}, 2025.
 
 \bibitem{shao2024deepseekmath}
-Z.~Shao, P.~Wang, Q.~Zhu, R.~Xu, J.~Song, M.~Zhang, Y.~K.~Li, Y.~Wu, and D.~Guo.
+Z.~Shao et~al.
 \newblock {DeepSeekMath}: Pushing the limits of mathematical reasoning in open language models.
 \newblock \emph{arXiv:2402.03300}, 2024.
 
 \bibitem{cobbe2021gsm8k}
-K.~Cobbe, V.~Kosaraju, M.~Bavarian, M.~Chen, H.~Jun, L.~Kaiser, M.~Plappert, J.~Tworek, J.~Hilton, R.~Nakano, C.~Hesse, and J.~Schulman.
+K.~Cobbe et~al.
 \newblock Training verifiers to solve math word problems.
 \newblock \emph{arXiv:2110.14168}, 2021.
 
 \bibitem{hendrycks2021math}
-D.~Hendrycks, C.~Burns, S.~Kadavath, A.~Arora, S.~Basart, E.~Tang, D.~Song, and J.~Steinhardt.
+D.~Hendrycks et~al.
 \newblock Measuring mathematical problem solving with the {MATH} dataset.
 \newblock In \emph{NeurIPS}, 2021.
 
 \bibitem{chen2021humaneval}
-M.~Chen, J.~Tworek, H.~Jun, Q.~Yuan, H.~Pinto, J.~Kaplan, H.~Edwards, Y.~Burda, N.~Joseph, G.~Brockman, et~al.
+M.~Chen et~al.
 \newblock Evaluating large language models trained on code.
 \newblock \emph{arXiv:2107.03374}, 2021.
 

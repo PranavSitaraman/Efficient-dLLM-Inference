@@ -140,5 +140,7 @@ logging:
 hardware:
   seed: 42
   bf16: true
+  # See comment in configs/paper.yaml: vLLM's expert-parallel path at tp_size>1
+  # degrades MoE accuracy. Keep eval on a single GPU.
   tp_size: 1
   deterministic: false

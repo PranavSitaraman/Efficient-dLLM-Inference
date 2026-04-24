@@ -22,8 +22,7 @@ Efficient-dLLM-Inference/
 │   ├── poc1.yaml         # PoC 1 soft-routing tradeoff sweep
 │   ├── poc2.yaml         # PoC 2 reuse-signal sweep
 │   ├── llada21_hard.yaml # Hard-routing routing-sweep baseline
-│   ├── llada21_soft.yaml # Soft-routing routing-sweep config
-│   └── llada21_flash.yaml# Large MoE / dInfer config
+│   └── llada21_soft.yaml # Soft-routing routing-sweep config
 ├── slurm/
 │   ├── train.sh          # Generic PRISM / GRPO / pipeline job
 │   ├── eval.sh           # Generic eval job
@@ -46,7 +45,6 @@ Generated artifacts live in `outputs/` and are gitignored.
 | `configs/poc2.yaml` | PoC 2: training-free KV-reuse agreement signal study |
 | `configs/llada21_hard.yaml` | Routing sweep hard-routing reference |
 | `configs/llada21_soft.yaml` | Routing sweep soft-routing counterpart |
-| `configs/llada21_flash.yaml` | Large dInfer / MoE runtime config |
 
 ## Install
 

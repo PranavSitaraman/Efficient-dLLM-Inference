@@ -535,6 +535,9 @@ class LLaDABaseModel(nn.Module):
         self._vllm_config_ctx = set_current_vllm_config(self._vllm_config)
         self._vllm_config_ctx.__enter__()
 
+        local_rank = int(os.environ.get("LOCAL_RANK", os.environ.get("RANK", "0")))
+        load_device = torch.device("cuda", local_rank) if torch.cuda.is_available() else torch.device("cpu")
+
         try:
             local_model_path = snapshot_download(
                 name_or_path,
@@ -546,7 +549,11 @@ class LLaDABaseModel(nn.Module):
                 name_or_path, trust_remote_code=True,
             )
             self.model = LLaDA2MoeModelLM(config=model_config).eval()
-            self.model.load_weights(local_model_path, torch_dtype=self.dtype)
+            self.model.load_weights(local_model_path, torch_dtype=self.dtype, device=load_device)
+            # Move any remaining buffers (e.g., expert_map created by vLLM's
+            # FusedMoE layer for EP routing) to the target device. load_weights
+            # only touches tensors present in the checkpoint.
+            self.model.to(load_device)
             self._freeze()
         except Exception:
             self._vllm_config_ctx.__exit__(None, None, None)

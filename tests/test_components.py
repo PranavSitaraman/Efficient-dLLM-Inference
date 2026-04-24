@@ -327,7 +327,7 @@ class TestEvalExtraction:
         assert extract_gsm8k_llada_answer("#### <23>") == "23"
         assert extract_gsm8k_llada_answer("#### <answer>243</answer>") == "243"
 
-    def test_math_evaluator_uses_official_gsm8k_rule(self):
+    def test_math_evaluator_uses_flexible_gsm8k_rule(self):
         from aoae.evaluators import build_evaluator
 
         cfg = {
@@ -335,15 +335,24 @@ class TestEvalExtraction:
             "data": {"eval_dataset": "openai/gsm8k"},
         }
         evaluator = build_evaluator(cfg)
+
+        # Strict #### format — must succeed.
         decision = evaluator.evaluate(
             "Claire will eat 7 dozens of eggs in 4 weeks.\n#### 7",
             "#### 7",
         )
-
         assert decision.correct is True
-        assert decision.detail == "gsm8k_official_openai"
+        assert decision.detail == "gsm8k_llada_flexible"
         assert decision.extracted_prediction == "7"
         assert decision.extracted_reference == "7"
+
+        # Prose answer without #### — flexible extractor must recover the answer.
+        decision2 = evaluator.evaluate(
+            "Step-by-step reasoning...\nThe answer is 7.",
+            "#### 7",
+        )
+        assert decision2.correct is True
+        assert decision2.detail == "gsm8k_llada_flexible"
 
 
 class TestDKVCacheManager:

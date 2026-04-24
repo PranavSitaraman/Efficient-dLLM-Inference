@@ -96,7 +96,7 @@ PY
       --partition="$PARTITION"
       --account="$ACCOUNT"
       --job-name="grpo_${TRIAL_NAME}"
-      slurm/train_a100.sh grpo "$TRIAL_CONFIG" fresh
+      slurm/train.sh grpo "$TRIAL_CONFIG" fresh
     )
 
     if [[ $DRY_RUN -eq 1 ]]; then

@@ -55,7 +55,7 @@ _MAX_IMPORTANCE_LOG_RATIO = 20.0
 
 def _include_heads_for_logprob(cfg: dict) -> Optional[set]:
     gc = cfg.get("grpo", {})
-    return parseparse_head_set(gc.get("include_heads_in_logprob", gc.get("train_heads")))
+    return parse_head_set(gc.get("include_heads_in_logprob", gc.get("train_heads")))
 
 
 # ======================================================================

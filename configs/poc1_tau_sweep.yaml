@@ -101,5 +101,6 @@ logging:
 hardware:
   seed: 42
   bf16: true
-  tp_size: 2
+  # See comment in configs/paper.yaml: vLLM EP at tp_size>1 degrades MoE accuracy.
+  tp_size: 1
   deterministic: false
