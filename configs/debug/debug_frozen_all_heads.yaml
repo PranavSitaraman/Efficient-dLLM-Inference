@@ -1,0 +1,192 @@
+# Debug Config 3: All policy heads frozen to deterministic rules
+#
+# HYPOTHESIS: With train_heads: ["cache", "access"] (paper.yaml default),
+# the DefaultPolicy's kappa_t (cache) and q_t (access) outputs are used
+# directly. DefaultPolicy sets kappa_t = (agreement > 0.5), which is the
+# draft-accepted frontier. This cache-commits positions that were just
+# verified and accepted. The q_t head may be incorrect.
+#
+# FIX ATTEMPTED: train_heads: [] (empty list)
+#   parse_head_set([]) returns an empty set (not None), so _apply_frozen_action_heads
+#   overrides ALL four heads with deterministic rules:
+#     u_t = (confidence >= drafter.confidence_threshold) & mask_ind
+#     r_t = zeros (no remasking)
+#     kappa_t = zeros (no K_stable cache commits at all)
+#     q_t = zeros (no access tracking)
+#   This completely removes any policy decision-making from the loop.
+#
+# HOW THIS DIFFERS FROM train_heads: null:
+#   null → parse_head_set returns None → immediate return → DefaultPolicy outputs
+#         used as-is for ALL heads (kappa_t=agreement-based, q_t=kappa_t)
+#   []   → empty set → all four heads overridden with deterministic rules
+#
+# EXPECTED RESULT: If accuracy improves vs paper.yaml baseline, the DefaultPolicy
+#   cache/access decisions were hurting. If still low, the policy heads are not
+#   the cause and the issue is in the dual forward itself or verifier logic.
+#
+# RUN:
+#   aoae eval --config configs/debug/debug_frozen_all_heads.yaml \
+#             --max_samples 20 --skip_baselines
+
+base_model:
+  name_or_path: "inclusionAI/LLaDA2.1-mini"
+  torch_dtype: "bfloat16"
+  mask_token_id: 156895
+  backend: "dual"
+  routing_temperature: 0.1
+  allow_python_fallback_ops: true
+  soft_topk: 16
+
+soft_mask:
+  top_k: 5
+  omega_s_init: 0.8
+  omega_a_init: 1.0
+  omega_b_init: 2.0
+
+policy:
+  d_model: 128
+  n_layers: 1
+  n_heads: 4
+  dropout: 0.0
+  init_unmask_bias: -1.5
+  init_remask_bias: -4.0
+  init_cache_bias: -2.0
+  init_access_bias: -2.0
+  use_positional_features: false
+  use_age_feature: true
+  use_last_action_feature: true
+  boundary_head:
+    enabled: false
+    num_bins: 8
+
+prism:
+  hidden_dim: 256
+  threshold: 0.5
+  train_samples: 1000
+  epochs: 3
+  lr: 1.0e-3
+  batch_size: 4
+
+cache:
+  enabled: true
+  stable_kv_cache: false
+  kspec_skip: false
+  prefix_kv_cache: true
+
+grpo:
+  enabled: true
+  group_size: 8
+  clip_eps: 0.2
+  alpha: 1.0
+  beta: 0.1
+  thrash_normalization: "response_length"
+  cache_speed_source: "none"
+  cache_speed_credit_cap: 0.5
+  thrash_age_decay: 0.1
+  access_reward_weight: 0.0
+  cache_quality_weight: 0.02
+  stability_lambda: 10.0
+  unresolved_penalty_weight: 0.25
+  min_checkpoint_reward: -1.0
+  lr: 3.0e-4
+  weight_decay: 0.01
+  epochs: 3
+  max_steps: 2000
+  batch_size: 1
+  grad_accum_steps: 1
+  warmup_steps: 100
+  max_grad_norm: 1.0
+  policy_temperature: 1.0
+  normalize_advantage_std: true
+  train_heads: []   # <<< CHANGE: was ["cache", "access"]; empty list freezes ALL heads
+  include_heads_in_logprob: ["cache", "access"]
+  train_soft_mask: false
+  rollout_steps: 16
+  rollout_gen_length: 128
+
+inference:
+  steps: 64
+  gen_length: 512
+  temperature: 0.0
+  fallback_unmask: true
+  max_unmask_fraction_per_step: 0.125
+  disable_remask: false
+  primary_every_n: 4
+  verifier_schedule:
+    mode: "candidate_budget"
+    draft_token_budget: 12
+    min_draft_microsteps: 1
+    max_draft_microsteps: 4
+    force_first_last: true
+  verifier:
+    acceptance_mode: "argmax_match"
+    rejection_action: "remask"
+    use_prism_score: false
+    prism_accept_threshold: 0.5
+    recompute_after_reject: true
+  drafter:
+    confidence_threshold: 0.7
+    aux_compute_ratio: 0.35
+  primary_agree_threshold: 0.85
+  aux_cache_reset_threshold: 0.35
+  positional_cache:
+    enabled: true
+    horizon: 4
+    refresh_budget: 32
+    candidate_policy: "learned_topb"
+    window_radius: 8
+    use_topb_from_probs: true
+    force_mandatory: true
+    age_cap: 64
+  reuse_signal:
+    method: "argmax_match"
+    threshold: 0.0
+  block_length: 32
+  compose_gamma: 0.5
+
+analysis:
+  track_kv_dynamics: false
+  track_attention_deviation: false
+  keep_step_traces: false
+  log_speculative_config: true
+  locality_windows: [8, 16, 32]
+  confidence_threshold: 0.9
+  attention_proxy_top_frac: 0.1
+
+data:
+  train_dataset: "nvidia/OpenMathInstruct-2"
+  train_split: "train"
+  train_max_samples: 5000
+  eval_dataset: "openai/gsm8k"
+  eval_split: "test"
+  use_chat_template: "auto"
+  math_prompt_style: "auto"
+  gsm8k_num_fewshot: 0
+  eval_max_samples: 20
+  max_prompt_len: 512
+  max_answer_len: 256
+
+evaluation:
+  task_type: "math"
+  baseline_methods: []
+  speculative_sweep:
+    enabled: true
+    points:
+      - name: "debug_frozen_all_heads"
+        policy_temperature: 1.0
+        overrides: {}
+
+logging:
+  project: "aoae_debug"
+  run_name: "debug_frozen_all_heads"
+  log_every: 10
+  eval_every: 200
+  save_every: 100
+  output_dir: "outputs/debug/frozen_all_heads/"
+  use_wandb: false
+
+hardware:
+  seed: 42
+  bf16: true
+  tp_size: 1
+  deterministic: false

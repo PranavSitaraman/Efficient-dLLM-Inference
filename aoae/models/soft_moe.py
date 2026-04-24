@@ -504,8 +504,11 @@ def patch_model_with_soft_routing(
     _PATCHED_BLOCKS[mid] = entries
     _PATCHED_REFS[mid] = weakref.ref(model)
     _ROUTING_STATE[mid] = "soft"
+    native_topk = entries[0]['soft_router'].top_k
+    effective_soft_topk = entries[0]['soft_router'].soft_topk
     print(f"[SoftMoE] Patched {len(entries)} MoE gates with "
-          f"tau_r={tau_r}, soft_topk={entries[0]['soft_router'].soft_topk}")
+          f"native_top_k={native_topk}, soft_topk={effective_soft_topk}, tau_r={tau_r} "
+          f"(widening={'yes' if effective_soft_topk > native_topk else 'no'})")
     return model
 
 

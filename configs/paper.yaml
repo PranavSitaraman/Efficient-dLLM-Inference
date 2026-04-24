@@ -247,5 +247,5 @@ logging:
 hardware:
   seed: 42
   bf16: true
-  tp_size: 2
+  tp_size: 1 #2
   deterministic: false
