@@ -29,6 +29,8 @@ from .positional_cache import (
     build_access_set,
     update_positional_state,
     compute_next_h_access_metrics,
+    compute_next_h_access_metrics_per_sample,
+    summarize_access_diagnostics,
 )
 
 
@@ -133,12 +135,14 @@ class AOAETrajectory:
     last_action_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     access_exec_list: List[torch.Tensor] = field(default_factory=list)
     access_mandatory_list: List[torch.Tensor] = field(default_factory=list)
+    access_diag_list: List[Dict[str, float]] = field(default_factory=list)
     changed_list: List[torch.Tensor] = field(default_factory=list)
     boundary_actions: List[torch.Tensor] = field(default_factory=list)
     step_fracs: List[float] = field(default_factory=list)
     final_tokens: Optional[torch.Tensor] = None
     completion_step: Optional[torch.Tensor] = None
     access_metrics: Dict[str, float] = field(default_factory=dict)
+    access_metric_tensors: Dict[str, torch.Tensor] = field(default_factory=dict)
     mean_boundary_depth: float = 0.0
     boundary_distribution: str = "{}"
     # ---- compute-aware speed bonus ----
@@ -397,6 +401,7 @@ def aoae_inference(
             )
             trajectory.access_exec_list.append(q_exec.detach())
             trajectory.access_mandatory_list.append(q_mandatory.detach())
+            trajectory.access_diag_list.append(dict(_access_diag))
             if "ell_t" in actions:
                 trajectory.boundary_actions.append(actions["ell_t"].detach())
             trajectory.step_fracs.append(step_frac)
@@ -496,14 +501,23 @@ def aoae_inference(
         pc_cfg = cfg.get("inference", {}).get("positional_cache", {})
         if pc_cfg.get("enabled", False):
             horizon = int(pc_cfg.get("horizon", 4))
-            trajectory.access_metrics = compute_next_h_access_metrics(
+            trajectory.access_metrics = summarize_access_diagnostics(trajectory.access_diag_list)
+            trajectory.access_metrics.update(compute_next_h_access_metrics(
+                access_exec_steps=trajectory.access_exec_list,
+                changed_steps=trajectory.changed_list,
+                mandatory_steps=trajectory.access_mandatory_list,
+                horizon=horizon,
+            ))
+            trajectory.access_metric_tensors = compute_next_h_access_metrics_per_sample(
                 access_exec_steps=trajectory.access_exec_list,
                 changed_steps=trajectory.changed_list,
                 mandatory_steps=trajectory.access_mandatory_list,
                 horizon=horizon,
             )
         else:
-            trajectory.access_metrics = compute_next_h_access_metrics([], [], None, 1)
+            trajectory.access_metrics = summarize_access_diagnostics([])
+            trajectory.access_metrics.update(compute_next_h_access_metrics([], [], None, 1))
+            trajectory.access_metric_tensors = {}
         if trajectory.boundary_actions:
             all_boundary = torch.cat([x.reshape(-1) for x in trajectory.boundary_actions], dim=0)
             max_bin = int(all_boundary.max().item()) if all_boundary.numel() > 0 else 0

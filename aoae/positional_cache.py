@@ -217,6 +217,34 @@ def _prf(tp: float, fp: float, fn: float) -> Tuple[float, float, float]:
     return p, r, f1
 
 
+def _prf_tensor(tp: torch.Tensor, fp: torch.Tensor, fn: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    p = tp / (tp + fp).clamp(min=1.0)
+    r = tp / (tp + fn).clamp(min=1.0)
+    f1 = 2.0 * p * r / (p + r).clamp(min=1e-8)
+    return p, r, f1
+
+
+_ACCESS_DIAGNOSTIC_KEYS = (
+    "access_rate",
+    "access_mandatory_rate",
+    "access_optional_rate",
+    "access_budget_utilization",
+    "access_effective_budget",
+)
+
+
+def summarize_access_diagnostics(access_diag_steps: List[Dict[str, float]]) -> Dict[str, float]:
+    """Average per-step access-set diagnostics produced by build_access_set()."""
+    if not access_diag_steps:
+        return {key: 0.0 for key in _ACCESS_DIAGNOSTIC_KEYS}
+
+    out: Dict[str, float] = {}
+    denom = float(len(access_diag_steps))
+    for key in _ACCESS_DIAGNOSTIC_KEYS:
+        out[key] = float(sum(float(step.get(key, 0.0)) for step in access_diag_steps) / denom)
+    return out
+
+
 def compute_next_h_access_metrics(
     access_exec_steps: List[torch.Tensor],
     changed_steps: List[torch.Tensor],
@@ -279,4 +307,58 @@ def compute_next_h_access_metrics(
         "access_next_h_spec_precision": float(ps),
         "access_next_h_spec_recall": float(rs),
         "access_next_h_spec_f1": float(f1s),
+    }
+
+
+def compute_next_h_access_metrics_per_sample(
+    access_exec_steps: List[torch.Tensor],
+    changed_steps: List[torch.Tensor],
+    mandatory_steps: Optional[List[torch.Tensor]],
+    horizon: int,
+) -> Dict[str, torch.Tensor]:
+    """Per-sample next-H access metrics for GRPO reward attribution."""
+    if not access_exec_steps or not changed_steps:
+        return {}
+
+    n = min(len(access_exec_steps), len(changed_steps))
+    h = max(1, int(horizon))
+    device = access_exec_steps[0].device
+    B = access_exec_steps[0].shape[0]
+    overall_tp = torch.zeros(B, device=device)
+    overall_fp = torch.zeros(B, device=device)
+    overall_fn = torch.zeros(B, device=device)
+    spec_tp = torch.zeros(B, device=device)
+    spec_fp = torch.zeros(B, device=device)
+    spec_fn = torch.zeros(B, device=device)
+
+    for t in range(n):
+        end = min(n, t + h)
+        future = torch.zeros_like(changed_steps[t], dtype=torch.bool)
+        for j in range(t, end):
+            future = future | changed_steps[j].bool()
+
+        pred = access_exec_steps[t].bool()
+        mand = torch.zeros_like(pred)
+        if mandatory_steps is not None and t < len(mandatory_steps):
+            mand = mandatory_steps[t].bool()
+
+        overall_tp += (pred & future).float().sum(dim=-1)
+        overall_fp += (pred & ~future).float().sum(dim=-1)
+        overall_fn += (~pred & future).float().sum(dim=-1)
+
+        pred_s = pred & ~mand
+        future_s = future & ~mand
+        spec_tp += (pred_s & future_s).float().sum(dim=-1)
+        spec_fp += (pred_s & ~future_s).float().sum(dim=-1)
+        spec_fn += (~pred_s & future_s).float().sum(dim=-1)
+
+    p, r, f1 = _prf_tensor(overall_tp, overall_fp, overall_fn)
+    ps, rs, f1s = _prf_tensor(spec_tp, spec_fp, spec_fn)
+    return {
+        "access_next_h_precision": p.detach(),
+        "access_next_h_recall": r.detach(),
+        "access_next_h_f1": f1.detach(),
+        "access_next_h_spec_precision": ps.detach(),
+        "access_next_h_spec_recall": rs.detach(),
+        "access_next_h_spec_f1": f1s.detach(),
     }

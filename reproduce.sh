@@ -4,8 +4,8 @@
 #SBATCH -o logs/%j_paper.out
 #SBATCH -e logs/%j_paper.err
 #SBATCH --gres=gpu:2
-#SBATCH --mem=256G
-#SBATCH --cpus-per-task=16
+#SBATCH --mem=512G
+#SBATCH --cpus-per-task=32
 #SBATCH --time=4:00:00
 #SBATCH --job-name=aoae_paper
 #SBATCH --partition=kempner_h100

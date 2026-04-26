@@ -1,0 +1,39 @@
+{
+  "stage": "grpo",
+  "output_dir": "outputs/paper/",
+  "backend": "dual",
+  "used_dual_model": true,
+  "train_dataset": "nvidia/OpenMathInstruct-2",
+  "train_split": "train",
+  "train_max_samples": 5000,
+  "epochs": 3,
+  "max_steps": 2000,
+  "completed_steps": 2000,
+  "grad_accum_steps": 1,
+  "group_size": 8,
+  "rollout_steps": 16,
+  "rollout_gen_length": 128,
+  "normalize_advantage_std": true,
+  "best_reward": -0.006965847392639262,
+  "best_checkpoint": "outputs/paper/policy_best.pt",
+  "final_checkpoint": "outputs/paper/policy_final.pt",
+  "resume_from": null,
+  "seed": 42,
+  "train_contract_version": 3,
+  "config_fingerprint": "ee264860b03d2f65a0b4af6fac544a85074cd50a3397ba4368936ea2f7f5bb89",
+  "runtime": {
+    "host": "holygpu8a11604.rc.fas.harvard.edu",
+    "pid": 633234,
+    "python_version": "3.10.19",
+    "torch_version": "2.9.0+cu128",
+    "cuda_available": true,
+    "cuda_device_count": 2,
+    "cuda_devices": [
+      "NVIDIA H100 80GB HBM3",
+      "NVIDIA H100 80GB HBM3"
+    ],
+    "vllm_version": "0.11.2",
+    "transformers_version": "4.57.1",
+    "git_commit": "63dfb64f70a1ddf2c9b64d38234235466a7510ab"
+  }
+}

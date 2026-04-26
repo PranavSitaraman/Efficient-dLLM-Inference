@@ -47,6 +47,8 @@ def test_paper_config_enables_full_aoae_stack():
     assert cfg["evaluation"]["save_predictions"] is True
     assert cfg["grpo"]["thrash_normalization"] == "response_length"
     assert cfg["grpo"]["cache_speed_source"] == "none"
+    assert cfg["grpo"]["cache_quality_weight"] > 0.0
+    assert cfg["grpo"]["access_reward_weight"] > 0.0
     assert cfg["grpo"]["min_checkpoint_reward"] < 0.0
     assert cfg["grpo"]["train_heads"] == ["cache", "access"]
     assert cfg["grpo"]["include_heads_in_logprob"] == ["cache", "access"]
@@ -57,7 +59,9 @@ def test_paper_config_enables_full_aoae_stack():
     assert cfg["inference"]["max_unmask_fraction_per_step"] <= 0.125
     assert cfg["inference"]["llada21_official"]["eos_early_stop"] is False
     assert cfg["inference"]["llada21_official"]["gen_length"] == 512
+    assert cfg["cache"]["stable_kv_cache"] is True
     assert cfg["inference"]["positional_cache"]["enabled"] is True
+    assert cfg["inference"]["compose_gamma"] == 0.5
     assert cfg["inference"]["verifier_schedule"]["mode"] == "candidate_budget"
     assert cfg["inference"]["verifier_schedule"]["draft_token_budget"] == 12
     assert cfg["inference"]["verifier"]["acceptance_mode"] == "argmax_match"

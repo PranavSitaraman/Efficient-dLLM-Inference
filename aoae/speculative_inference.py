@@ -32,6 +32,8 @@ from .positional_cache import (
     build_access_set,
     update_positional_state,
     compute_next_h_access_metrics,
+    compute_next_h_access_metrics_per_sample,
+    summarize_access_diagnostics,
 )
 
 
@@ -53,6 +55,7 @@ class SpeculativeTrajectory:
     last_action_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     access_exec_list: List[torch.Tensor] = field(default_factory=list)
     access_mandatory_list: List[torch.Tensor] = field(default_factory=list)
+    access_diag_list: List[Dict[str, float]] = field(default_factory=list)
     changed_list: List[torch.Tensor] = field(default_factory=list)
     boundary_actions: List[torch.Tensor] = field(default_factory=list)
     step_fracs: List[float] = field(default_factory=list)
@@ -81,6 +84,7 @@ class SpeculativeTrajectory:
     baseline_compute_units: Optional[torch.Tensor] = None
     effective_flops: Optional[torch.Tensor] = None
     access_metrics: Dict[str, float] = field(default_factory=dict)
+    access_metric_tensors: Dict[str, torch.Tensor] = field(default_factory=dict)
     mean_boundary_depth: float = 0.0
     boundary_distribution: str = "{}"
     # ---- compute-aware speed bonus ----
@@ -311,6 +315,25 @@ def _fresh_primary_agreement(
     return agreement.bool() & primary_fresh_mask.bool()
 
 
+def _stable_verifier_miss_fraction(
+    cache_mgr: SpeculativeCacheBookkeeper,
+    *,
+    stable_kv_cache_enabled: bool,
+    primary_cache_enabled: bool,
+) -> torch.Tensor:
+    """Per-sample verifier compute fraction after persistent K_stable reuse.
+
+    K_spec is intentionally excluded: the transient draft frontier is
+    verification debt, not a persistent cache. When stable-cache execution is
+    unavailable for the current run, a verifier event costs one full verifier
+    pass.
+    """
+    stable_mask = cache_mgr.stable.get_cached_mask()
+    if not stable_kv_cache_enabled or not primary_cache_enabled:
+        return torch.ones(stable_mask.shape[0], device=stable_mask.device)
+    return (1.0 - stable_mask.float()).mean(dim=-1).clamp(0.0, 1.0)
+
+
 def _on_off(flag: bool) -> str:
     return "on" if bool(flag) else "off"
 
@@ -416,6 +439,7 @@ def speculative_inference(
     base_temp = ic["temperature"]
     gamma = ic.get("compose_gamma", 0.0)
     use_positional_cache = bool(ic.get("positional_cache", {}).get("enabled", False))
+    verifier_cfg = ic.get("verifier", {})
 
     B = prompt_ids.shape[0]
     P = prompt_ids.shape[1]
@@ -450,6 +474,7 @@ def speculative_inference(
     # --- KV cache state ---
     schedule_cfg = _verifier_schedule(ic)
     use_prefix_kv_cache = cfg["cache"].get("prefix_kv_cache", False) and use_cache
+    use_stable_kv_cache = bool(cfg.get("cache", {}).get("stable_kv_cache", False)) and use_cache
     aux_past_kv = None
     pri_past_kv = None
     _prefix_cache_initialized = False
@@ -470,9 +495,12 @@ def speculative_inference(
             trajectory = SpeculativeTrajectory()
 
     # Hidden-state requirements are rollout-global: they depend on the verifier
-    # wiring for this call, not on the current diffusion step.
+    # wiring for this call, not on the current diffusion step. Loading a PRISM
+    # sidecar must not by itself disable the primary cache fast path; hidden
+    # states are required only when PRISM scores are actually enabled.
     _need_all_hidden = _track_kv
-    _need_hidden = (prism_adapter is not None) and not _need_all_hidden
+    _use_prism_score_for_hidden = bool(verifier_cfg.get("use_prism_score", False))
+    _need_hidden = (prism_adapter is not None) and _use_prism_score_for_hidden and not _need_all_hidden
     _primary_cache_enabled = not (_need_hidden or _need_all_hidden)
     _aux_cache_enabled = use_prefix_kv_cache
 
@@ -508,14 +536,23 @@ def speculative_inference(
             pri_full, pri_hidden = dual_model.primary_forward_with_hidden(current_y)
             return pri_full[:, resp_slice, :], pri_hidden[:, resp_slice, :], None
 
-        pri_full = dual_model.primary_forward(current_y)
+        if hasattr(dual_model, "primary_forward"):
+            pri_full = dual_model.primary_forward(current_y)
+        elif hasattr(dual_model, "primary_forward_with_hidden"):
+            # Lightweight test shims and a few older wrappers expose only the
+            # hidden-state variant. Use it as a compatibility fallback while
+            # still treating PRISM as disabled when use_prism_score=false.
+            pri_full, _ = dual_model.primary_forward_with_hidden(current_y)
+        else:
+            raise AttributeError(
+                "dual_model must expose primary_forward or primary_forward_with_hidden"
+            )
         return pri_full[:, resp_slice, :], None, None
 
     primary_every_n = int(schedule_cfg.get("step_interval", ic.get("primary_every_n", 1)))
     primary_agree_threshold = float(ic.get("primary_agree_threshold", 0.0))
     force_primary_endpoints = bool(schedule_cfg.get("force_first_last", True))
     aux_cache_reset_threshold = float(ic.get("aux_cache_reset_threshold", 1.1))
-    verifier_cfg = ic.get("verifier", {})
     rejection_action = str(verifier_cfg.get("rejection_action", "remask")).lower()
     recompute_after_reject = bool(verifier_cfg.get("recompute_after_reject", True))
     if rejection_action not in ("remask", "mask", "keep", "none", "evict_only"):
@@ -559,7 +596,10 @@ def speculative_inference(
     _force_next_verifier = False
     _aux_units = torch.zeros(B, device=device)
     _verifier_units = torch.zeros(B, device=device)
-    _baseline_units = torch.zeros(B, device=device)
+    # Full-quality baseline: run the verifier in normal mode at every planned
+    # diffusion microstep. Keeping the denominator fixed at T gives credit both
+    # for cheaper verifier passes and for early completion.
+    _baseline_units = torch.full((B,), float(T), device=device)
 
     # --- Main speculative diffusion loop ---
     for t in range(T, 0, -1):
@@ -584,7 +624,6 @@ def speculative_inference(
             force_next=(_force_next_verifier or _ema_agreement < primary_agree_threshold),
         )
         _force_next_verifier = False
-        _baseline_units += 1.0
         primary_fresh_mask = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
         frontier_accept_mask = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
         frontier_reject_mask = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
@@ -650,14 +689,23 @@ def speculative_inference(
             _primary_steps += 1
 
         if run_primary:
-            _verifier_units += 1.0
+            verifier_miss = (
+                _stable_verifier_miss_fraction(
+                    cache_mgr,
+                    stable_kv_cache_enabled=use_stable_kv_cache,
+                    primary_cache_enabled=_primary_cache_enabled,
+                )
+                if cache_mgr is not None
+                else torch.ones(B, device=device)
+            )
+            _verifier_units += verifier_miss.to(device)
             _aux_units += aux_compute_ratio
         else:
             _aux_units += aux_compute_ratio
 
         # --- PRISM quality scores ---
         q_scores = None
-        _use_prism_score = bool(verifier_cfg.get("use_prism_score", prism_adapter is not None))
+        _use_prism_score = bool(verifier_cfg.get("use_prism_score", False))
         if _use_prism_score and prism_adapter is not None and _pri_hidden_for_prism is not None:
             with torch.no_grad():
                 q_scores = prism_adapter(_pri_hidden_for_prism.float())
@@ -705,7 +753,16 @@ def speculative_inference(
                             aux_logits = _run_auxiliary_resp(y)
                             _aux_units += aux_compute_ratio
                             resp_logits, _pri_hidden_for_prism, _pri_hidden_states_for_tracker = _run_primary_full_resp(y)
-                            _verifier_units += 1.0
+                            verifier_miss = (
+                                _stable_verifier_miss_fraction(
+                                    cache_mgr,
+                                    stable_kv_cache_enabled=use_stable_kv_cache,
+                                    primary_cache_enabled=_primary_cache_enabled,
+                                )
+                                if cache_mgr is not None
+                                else torch.ones(B, device=device)
+                            )
+                            _verifier_units += verifier_miss.to(device)
                             primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
                             if _use_prism_score and prism_adapter is not None and _pri_hidden_for_prism is not None:
                                 with torch.no_grad():
@@ -876,6 +933,7 @@ def speculative_inference(
             )
             trajectory.access_exec_list.append(q_exec.detach())
             trajectory.access_mandatory_list.append(q_mandatory.detach())
+            trajectory.access_diag_list.append(dict(_access_diag))
             if "ell_t" in actions:
                 trajectory.boundary_actions.append(actions["ell_t"].detach())
             trajectory.step_fracs.append(step_frac)
@@ -884,6 +942,7 @@ def speculative_inference(
             # without storing logits, H_t, log-probs, or policy outputs.
             trajectory.access_exec_list.append(q_exec.detach())
             trajectory.access_mandatory_list.append(q_mandatory.detach())
+            trajectory.access_diag_list.append(dict(_access_diag))
             if "ell_t" in actions:
                 trajectory.boundary_actions.append(actions["ell_t"].detach())
 
@@ -1044,14 +1103,23 @@ def speculative_inference(
         pc_cfg = cfg.get("inference", {}).get("positional_cache", {})
         if pc_cfg.get("enabled", False):
             horizon = int(pc_cfg.get("horizon", 4))
-            trajectory.access_metrics = compute_next_h_access_metrics(
+            trajectory.access_metrics = summarize_access_diagnostics(trajectory.access_diag_list)
+            trajectory.access_metrics.update(compute_next_h_access_metrics(
+                access_exec_steps=trajectory.access_exec_list,
+                changed_steps=trajectory.changed_list,
+                mandatory_steps=trajectory.access_mandatory_list,
+                horizon=horizon,
+            ))
+            trajectory.access_metric_tensors = compute_next_h_access_metrics_per_sample(
                 access_exec_steps=trajectory.access_exec_list,
                 changed_steps=trajectory.changed_list,
                 mandatory_steps=trajectory.access_mandatory_list,
                 horizon=horizon,
             )
         else:
-            trajectory.access_metrics = compute_next_h_access_metrics([], [], None, 1)
+            trajectory.access_metrics = summarize_access_diagnostics([])
+            trajectory.access_metrics.update(compute_next_h_access_metrics([], [], None, 1))
+            trajectory.access_metric_tensors = {}
         if trajectory.boundary_actions:
             all_boundary = torch.cat([x.reshape(-1) for x in trajectory.boundary_actions], dim=0)
             max_bin = int(all_boundary.max().item()) if all_boundary.numel() > 0 else 0

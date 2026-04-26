@@ -128,7 +128,48 @@ class TestPositionalCache:
         metrics = compute_next_h_access_metrics(access_steps, changed_steps, mandatory_steps, horizon=2)
         assert "access_next_h_precision" in metrics
         assert "access_next_h_recall" in metrics
-        assert "access_next_h_f1" in metrics
+
+    def test_access_diagnostics_are_averaged_for_reporting(self):
+        from aoae.positional_cache import summarize_access_diagnostics
+
+        metrics = summarize_access_diagnostics([
+            {
+                "access_rate": 0.25,
+                "access_mandatory_rate": 0.10,
+                "access_optional_rate": 0.15,
+                "access_budget_utilization": 0.50,
+                "access_effective_budget": 4.0,
+            },
+            {
+                "access_rate": 0.75,
+                "access_mandatory_rate": 0.30,
+                "access_optional_rate": 0.45,
+                "access_budget_utilization": 1.00,
+                "access_effective_budget": 8.0,
+            },
+        ])
+
+        assert metrics["access_rate"] == pytest.approx(0.50)
+        assert metrics["access_mandatory_rate"] == pytest.approx(0.20)
+        assert metrics["access_optional_rate"] == pytest.approx(0.30)
+        assert metrics["access_budget_utilization"] == pytest.approx(0.75)
+        assert metrics["access_effective_budget"] == pytest.approx(6.0)
+
+    def test_next_h_access_metrics_per_sample_separates_group_members(self):
+        from aoae.positional_cache import compute_next_h_access_metrics_per_sample
+
+        access_steps = [torch.tensor([[1.0, 0.0], [0.0, 1.0]])]
+        changed_steps = [torch.tensor([[1.0, 0.0], [1.0, 0.0]])]
+        mandatory_steps = [torch.zeros(2, 2)]
+
+        metrics = compute_next_h_access_metrics_per_sample(
+            access_steps,
+            changed_steps,
+            mandatory_steps,
+            horizon=1,
+        )
+
+        assert metrics["access_next_h_spec_f1"].tolist() == pytest.approx([1.0, 0.0])
 
 
 # ======================================================================

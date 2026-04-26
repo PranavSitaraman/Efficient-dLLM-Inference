@@ -1109,6 +1109,15 @@ def evaluate_speculative(
                     eff = getattr(traj, "effective_flops", None)
                     if eff is not None:
                         stats["effective_flops"] = float(eff.float().mean().item())
+                    aux_units = getattr(traj, "aux_compute_units", None)
+                    if aux_units is not None:
+                        stats["aux_compute_units"] = float(aux_units.float().mean().item())
+                    verifier_units = getattr(traj, "verifier_compute_units", None)
+                    if verifier_units is not None:
+                        stats["verifier_compute_units"] = float(verifier_units.float().mean().item())
+                    baseline_units = getattr(traj, "baseline_compute_units", None)
+                    if baseline_units is not None:
+                        stats["baseline_compute_units"] = float(baseline_units.float().mean().item())
                     am = traj.access_metrics
                     stats["access_access_rate"] = float(am.get("access_rate", 0.0))
                     stats["access_access_mandatory_rate"] = float(am.get("access_mandatory_rate", 0.0))
@@ -1173,13 +1182,20 @@ def evaluate_speculative(
         pri_steps = int(stats.get("primary_steps", T))
         aux_steps = int(stats.get("aux_only_steps", 0))
         cache_cfg = cfg.get("cache", {})
-        primary_step_cost = (
-            1
-            if bool(cache_cfg.get("stable_kv_cache", False))
-            and not bool(cache_cfg.get("kspec_skip", True))
-            else 2
-        )
-        total_nfe += pri_steps * primary_step_cost + aux_steps
+        if float(stats.get("effective_flops", 0.0)) > 0.0:
+            # Use the same compute-aware accounting as GRPO: one NFE is one
+            # full verifier-equivalent diffusion step. This includes cheap
+            # auxiliary microsteps and verifier miss fraction after K_stable
+            # reuse, and avoids double-counting K_spec as persistent cache.
+            total_nfe += float(stats["effective_flops"]) * float(T)
+        else:
+            primary_step_cost = (
+                1
+                if bool(cache_cfg.get("stable_kv_cache", False))
+                and not bool(cache_cfg.get("kspec_skip", True))
+                else 2
+            )
+            total_nfe += pri_steps * primary_step_cost + aux_steps
         total_cache_commits += int(stats.get("total_commits", 0))
         total_cache_invalidations += int(stats.get("total_invalidations", 0))
         total_stable_cache_fraction += float(stats.get("stable_cache_fraction", 0.0))

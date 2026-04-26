@@ -2337,6 +2337,38 @@ class TestAOAESpeculativeInferenceLoop:
         )
         assert torch.equal(verified, expected)
 
+    def test_stable_cache_miss_fraction_credits_only_persistent_cache(self):
+        from aoae.cache import SpeculativeCacheBookkeeper
+        from aoae.speculative_inference import _stable_verifier_miss_fraction
+
+        cache = SpeculativeCacheBookkeeper(batch_size=1, seq_len=4, device=torch.device("cpu"))
+        cache.step_spec(torch.tensor([[True, True, False, False]]))
+        cache.step_stable(
+            torch.tensor([[True, False, True, False]], dtype=torch.float32),
+            torch.zeros(1, 4),
+        )
+
+        miss = _stable_verifier_miss_fraction(
+            cache,
+            stable_kv_cache_enabled=True,
+            primary_cache_enabled=True,
+        )
+        assert miss.item() == pytest.approx(0.5)
+
+        disabled = _stable_verifier_miss_fraction(
+            cache,
+            stable_kv_cache_enabled=False,
+            primary_cache_enabled=True,
+        )
+        assert disabled.item() == pytest.approx(1.0)
+
+        hidden_required = _stable_verifier_miss_fraction(
+            cache,
+            stable_kv_cache_enabled=True,
+            primary_cache_enabled=False,
+        )
+        assert hidden_required.item() == pytest.approx(1.0)
+
     def test_kspec_frontier_accumulates_then_authoritative_verifier_consumes_it(self):
         from aoae.speculative_inference import speculative_inference
 
@@ -3065,8 +3097,9 @@ class TestAOAESpeculativeInferenceLoop:
         assert "prism=on" in out
         assert "kv_tracking=off" in out
         assert "aux_cache=on" in out
-        assert "primary_cache_fastpath=off" in out
-        assert "verifier_mode=full_hidden_with_aux_cache" in out
+        assert "primary_hidden=off" in out
+        assert "primary_cache_fastpath=on" in out
+        assert "verifier_mode=prefix_cache_replace" in out
         assert "primary_every_n=1" in out
         assert "gamma=0.000" in out
         assert "remask=on" in out

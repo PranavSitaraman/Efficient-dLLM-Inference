@@ -1,4 +1,5 @@
 import torch
+import pytest
 from types import SimpleNamespace
 
 
@@ -277,6 +278,90 @@ def test_compute_reward_cache_quality_f1_adds_positive_reward():
     expected_boost = 0.1 * ((0.9 + 0.8 + 0.85) / 3.0)
     actual_boost = reward_with_f1[0].item() - reward_no_f1[0].item()
     assert abs(actual_boost - expected_boost) < 1e-5
+
+
+def test_compute_reward_access_f1_adds_dense_access_reward():
+    from aoae.train_grpo import compute_reward
+    from aoae.inference import AOAETrajectory
+    from unittest.mock import MagicMock
+
+    tokenizer = MagicMock()
+    tokenizer.decode.return_value = "I don't know."
+    traj = AOAETrajectory()
+    traj.completion_step = torch.tensor([8.0])
+    traj.thrash_counts = [torch.tensor([0.0])]
+    traj.actions = [{"u_t": torch.zeros(1, 4)}]
+    traj.access_metrics = {"access_next_h_spec_f1": 0.75}
+
+    cfg = {
+        "base_model": {"mask_token_id": 99},
+        "grpo": {
+            "alpha": 1.0,
+            "beta": 0.0,
+            "access_reward_weight": 0.2,
+            "unresolved_penalty_weight": 0.0,
+            "cache_quality_weight": 0.0,
+        },
+    }
+
+    reward, components = compute_reward(
+        generated_tokens=torch.randint(0, 10, (1, 4)),
+        reference_answer=["42"],
+        tokenizer=tokenizer,
+        trajectory=traj,
+        cfg=cfg,
+        T=16,
+    )
+
+    assert components["access_f1"].item() == pytest.approx(0.75)
+    assert components["access_reward"].item() == pytest.approx(0.15)
+    assert reward.item() == pytest.approx(0.15)
+
+
+def test_compute_reward_uses_per_sample_access_f1_when_available():
+    from aoae.train_grpo import compute_reward
+    from unittest.mock import MagicMock
+
+    tokenizer = MagicMock()
+    tokenizer.decode.return_value = "I don't know."
+    traj = SimpleNamespace(
+        completion_step=torch.tensor([8.0, 8.0]),
+        effective_flops=torch.tensor([0.0, 0.0]),
+        aux_compute_units=torch.tensor([0.0, 0.0]),
+        verifier_compute_units=torch.tensor([0.0, 0.0]),
+        baseline_compute_units=torch.tensor([16.0, 16.0]),
+        thrash_counts=[],
+        cached_fractions=[],
+        stable_cached_fractions=[],
+        spec_cached_fractions=[],
+        actions=[],
+        final_tokens=torch.tensor([[1, 2], [1, 2]]),
+        cache_quality_f1=[],
+        access_metrics={"access_next_h_spec_f1": 0.5},
+        access_metric_tensors={"access_next_h_spec_f1": torch.tensor([0.0, 1.0])},
+    )
+    cfg = {
+        "base_model": {"mask_token_id": 99},
+        "grpo": {
+            "alpha": 1.0,
+            "beta": 0.0,
+            "access_reward_weight": 0.2,
+            "unresolved_penalty_weight": 0.0,
+            "cache_quality_weight": 0.0,
+        },
+    }
+
+    reward, components = compute_reward(
+        generated_tokens=torch.randint(0, 10, (2, 2)),
+        reference_answer=["42", "42"],
+        tokenizer=tokenizer,
+        trajectory=traj,
+        cfg=cfg,
+        T=16,
+    )
+
+    assert components["access_reward"].tolist() == pytest.approx([0.0, 0.2])
+    assert reward.tolist() == pytest.approx([0.0, 0.2])
 
 
 def test_compute_reward_prefers_trajectory_effective_flops():

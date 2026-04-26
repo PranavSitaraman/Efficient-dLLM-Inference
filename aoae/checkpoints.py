@@ -11,7 +11,7 @@ from typing import Dict, Optional
 import torch
 
 
-GRPO_TRAIN_CONTRACT_VERSION = 3
+GRPO_TRAIN_CONTRACT_VERSION = 4
 
 
 def load_state_dict_flexible(

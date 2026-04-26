@@ -321,11 +321,12 @@ def compute_reward(
     #   cache_F1      = 2 * precision * recall / (precision + recall)
     cache_q_w = float(gc.get("cache_quality_weight", 0.0))
     cache_f1_reward = torch.zeros(B, device=device)
+    mean_cache_f1_component = torch.zeros(B, device=device)
     if cache_q_w > 0.0:
         cache_f1_steps = getattr(trajectory, "cache_quality_f1", [])
         if cache_f1_steps:
-            mean_cache_f1 = torch.stack([f.to(device) for f in cache_f1_steps]).mean(dim=0)
-            cache_f1_reward = cache_q_w * mean_cache_f1
+            mean_cache_f1_component = torch.stack([f.to(device) for f in cache_f1_steps]).mean(dim=0)
+            cache_f1_reward = cache_q_w * mean_cache_f1_component
             reward = reward + cache_f1_reward
 
     # --- Dense access-prediction reward ---
@@ -334,9 +335,18 @@ def compute_reward(
     # otherwise too sparse to learn from terminal correctness alone.
     access_w = float(gc.get("access_reward_weight", 0.0))
     access_reward = torch.zeros(B, device=device)
+    access_f1_component = torch.zeros(B, device=device)
     if access_w > 0.0 and hasattr(trajectory, "access_metrics"):
-        spec_f1 = float(trajectory.access_metrics.get("access_next_h_spec_f1", 0.0))
-        access_reward = torch.full((B,), access_w * spec_f1, device=device)
+        access_tensors = getattr(trajectory, "access_metric_tensors", {}) or {}
+        spec_f1_tensor = access_tensors.get("access_next_h_spec_f1")
+        if spec_f1_tensor is not None:
+            access_f1_component = spec_f1_tensor.to(device).float().view(-1)
+            if access_f1_component.numel() != B:
+                access_f1_component = access_f1_component.mean().expand(B)
+        else:
+            spec_f1 = float(trajectory.access_metrics.get("access_next_h_spec_f1", 0.0))
+            access_f1_component = torch.full((B,), spec_f1, device=device)
+        access_reward = access_w * access_f1_component
         reward = reward + access_reward
 
     components: Dict[str, torch.Tensor] = {
@@ -370,7 +380,9 @@ def compute_reward(
         "thrash_rate":          thrash_rate,
         "thrash_denominator":   thrash_denominator,
         "unresolved_penalty":   unresolved_penalty,
+        "cache_f1":             mean_cache_f1_component,
         "cache_f1_reward":      cache_f1_reward,
+        "access_f1":            access_f1_component,
         "access_reward":        access_reward,
         "mean_spec_cached":     mean_spec_cached,   # transient draft frontier
     }
@@ -1145,6 +1157,8 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             f"thrash_rate={_buf_mean('thrash_rate'):.3f}  "
                             f"thrash_cnt={_buf_mean('total_thrash'):.1f}  "
                             f"cacheF1_rew={_buf_mean('cache_f1_reward'):.4f}  "
+                            f"accessF1={_buf_mean('access_f1'):.3f}  "
+                            f"access_rew={_buf_mean('access_reward'):.4f}  "
                             f"unresolved_pen={_buf_mean('unresolved_penalty'):.4f}"
                         )
 
@@ -1164,7 +1178,9 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             "reward/used_steps_frac": _buf_mean("used_steps_frac"),
                             "reward/thrash_penalty": _buf_mean("thrash_penalty"),
                             "reward/thrash_rate": _buf_mean("thrash_rate"),
+                            "reward/cache_f1": _buf_mean("cache_f1"),
                             "reward/cache_f1_reward": _buf_mean("cache_f1_reward"),
+                            "reward/access_f1": _buf_mean("access_f1"),
                             "reward/unresolved_penalty": _buf_mean("unresolved_penalty"),
                             "reward/access_reward": _buf_mean("access_reward"),
                             # Cache metrics (useful for WandB curves)
@@ -1173,9 +1189,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             "cache/mean_spec_fraction": _buf_mean("mean_spec_cached"),
                             "cache/mean_combined_fraction": _buf_mean("mean_combined_cached_fraction"),
                             "cache/total_thrash_count": _buf_mean("total_thrash"),
-                            "cache/cache_f1": (
-                                _buf_mean("cache_f1_reward") / max(float(gc.get("cache_quality_weight", 1e-8)), 1e-8)
-                            ),
+                            "cache/cache_f1": _buf_mean("cache_f1"),
                         }
                         if _logger is not None:
                             _logger.log_step(log_metrics, step=global_step)
