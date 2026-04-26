@@ -1,0 +1,130 @@
+{
+  "num_records": 10,
+  "mean_agreement": 0.480635340916778,
+  "mean_access": 0.0,
+  "mean_confidence_masked": 0.08373551425354622,
+  "mean_confidence_unmasked": 0.786788208569593,
+  "layer_drift_measure": "hidden_state_proxy",
+  "exact_kv_drift_steps": 0.0,
+  "hidden_state_proxy_steps": 70.8,
+  "mean_layer_drift_slope": 2.024165651524874,
+  "mean_off_by_one_drift_ratio": 2.2261149818011297,
+  "mean_confident_token_drift_ratio": 2.7874530562467696,
+  "mean_thrash_rate_given_cached": 0.0002569650002085302,
+  "mean_locality": {
+    "w16_hit_ratio": 0.7430725464995199,
+    "w32_hit_ratio": 0.9035463953348224,
+    "w8_hit_ratio": 0.5892486011357465
+  },
+  "mean_age_drift": {
+    "age0": 72.4541953021713,
+    "age1": 27.72097847521278,
+    "age2p": 12.436127690838497
+  },
+  "per_layer_drift": [
+    {
+      "layer_idx": 0,
+      "mean_drift": 0.09936756647603356,
+      "mean_hidden_drift": 0.09936756647603356
+    },
+    {
+      "layer_idx": 1,
+      "mean_drift": 1.8231221761628462,
+      "mean_hidden_drift": 1.8231221761628462
+    },
+    {
+      "layer_idx": 2,
+      "mean_drift": 1.9533247894375587,
+      "mean_hidden_drift": 1.9533247894375587
+    },
+    {
+      "layer_idx": 3,
+      "mean_drift": 2.1423349228986757,
+      "mean_hidden_drift": 2.1423349228986757
+    },
+    {
+      "layer_idx": 4,
+      "mean_drift": 2.454651070359832,
+      "mean_hidden_drift": 2.454651070359832
+    },
+    {
+      "layer_idx": 5,
+      "mean_drift": 2.832910893238409,
+      "mean_hidden_drift": 2.832910893238409
+    },
+    {
+      "layer_idx": 6,
+      "mean_drift": 3.3812993302706955,
+      "mean_hidden_drift": 3.3812993302706955
+    },
+    {
+      "layer_idx": 7,
+      "mean_drift": 3.9944022153058967,
+      "mean_hidden_drift": 3.9944022153058967
+    },
+    {
+      "layer_idx": 8,
+      "mean_drift": 4.769931577996532,
+      "mean_hidden_drift": 4.769931577996532
+    },
+    {
+      "layer_idx": 9,
+      "mean_drift": 5.9084575232799095,
+      "mean_hidden_drift": 5.9084575232799095
+    },
+    {
+      "layer_idx": 10,
+      "mean_drift": 7.62828681995569,
+      "mean_hidden_drift": 7.62828681995569
+    },
+    {
+      "layer_idx": 11,
+      "mean_drift": 9.604094168003156,
+      "mean_hidden_drift": 9.604094168003156
+    },
+    {
+      "layer_idx": 12,
+      "mean_drift": 12.358255768814708,
+      "mean_hidden_drift": 12.358255768814708
+    },
+    {
+      "layer_idx": 13,
+      "mean_drift": 16.22000051687517,
+      "mean_hidden_drift": 16.22000051687517
+    },
+    {
+      "layer_idx": 14,
+      "mean_drift": 21.57243952444273,
+      "mean_hidden_drift": 21.57243952444273
+    },
+    {
+      "layer_idx": 15,
+      "mean_drift": 28.00574723323474,
+      "mean_hidden_drift": 28.00574723323474
+    },
+    {
+      "layer_idx": 16,
+      "mean_drift": 35.60064804153309,
+      "mean_hidden_drift": 35.60064804153309
+    },
+    {
+      "layer_idx": 17,
+      "mean_drift": 43.3746353150788,
+      "mean_hidden_drift": 43.3746353150788
+    },
+    {
+      "layer_idx": 18,
+      "mean_drift": 52.50491406186002,
+      "mean_hidden_drift": 52.50491406186002
+    },
+    {
+      "layer_idx": 19,
+      "mean_drift": 9.396305969375243,
+      "mean_hidden_drift": 9.396305969375243
+    }
+  ],
+  "attention_deviation_available": false,
+  "attention_deviation_measure": "unavailable",
+  "mean_attention_deviation_slope": 0.0,
+  "per_layer_attention_deviation": []
+}
