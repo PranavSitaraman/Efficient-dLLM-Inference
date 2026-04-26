@@ -11,7 +11,7 @@ from typing import Dict, Optional
 import torch
 
 
-GRPO_TRAIN_CONTRACT_VERSION = 4
+GRPO_TRAIN_CONTRACT_VERSION = 5
 
 
 def load_state_dict_flexible(
@@ -108,9 +108,11 @@ def build_grpo_config_fingerprint(cfg: Dict[str, object]) -> str:
 
     Excluded from fingerprint:
     - ``min_checkpoint_reward``: post-training quality gate, not a hyperparameter.
-    - ``inference.llada21_official``, ``inference.reuse_signal``,
-      ``inference.block_length``: evaluation-only settings that do not affect
+    - ``inference.llada21_official``: baseline-only settings that do not affect
       GRPO rollouts and must not invalidate checkpoints when changed.
+    - Most hardware metadata. ``hardware.tp_size`` is tracked because vLLM MoE
+      expert parallelism changes the actual model execution path and can change
+      generated tokens.
     """
     grpo = {k: v for k, v in cfg.get("grpo", {}).items() if k != "min_checkpoint_reward"}
     inference = {
@@ -130,6 +132,9 @@ def build_grpo_config_fingerprint(cfg: Dict[str, object]) -> str:
             "train_max_samples": cfg.get("data", {}).get("train_max_samples"),
             "max_prompt_len": cfg.get("data", {}).get("max_prompt_len"),
             "max_answer_len": cfg.get("data", {}).get("max_answer_len"),
+        },
+        "hardware": {
+            "tp_size": cfg.get("hardware", {}).get("tp_size"),
         },
     }
     payload = json.dumps(tracked, sort_keys=True, separators=(",", ":"))

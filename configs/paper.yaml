@@ -14,7 +14,7 @@ base_model:
   backend: "dual"
   routing_temperature: 0.1
   allow_python_fallback_ops: true
-  soft_topk: 8
+  soft_topk: 16
 
 soft_mask:
   top_k: 5
@@ -52,7 +52,7 @@ prism:
 cache:
   enabled: true
   # K_stable is learned but separate from the drafter/verifier frontier.
-  stable_kv_cache: true
+  stable_kv_cache: false
   # Deprecated accepted-reuse shortcut. Disabled for the canonical paper path
   # because K_spec must be validated, not skipped as if it were persistent KV.
   kspec_skip: false
@@ -70,8 +70,8 @@ grpo:
   cache_speed_source: "none"       # do not treat transient K_spec agreement as free cache
   cache_speed_credit_cap: 0.5
   thrash_age_decay: 0.1            # exp(-decay*age) weight for thrash penalty; 0=uniform
-  access_reward_weight: 0.02       # dense q_t signal from next-H access F1
-  cache_quality_weight: 0.05       # dense κ_t signal; still small enough that correctness dominates
+  access_reward_weight: 0.0        # q_t is trained through log-prob/commit gating; no dense q reward by default
+  cache_quality_weight: 0.02       # dense κ_t signal; kept small so correctness dominates
   stability_lambda: 10.0           # soft stability exponent λ (maps drift∈[0,0.2] → contrast)
   unresolved_penalty_weight: 0.25  # penalty for lingering [M] tokens at end of rollout
   # AOAE's shaped reward includes compute and unresolved-mask penalties, so
@@ -81,7 +81,7 @@ grpo:
   lr: 3.0e-4
   weight_decay: 0.01
   epochs: 3                        # ↑ from 2 — more epochs for larger max_steps
-  max_steps: 2000                  # ↑ from 500 — longer run to see convergence
+  max_steps: 1000                  # ↑ from 500 — longer run to see convergence
   batch_size: 1
   grad_accum_steps: 1              # ↓ from 4 — group_size=8 gives sufficient averaging
   warmup_steps: 100                # ↑ from 50 — proportional to larger max_steps
@@ -92,7 +92,7 @@ grpo:
   include_heads_in_logprob: ["cache", "access"]
   train_soft_mask: false
   rollout_steps: 16                # training-time horizon; eval still uses inference.steps
-  rollout_gen_length: 128          # training-time decode budget; eval remains 256
+  rollout_gen_length: 128          # training-time decode budget; eval uses inference.gen_length
 
 inference:
   steps: 256
@@ -170,7 +170,7 @@ analysis:
 data:
   train_dataset: "nvidia/OpenMathInstruct-2"
   train_split: "train"
-  train_max_samples: 5000
+  train_max_samples: 1000
   eval_dataset: "openai/gsm8k"
   eval_split: "test"
   use_chat_template: "auto"
@@ -262,5 +262,9 @@ logging:
 hardware:
   seed: 42
   bf16: true
-  tp_size: 2  # TP=2 validated with dual backend (~50% GSM8K); not fingerprint-tracked
+  # vLLM expert-parallel TP>1 currently corrupts LLaDA2.1-mini MoE quality on
+  # this stack (the symptom is ~0.12 GSM8K baseline accuracy). Keep the
+  # canonical paper path on one process; the 2-GPU node can still host other
+  # jobs or explicit TP ablations.
+  tp_size: 1
   deterministic: false

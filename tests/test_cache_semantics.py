@@ -498,6 +498,15 @@ class TestFingerprintStability:
 
         assert build_grpo_config_fingerprint(cfg_a) != build_grpo_config_fingerprint(cfg_b)
 
+    def test_fingerprint_changes_on_tp_size_change(self):
+        """Changing vLLM TP size changes the MoE execution path and invalidates GRPO."""
+        cfg_a = self._base_cfg()
+        cfg_b = self._base_cfg()
+        cfg_a["hardware"] = {"tp_size": 1}
+        cfg_b["hardware"] = {"tp_size": 2}
+
+        assert build_grpo_config_fingerprint(cfg_a) != build_grpo_config_fingerprint(cfg_b)
+
     def test_fingerprint_stable_under_min_checkpoint_reward_change(self):
         """min_checkpoint_reward is a quality gate, not a hyperparameter — excluded."""
         cfg_a = self._base_cfg()

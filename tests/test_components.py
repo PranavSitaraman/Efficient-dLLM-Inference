@@ -6,6 +6,7 @@ Run with:  python3 -m pytest tests/ -v
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import pytest
 import sys
 import os
@@ -993,26 +994,48 @@ class TestComposedPrediction:
         assert torch.allclose(out, logits)
 
     def test_sharpening_effect(self):
+        # The composition operates in normalized log-prob space:
+        #     p_tilde(v) ∝ p(v)^{1 + gamma * sigma_k}
+        # which sharpens the distribution without distorting argmax order.
         from aoae.models.composed_prediction import compose_prediction
         logits = torch.randn(2, 10, VOCAB)
-        cache_probs = torch.ones(2, 10)  # all positions "stable"
+        cache_probs = torch.ones(2, 10)
         composed = compose_prediction(logits, cache_probs, gamma=1.0)
-        # Composed logits should be scaled up (sharpened)
-        # scale = 1 + 1.0 * 1.0 = 2.0
-        assert torch.allclose(composed, logits * 2.0)
+
+        scale = 2.0  # 1 + gamma * sigma_k
+        base_log_probs = F.log_softmax(logits.float(), dim=-1)
+        expected_log_probs = scale * base_log_probs
+        expected_log_probs = expected_log_probs - torch.logsumexp(
+            expected_log_probs, dim=-1, keepdim=True
+        )
+        assert torch.allclose(composed.float(), expected_log_probs, atol=1e-5)
+
+        composed_log_probs = F.log_softmax(composed.float(), dim=-1)
+        assert torch.allclose(composed.float(), composed_log_probs, atol=1e-5)
+        assert torch.equal(composed.argmax(dim=-1), logits.argmax(dim=-1))
+
+        ent_base = -(F.softmax(logits.float(), -1) * base_log_probs).sum(-1).mean()
+        ent_comp = -(F.softmax(composed.float(), -1) * composed_log_probs).sum(-1).mean()
+        assert ent_comp <= ent_base + 1e-5
 
     def test_selective_sharpening(self):
         from aoae.models.composed_prediction import compose_prediction
         logits = torch.randn(1, 5, VOCAB)
         cache_probs = torch.tensor([[0.0, 0.0, 1.0, 1.0, 0.0]])
         composed = compose_prediction(logits, cache_probs, gamma=0.5)
-        # Positions 0,1,4 should be unchanged (scale=1.0)
-        assert torch.allclose(composed[0, 0], logits[0, 0])
-        assert torch.allclose(composed[0, 1], logits[0, 1])
-        assert torch.allclose(composed[0, 4], logits[0, 4])
-        # Positions 2,3 should be scaled by 1.5
-        assert torch.allclose(composed[0, 2], logits[0, 2] * 1.5)
-        assert torch.allclose(composed[0, 3], logits[0, 3] * 1.5)
+        # sigma_k=0: untouched base logits.
+        for k in (0, 1, 4):
+            assert torch.allclose(composed[0, k], logits[0, k])
+
+        # sigma_k=1: log-probs scaled by 1.5, renormalized.
+        scale = 1.5
+        base_lp = F.log_softmax(logits[0, 2:4].float(), dim=-1)
+        expected_lp = scale * base_lp
+        expected_lp = expected_lp - torch.logsumexp(expected_lp, dim=-1, keepdim=True)
+        assert torch.allclose(composed[0, 2:4].float(), expected_lp, atol=1e-5)
+        assert torch.equal(
+            composed[0, 2:4].argmax(dim=-1), logits[0, 2:4].argmax(dim=-1)
+        )
 
     def test_sample_shape(self):
         from aoae.models.composed_prediction import sample_from_composed
@@ -1997,6 +2020,59 @@ class TestComposePredictionDual:
         result = compose_prediction_dual(pri, aux, agree, gamma=0.5)
         assert result.shape == (3, 8, VOCAB)
 
+    def test_zero_gamma_strict_noop(self):
+        # Regression: previous bug shifted unnormalized primary logits by
+        # negative aux log-probs even at gamma=0 due to a control-flow
+        # mistake.  With the rewrite, gamma=0 must be a strict identity for
+        # any agreement / aux input.
+        from aoae.models.composed_prediction import compose_prediction_dual
+        pri = torch.randn(4, 6, VOCAB)
+        aux = torch.randn(4, 6, VOCAB)
+        agree = torch.randint(0, 2, (4, 6)).float()
+        out = compose_prediction_dual(pri, aux, agree, gamma=0.0)
+        assert out.data_ptr() == pri.data_ptr() or torch.equal(out, pri)
+        assert torch.equal(out.argmax(-1), pri.argmax(-1))
+
+    def test_gamma_positive_no_argmax_pathology_when_aux_disagrees_uniformly(self):
+        # Regression: the broken composition (raw logits + log_softmax of aux)
+        # systematically biased the argmax toward primary tokens with the
+        # least-negative aux log-prob, even at agreement positions where the
+        # aux argmax already matched the primary.  Under the corrected
+        # log-prob composition, when agreement=1 and primary == aux, the
+        # composed argmax must equal the primary argmax for any gamma >= 0.
+        from aoae.models.composed_prediction import compose_prediction_dual
+        torch.manual_seed(0)
+        pri = torch.randn(2, 12, VOCAB)
+        aux = pri.clone()
+        agree = torch.ones(2, 12)
+        for g in (0.1, 0.5, 1.0, 4.0):
+            out = compose_prediction_dual(pri, aux, agree, gamma=g)
+            assert torch.equal(out.argmax(-1), pri.argmax(-1))
+
+    def test_returns_normalized_log_probs_at_agreement(self):
+        # The composition path must return normalized log-probabilities at
+        # agreement positions so downstream argmax/softmax remain coherent
+        # and finite (no infs / NaNs from logsumexp on bf16 mass).
+        from aoae.models.composed_prediction import compose_prediction_dual
+        pri = torch.randn(2, 6, VOCAB)
+        aux = torch.randn(2, 6, VOCAB)
+        agree = torch.ones(2, 6)
+        out = compose_prediction_dual(pri, aux, agree, gamma=0.5)
+        sums = torch.logsumexp(out.float(), dim=-1)
+        assert torch.allclose(sums, torch.zeros_like(sums), atol=1e-4)
+        assert torch.isfinite(out).all()
+
+    def test_bf16_input_stable(self):
+        # The runtime calls this on bf16 logits.  The renormalization must not
+        # produce infs / NaNs at the bf16 precision used by the model.
+        from aoae.models.composed_prediction import compose_prediction_dual
+        pri = (torch.randn(2, 4, VOCAB) * 5).to(torch.bfloat16)
+        aux = (torch.randn(2, 4, VOCAB) * 5).to(torch.bfloat16)
+        agree = torch.ones(2, 4)
+        out = compose_prediction_dual(pri, aux, agree, gamma=0.5)
+        assert out.dtype == torch.bfloat16
+        assert torch.isfinite(out.float()).all()
+
 
 # ======================================================================
 # Tests: Policy with agreement signal
@@ -2369,6 +2445,36 @@ class TestAOAESpeculativeInferenceLoop:
         )
         assert hidden_required.item() == pytest.approx(1.0)
 
+    def test_stable_kv_cache_execution_flag_fails_loudly_until_wired(self):
+        from aoae.speculative_inference import speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "cache": {
+                "enabled": True,
+                "kspec_skip": False,
+                "stable_kv_cache": True,
+                "prefix_kv_cache": False,
+            },
+            "inference": {
+                "steps": 1,
+                "gen_length": 1,
+                "temperature": 0.0,
+                "fallback_unmask": False,
+            },
+            "analysis": {"track_kv_dynamics": False},
+        }
+
+        with pytest.raises(RuntimeError, match="stable_kv_cache=true"):
+            speculative_inference(
+                dual_model=object(),
+                policy=None,
+                soft_mask_module=None,
+                prism_adapter=None,
+                prompt_ids=torch.tensor([[1]]),
+                cfg=cfg,
+            )
+
     def test_kspec_frontier_accumulates_then_authoritative_verifier_consumes_it(self):
         from aoae.speculative_inference import speculative_inference
 
@@ -2546,6 +2652,8 @@ class TestAOAESpeculativeInferenceLoop:
         }
 
         class DummyDualModel:
+            # No primary_forward — exercises the dual_forward_resp compatibility
+            # path used by lightweight test shims and older wrappers.
             def __init__(self):
                 self.verifier_calls = 0
 
@@ -2553,9 +2661,6 @@ class TestAOAESpeculativeInferenceLoop:
                 logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], 3)
                 logits[..., 0] = 5.0
                 return logits
-
-            def primary_forward(self, input_ids):
-                raise AssertionError("primary_forward is only needed for rejection recompute")
 
             def dual_forward_resp(self, input_ids, resp_slice, need_hidden=False, need_all_hidden=False):
                 del need_hidden, need_all_hidden
@@ -2982,9 +3087,13 @@ class TestAOAESpeculativeInferenceLoop:
 
         assert traj.aux_only_steps == 2
         assert traj.primary_steps == 1
+        # With compose_gamma=0 and temperature=0 the verifier no longer needs
+        # a fresh auxiliary forward (greedy argmax decisions are unchanged by
+        # the aux distribution at non-agreement positions and the cache-aligned
+        # composition collapses to the primary).  The aux prefix cache is
+        # therefore reused only on draft microsteps.
         assert dual_model.calls == [
             "aux_cache_full",
-            ("aux_cache_replace", 1, 3),
             ("aux_cache_replace", 1, 3),
             "pri_hidden",
         ]

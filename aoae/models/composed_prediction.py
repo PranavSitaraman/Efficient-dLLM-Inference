@@ -32,7 +32,9 @@ def compose_prediction(
 
         p_tilde(v) proportional to p(v)^{1 + gamma * sigma_k}
 
-    In log-space: scales logits by (1 + gamma * sigma_k).
+    In log-space: scales normalized log-probabilities by
+    (1 + gamma * sigma_k).  Using log-probabilities instead of raw logits
+    keeps the operation invariant to arbitrary per-position logit offsets.
 
     Args:
         base_logits: [B, L, V] raw logits from the base model.
@@ -45,9 +47,12 @@ def compose_prediction(
     if gamma <= 0.0:
         return base_logits
 
-    sigma_k = cache_probs.unsqueeze(-1)  # [B, L, 1]
+    sigma_k = cache_probs.to(dtype=base_logits.dtype).clamp(0.0, 1.0).unsqueeze(-1)
     scale = 1.0 + gamma * sigma_k  # [B, L, 1]
-    return base_logits * scale
+    base_log_probs = F.log_softmax(base_logits.float(), dim=-1).to(base_logits.dtype)
+    composed = scale * base_log_probs
+    composed = composed - torch.logsumexp(composed.float(), dim=-1, keepdim=True).to(composed.dtype)
+    return torch.where(sigma_k > 0, composed, base_logits)
 
 
 def sample_from_composed(
@@ -109,16 +114,19 @@ def compose_prediction_dual(
     if gamma <= 0.0:
         return primary_logits
 
-    # Convert auxiliary logits to log-probs for stable composition
-    aux_log_probs = F.log_softmax(auxiliary_logits, dim=-1)  # [B, L, V]
+    alpha_k = agreement.to(dtype=primary_logits.dtype).clamp(0.0, 1.0).unsqueeze(-1)
+    if not bool((alpha_k > 0).any().item()):
+        return primary_logits
 
-    # alpha_k: [B, L, 1] for broadcasting
-    alpha_k = agreement.float().unsqueeze(-1)  # [B, L, 1]
+    primary_log_probs = F.log_softmax(primary_logits.float(), dim=-1)
+    aux_log_probs = F.log_softmax(auxiliary_logits.float(), dim=-1)
+    composed = primary_log_probs + gamma * alpha_k.float() * aux_log_probs
+    composed = torch.nan_to_num(composed, nan=-1e30, neginf=-1e30, posinf=1e30)
+    composed = composed - torch.logsumexp(composed, dim=-1, keepdim=True)
+    composed = composed.to(dtype=primary_logits.dtype)
 
-    # Compose: primary_logits + gamma * alpha_k * aux_log_probs
-    # nan_to_num guards against 0 * -inf = NaN (IEEE 754) in bf16,
-    # where log_softmax produces -inf for near-zero-probability tokens and
-    # alpha_k=0 at disagreement positions.
-    composed = primary_logits + torch.nan_to_num(gamma * alpha_k * aux_log_probs, nan=0.0)
-
-    return composed
+    # At alpha=0 we preserve the primary logits exactly.  At alpha>0 the tensor
+    # is normalized log-probabilities, which are valid logits for downstream
+    # argmax/softmax and avoid mixing normalized aux scores into unnormalized
+    # primary scores.
+    return torch.where(alpha_k > 0, composed, primary_logits)
