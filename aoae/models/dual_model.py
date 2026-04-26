@@ -88,6 +88,7 @@ class DualModelWrapper(nn.Module):
         self._cfg = cfg
         self.tau_r = cfg["base_model"].get("routing_temperature", 0.01)
         self._soft_topk = cfg["base_model"].get("soft_topk", None)
+        self._lossless = cfg["base_model"].get("lossless_verification", False)
 
         base_cfg = _deep_copy_cfg(cfg)
         base_cfg["base_model"]["backend"] = _select_dual_base_backend(cfg)
@@ -150,6 +151,8 @@ class DualModelWrapper(nn.Module):
     @torch.no_grad()
     def primary_forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
         """Primary forward with softened / widened routing → [B, L, V] logits."""
+        if self._lossless:
+            return self.auxiliary_forward(input_ids)
         set_soft_routing(self._model.model)
         try:
             return self._model.forward(input_ids)
@@ -161,6 +164,8 @@ class DualModelWrapper(nn.Module):
         self, input_ids: torch.LongTensor,
     ) -> Tuple[torch.Tensor, object]:
         """Soft-routed forward returning logits and a reusable KV cache."""
+        if self._lossless:
+            return self.auxiliary_forward_with_cache(input_ids)
         set_soft_routing(self._model.model)
         try:
             return self._model.forward_with_cache(input_ids)
@@ -175,6 +180,8 @@ class DualModelWrapper(nn.Module):
         past_key_values: object,
     ) -> Tuple[torch.Tensor, object]:
         """Soft-routed partial recompute against an existing KV cache."""
+        if self._lossless:
+            return self.auxiliary_forward_replace_with_cache(full_input_ids, replace_slice, past_key_values)
         set_soft_routing(self._model.model)
         try:
             return self._model.forward_replace_with_cache(
@@ -213,6 +220,10 @@ class DualModelWrapper(nn.Module):
         self, input_ids: torch.LongTensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Soft-routed forward → (logits [B,L,V], hidden [B,L,D])."""
+        if self._lossless:
+            logits = self.auxiliary_forward(input_ids)
+            hidden = self._model.forward_with_hidden(input_ids)[1]
+            return logits, hidden
         set_soft_routing(self._model.model)
         try:
             return self._model.forward_with_hidden(input_ids)
@@ -224,6 +235,10 @@ class DualModelWrapper(nn.Module):
         self, input_ids: torch.LongTensor,
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """Soft-routed forward → (logits [B,L,V], all hidden states)."""
+        if self._lossless:
+            logits = self.auxiliary_forward(input_ids)
+            _, all_hidden = self._model.forward_with_all_hidden(input_ids)
+            return logits, all_hidden
         set_soft_routing(self._model.model)
         try:
             return self._model.forward_with_all_hidden(input_ids)
@@ -252,6 +267,8 @@ class DualModelWrapper(nn.Module):
                            zeros at agreed positions (caller fills with aux_logits).
             kv_updated:    hybrid KV state (aux at K_spec positions, primary elsewhere).
         """
+        if self._lossless:
+            return self.auxiliary_forward_replace_with_cache(full_input_ids, resp_slice, aux_past_kv)
         set_soft_routing(self._model.model)
         try:
             return self._model.forward_with_kspec_cache(
@@ -285,6 +302,8 @@ class DualModelWrapper(nn.Module):
                            zeros at stable positions (unused: already unmasked).
             kv_updated:    stable_kv updated at active positions.
         """
+        if self._lossless:
+            return self.auxiliary_forward_replace_with_cache(full_input_ids, resp_slice, stable_kv)
         set_soft_routing(self._model.model)
         try:
             return self._model.forward_with_kspec_cache(
@@ -303,7 +322,10 @@ class DualModelWrapper(nn.Module):
         Optional[List[Tuple[torch.Tensor, torch.Tensor]]],
     ]:
         """Soft-routed forward with optional attention/KV diagnostics."""
-        set_soft_routing(self._model.model)
+        if self._lossless:
+            set_hard_routing(self._model.model)
+        else:
+            set_soft_routing(self._model.model)
         try:
             return self._model.forward_with_diagnostics(
                 input_ids,

@@ -319,6 +319,7 @@ def add_eval_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--soft_topk", type=int, default=None, help="Override base_model.soft_topk. Use the full expert count for all-experts soft gating.")
     parser.add_argument("--run_name", type=str, default=None, help="Override logging.run_name.")
     parser.add_argument("--output_dir", type=str, default=None, help="Override logging.output_dir.")
+    parser.add_argument("--lossless_verification", action="store_true", help="Set base_model.lossless_verification=true: primary_forward uses hard routing (same as aux), so every draft is accepted. Sanity-check that the speculative path recovers baseline accuracy.")
 
 
 def apply_eval_overrides(cfg: dict, args: argparse.Namespace) -> dict:
@@ -370,6 +371,8 @@ def apply_eval_overrides(cfg: dict, args: argparse.Namespace) -> dict:
         lc["run_name"] = args.run_name
     if args.output_dir is not None:
         lc["output_dir"] = args.output_dir
+    if getattr(args, "lossless_verification", False):
+        bc["lossless_verification"] = True
 
     return cfg
 
