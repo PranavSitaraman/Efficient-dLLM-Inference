@@ -680,6 +680,11 @@ def speculative_inference(
     # for cheaper verifier passes and for early completion.
     _baseline_units = torch.full((B,), float(T), device=device)
 
+    # Wall-time optimization: skip per-step bookkeeping that is only needed
+    # for GRPO reward signals (cache quality F1, K_stable/K_spec occupancy
+    # fractions). These have no effect on the inference output.
+    _cache_bookkeeping_enabled = record_trajectory
+
     # --- Main speculative diffusion loop ---
     for t in range(T, 0, -1):
         step_frac = t / T
@@ -794,9 +799,11 @@ def speculative_inference(
                 if frontier_reject_mask.any():
                     resp_tokens = y[:, resp_slice].clone()
                     if cache_mgr is not None:
-                        _stable_invalidations += int(
-                            (cache_mgr.stable.get_cached_mask() & frontier_reject_mask).sum().item()
-                        )
+                        # Skipped bookkeeping for K_stable invalidation count (wall-time opt).
+                        if _cache_bookkeeping_enabled:
+                            _stable_invalidations += int(
+                                (cache_mgr.stable.get_cached_mask() & frontier_reject_mask).sum().item()
+                            )
                         cache_mgr.invalidate(frontier_reject_mask.float())
 
                     if rejection_action in ("remask", "mask"):
@@ -874,7 +881,10 @@ def speculative_inference(
             _draft_microsteps_since_verify = 0
         else:
             _draft_microsteps_since_verify += 1
-        agreement_rates.append(float(agreement.float().mean().item()))
+        # Skipped bookkeeping for agreement_rates list (wall-time opt): only used
+        # as fallback when _agreement_obs==0; _agreement_sum/_obs path is preferred.
+        if _cache_bookkeeping_enabled:
+            agreement_rates.append(float(agreement.float().mean().item()))
 
         # --- Construct soft-masked state from PRIMARY logits ---
         H_t, confidence, entropy, weighted_embeds = call_soft_mask(
@@ -917,7 +927,10 @@ def speculative_inference(
             # Harmonic mean (F1)
             _cache_f1 = 2.0 * _cached_prec * _recall / (_cached_prec + _recall + 1e-8)  # [B]
             trajectory.cache_quality_f1.append(_cache_f1.detach())
-        _prev_H_t = H_t.detach()
+        # Skipped bookkeeping for cache quality F1 (wall-time opt): only track
+        # _prev_H_t when the GRPO reward needs it.
+        if record_trajectory:
+            _prev_H_t = H_t.detach()
 
         age_feat = None
         last_action_feat = None
@@ -1015,8 +1028,10 @@ def speculative_inference(
                 trajectory.boundary_actions.append(actions["ell_t"].detach())
 
         # --- Count cache thrashing ---
+        # Skipped bookkeeping for thrash counting (wall-time opt): thrash penalty
+        # is only used in GRPO reward; not needed during eval inference.
         thrash = None
-        if cache_mgr is not None:
+        if cache_mgr is not None and _cache_bookkeeping_enabled:
             thrash = cache_mgr.count_thrash(r_t)
             _stable_invalidations += int(thrash.sum().item())
         if record_trajectory and trajectory is not None and thrash is not None:
@@ -1071,13 +1086,18 @@ def speculative_inference(
         # K_spec is the transient frontier of unverified drafted positions.  It
         # accumulates across auxiliary microsteps and is cleared only above when
         # the primary verifier consumes it.
-        if cache_mgr is not None:
+        # Skipped bookkeeping for K_spec mirror update (wall-time opt): cache_mgr
+        # mirrors draft_frontier.mask for metrics only; DraftFrontier is authoritative.
+        if cache_mgr is not None and _cache_bookkeeping_enabled:
             cache_mgr.step_spec(draft_frontier.mask)
 
         # ====== Phase 3b: Stable Cache (K_stable) ======
         # Positions the κ_t head predicts will remain stable across future steps.
         # Accumulated persistently; evicted by r_t (Phase 1 already called invalidate).
-        if cache_mgr is not None:
+        # Skipped bookkeeping for K_stable commit/age tracking (wall-time opt):
+        # K_stable is not part of the speculative inference path; occupancy metrics
+        # and GRPO cache quality reward only needed when record_trajectory=True.
+        if cache_mgr is not None and _cache_bookkeeping_enabled:
             stable_commit_mask = (
                 kappa_t
                 * (1.0 - r_t)
@@ -1095,7 +1115,9 @@ def speculative_inference(
         # spec_cached_fractions: legacy metric name for K_spec frontier occupancy.
         # stable_cached_fractions: learned persistent cache occupancy.
         # cached_fractions:        K_spec ∪ K_stable diagnostic occupancy.
-        if trajectory is not None and cache_mgr is not None:
+        # Skipped bookkeeping for cached fraction appends (wall-time opt): only
+        # needed by GRPO reward; zeros reported for eval stable_cache_fraction.
+        if trajectory is not None and cache_mgr is not None and _cache_bookkeeping_enabled:
             trajectory.spec_cached_fractions.append(cache_mgr.spec_cached_fraction().detach())
             trajectory.stable_cached_fractions.append(cache_mgr.stable_cached_fraction().detach())
             trajectory.cached_fractions.append(cache_mgr.cached_fraction().detach())

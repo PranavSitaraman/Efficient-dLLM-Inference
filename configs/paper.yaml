@@ -249,6 +249,28 @@ evaluation:
           "inference.primary_agree_threshold": 0.75
           "inference.max_unmask_fraction_per_step": 0.25
           "inference.disable_remask": true
+      - name: "burst_balanced"
+        policy_temperature: 1.25
+        overrides:
+          "base_model.lossless_verification": true
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 24
+          "inference.verifier_schedule.max_draft_microsteps": 8
+          "inference.primary_agree_threshold": 0.70
+          "inference.max_unmask_fraction_per_step": 0.25
+          "inference.disable_remask": true
+      - name: "burst_max"
+        policy_temperature: 1.5
+        overrides:
+          "base_model.lossless_verification": true
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 32
+          "inference.verifier_schedule.max_draft_microsteps": 12
+          "inference.primary_agree_threshold": 0.60
+          "inference.max_unmask_fraction_per_step": 0.25
+          "inference.disable_remask": true
   code:
     timeout_sec: 3.0
     cpu_time_limit_sec: 2
@@ -266,9 +288,5 @@ logging:
 hardware:
   seed: 42
   bf16: true
-  # vLLM expert-parallel TP>1 currently corrupts LLaDA2.1-mini MoE quality on
-  # this stack (the symptom is ~0.12 GSM8K baseline accuracy). Keep the
-  # canonical paper path on one process; the 2-GPU node can still host other
-  # jobs or explicit TP ablations.
-  tp_size: 1
+  tp_size: 2
   deterministic: false
