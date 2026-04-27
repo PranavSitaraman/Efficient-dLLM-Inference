@@ -52,10 +52,9 @@ prism:
 cache:
   enabled: true
   # K_stable is learned but separate from the drafter/verifier frontier.
+  # Execution-level skipping is gated behind a runtime guard; see
+  # speculative_inference._stable_verifier_miss_fraction.
   stable_kv_cache: false
-  # Deprecated accepted-reuse shortcut. Disabled for the canonical paper path
-  # because K_spec must be validated, not skipped as if it were persistent KV.
-  kspec_skip: false
   # Reuse the prompt and drafter cache between verifier events; reset on high
   # verifier rejection.
   prefix_kv_cache: true
@@ -101,9 +100,6 @@ inference:
   fallback_unmask: true
   max_unmask_fraction_per_step: 0.125
   disable_remask: false
-  # Compatibility alias only. The canonical scheduler below is candidate-budget
-  # based because s-mode and q-mode draft different numbers of tokens per step.
-  primary_every_n: 4
   llada21_official:
     use_block_diffusion: true
     max_post_steps: 16
@@ -203,7 +199,6 @@ evaluation:
       - name: "verified"
         policy_temperature: 0.7
         overrides:
-          "cache.kspec_skip": false
           "cache.prefix_kv_cache": true
           "inference.speculative_schedule": "aoae"
           "inference.verifier_schedule.mode": "candidate_budget"
@@ -215,7 +210,6 @@ evaluation:
       - name: "balanced"
         policy_temperature: 1.0
         overrides:
-          "cache.kspec_skip": false
           "inference.speculative_schedule": "aoae"
           "inference.verifier_schedule.mode": "candidate_budget"
           "inference.verifier_schedule.draft_token_budget": 8
@@ -226,7 +220,6 @@ evaluation:
       - name: "fast"
         policy_temperature: 1.25
         overrides:
-          "cache.kspec_skip": false
           "inference.speculative_schedule": "aoae"
           "inference.verifier_schedule.mode": "candidate_budget"
           "inference.verifier_schedule.draft_token_budget": 12
@@ -237,7 +230,6 @@ evaluation:
       - name: "fastest"
         policy_temperature: 1.5
         overrides:
-          "cache.kspec_skip": false
           "inference.speculative_schedule": "aoae"
           "inference.verifier_schedule.mode": "candidate_budget"
           "inference.verifier_schedule.draft_token_budget": 16

@@ -1,21 +1,15 @@
 """
 Tests for K_spec / DraftFrontier semantics.
 
-Section 1-5: _kspec_find_clusters and forward_with_kspec_cache — test the base_model
-utility functions that remain in aoae/models/base_model.py. These are NOT the canonical
-inference path; kspec_skip is disabled in speculative_inference.py. They remain here
-because the underlying algorithms still live in base_model.
-
-Section 6 (TestDraftFrontier): canonical tests for the transient K_spec accumulating
-frontier. These test the semantics that speculative_inference.py actually uses:
-  - frontier accumulates across aux microsteps
-  - cleared after a verifier event
-  - authoritative argmax validation accepts/rejects per stored token
-  - probability threshold and PRISM gate modes
-  - age tracking across aux steps
+Section 1-5 cover the cluster-finding and partial-forward primitives in
+aoae.models.base_model — kept because the underlying algorithms still live
+there and back the K_stable execution path.  Section 6 covers the DraftFrontier
+class actually used by speculative_inference.py: accumulation across aux
+microsteps, clearing after verifier events, authoritative argmax validation,
+probability/PRISM gate modes, and age tracking.
 
 Run with:
-    ./dlm_env/bin/python -m pytest tests/test_kspec.py -v
+    pytest tests/test_kspec.py -v
 """
 
 import sys

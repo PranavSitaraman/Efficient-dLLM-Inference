@@ -220,23 +220,28 @@ class DraftFrontier:
 
 
 def _verifier_schedule(ic: dict) -> Dict[str, Any]:
-    """Resolve the verifier scheduler, keeping primary_every_n as an alias."""
+    """Resolve the verifier scheduler."""
+    if "primary_every_n" in ic:
+        raise ValueError(
+            "inference.primary_every_n was removed. Use "
+            "inference.verifier_schedule.{mode: step_interval, step_interval: N} instead."
+        )
     raw = dict(ic.get("verifier_schedule", {}) or {})
-    if "mode" not in raw:
-        if "primary_every_n" in ic:
-            raw["mode"] = "step_interval"
-            raw["step_interval"] = int(ic.get("primary_every_n", 1))
-        else:
-            raw["mode"] = "candidate_budget"
-    mode = str(raw.get("mode", "candidate_budget")).lower()
-    if mode in ("primary_every_n", "interval"):
+    raw.setdefault("mode", "candidate_budget")
+    mode = str(raw["mode"]).lower()
+    if mode == "interval":
         mode = "step_interval"
+    if mode not in {"candidate_budget", "step_interval"}:
+        raise ValueError(
+            f"Unsupported verifier_schedule.mode={mode!r}. "
+            "Use 'candidate_budget' or 'step_interval'."
+        )
     raw["mode"] = mode
     raw["draft_token_budget"] = int(raw.get("draft_token_budget", 12))
     raw["min_draft_microsteps"] = int(raw.get("min_draft_microsteps", 1))
     raw["max_draft_microsteps"] = int(raw.get("max_draft_microsteps", 4))
-    raw["force_first_last"] = bool(raw.get("force_first_last", ic.get("force_primary_first_last", True)))
-    raw["step_interval"] = max(1, int(raw.get("step_interval", ic.get("primary_every_n", 1))))
+    raw["force_first_last"] = bool(raw.get("force_first_last", True))
+    raw["step_interval"] = max(1, int(raw.get("step_interval", 1)))
     return raw
 
 
@@ -353,7 +358,7 @@ def _maybe_log_speculative_rollout_config(
     primary_cache_enabled: bool,
     need_hidden: bool,
     need_all_hidden: bool,
-    primary_every_n: int,
+    step_interval: int,
     primary_agree_threshold: float,
     force_primary_endpoints: bool,
     aux_cache_reset_threshold: float,
@@ -385,7 +390,7 @@ def _maybe_log_speculative_rollout_config(
         f"verifier_schedule={verifier_schedule.get('mode')} "
         f"draft_token_budget={int(verifier_schedule.get('draft_token_budget', 0))} "
         f"max_draft_microsteps={int(verifier_schedule.get('max_draft_microsteps', 0))} "
-        f"primary_every_n={primary_every_n} "
+        f"step_interval={step_interval} "
         f"primary_agree_threshold={primary_agree_threshold:.3f} "
         f"force_primary_endpoints={_on_off(force_primary_endpoints)} "
         f"aux_cache_reset_threshold={aux_cache_reset_threshold:.3f} "
@@ -475,8 +480,14 @@ def speculative_inference(
 
     # --- KV cache state ---
     schedule_cfg = _verifier_schedule(ic)
-    use_prefix_kv_cache = cfg["cache"].get("prefix_kv_cache", False) and use_cache
-    requested_stable_kv_cache = bool(cfg.get("cache", {}).get("stable_kv_cache", False)) and use_cache
+    cache_cfg = cfg.get("cache", {}) or {}
+    if "kspec_skip" in cache_cfg:
+        raise ValueError(
+            "cache.kspec_skip was removed. K_spec is the transient draft frontier; "
+            "it is not a persistent cache and cannot be 'skipped'.  Drop the key."
+        )
+    use_prefix_kv_cache = bool(cache_cfg.get("prefix_kv_cache", False)) and use_cache
+    requested_stable_kv_cache = bool(cache_cfg.get("stable_kv_cache", False)) and use_cache
     if requested_stable_kv_cache:
         raise RuntimeError(
             "cache.stable_kv_cache=true requests persistent K_stable KV execution, "
@@ -613,7 +624,7 @@ def speculative_inference(
             )
         return pri_full[:, resp_slice, :], None, None
 
-    primary_every_n = int(schedule_cfg.get("step_interval", ic.get("primary_every_n", 1)))
+    step_interval = int(schedule_cfg.get("step_interval", 1))
     primary_agree_threshold = float(ic.get("primary_agree_threshold", 0.0))
     force_primary_endpoints = bool(schedule_cfg.get("force_first_last", True))
     aux_cache_reset_threshold = float(ic.get("aux_cache_reset_threshold", 1.1))
@@ -624,8 +635,11 @@ def speculative_inference(
             f"Unsupported verifier.rejection_action={rejection_action!r}. "
             "Use remask or keep/evict_only."
         )
-    drafter_cfg = ic.get("drafter", {})
-    aux_compute_ratio = float(drafter_cfg.get("aux_compute_ratio", ic.get("aux_compute_ratio", 0.35)))
+    if "aux_compute_ratio" in ic:
+        raise ValueError(
+            "inference.aux_compute_ratio was moved under inference.drafter.aux_compute_ratio."
+        )
+    aux_compute_ratio = float(drafter_cfg.get("aux_compute_ratio", 0.35))
     _maybe_log_speculative_rollout_config(
         cfg=cfg,
         prism_adapter=prism_adapter,
@@ -639,7 +653,7 @@ def speculative_inference(
         primary_cache_enabled=_primary_cache_enabled,
         need_hidden=_need_hidden,
         need_all_hidden=_need_all_hidden,
-        primary_every_n=primary_every_n,
+        step_interval=step_interval,
         primary_agree_threshold=primary_agree_threshold,
         force_primary_endpoints=force_primary_endpoints,
         aux_cache_reset_threshold=aux_cache_reset_threshold,

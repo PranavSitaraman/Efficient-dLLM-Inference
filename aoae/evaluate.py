@@ -149,13 +149,12 @@ _DEFAULT_SPECULATIVE_POLICY_TEMPERATURES = [0.5, 1.0, 1.5]
 _SPECULATIVE_POINT_OVERRIDE_ALIASES = {
     "routing_temperature": "base_model.routing_temperature",
     "soft_topk": "base_model.soft_topk",
+    "lossless_verification": "base_model.lossless_verification",
     "stable_kv_cache": "cache.stable_kv_cache",
-    "kspec_skip": "cache.kspec_skip",
     "prefix_kv_cache": "cache.prefix_kv_cache",
     "speculative_schedule": "inference.speculative_schedule",
     "steps": "inference.steps",
     "gen_length": "inference.gen_length",
-    "primary_every_n": "inference.primary_every_n",
     "verifier_schedule_mode": "inference.verifier_schedule.mode",
     "draft_token_budget": "inference.verifier_schedule.draft_token_budget",
     "max_draft_microsteps": "inference.verifier_schedule.max_draft_microsteps",
@@ -502,19 +501,19 @@ def _configure_dual_model_for_eval_cfg(dual_model, cfg: Dict[str, Any]) -> None:
 
 def _summarize_speculative_point(point: Dict[str, Any], cfg: Dict[str, Any]) -> str:
     inf_cfg = cfg.get("inference", {})
-    cache_cfg = cfg.get("cache", {})
     schedule = str(inf_cfg.get("speculative_schedule", "aoae")).strip().lower()
     unmask = inf_cfg.get(
         "max_unmask_tokens_per_step",
         inf_cfg.get("max_unmask_fraction_per_step", ""),
     )
+    schedule_cfg = inf_cfg.get("verifier_schedule", {}) or {}
     return (
         f"{point.get('name', '')}: sched={schedule}, "
         f"tau_pi={float(point.get('policy_temperature', 1.0))}, "
-        f"primary_every_n={inf_cfg.get('primary_every_n', 1)}, "
+        f"budget={schedule_cfg.get('draft_token_budget', 1)}, "
+        f"micros={schedule_cfg.get('max_draft_microsteps', 1)}, "
         f"agree={inf_cfg.get('primary_agree_threshold', 0.0)}, "
         f"unmask={unmask}, "
-        f"kspec={'on' if cache_cfg.get('kspec_skip', True) else 'off'}, "
         f"{_remask_note(cfg)}"
     )
 
@@ -545,6 +544,7 @@ def _speculative_note(
     schedule: str,
 ) -> str:
     inf_cfg = cfg.get("inference", {})
+    schedule_cfg = inf_cfg.get("verifier_schedule", {}) or {}
     point_name = cfg.get("_active_speculative_eval_point")
     unmask = inf_cfg.get(
         "max_unmask_tokens_per_step",
@@ -553,10 +553,10 @@ def _speculative_note(
     prefix = f"point={point_name}," if point_name else ""
     note = (
         f"{prefix}tau_r={tau_r},tau_pi={policy_temperature},"
-        f"primary_n={inf_cfg.get('primary_every_n', 1)},"
+        f"budget={schedule_cfg.get('draft_token_budget', 1)},"
+        f"micros={schedule_cfg.get('max_draft_microsteps', 1)},"
         f"agree_thr={inf_cfg.get('primary_agree_threshold', 0.0)},"
-        f"unmask={unmask},reuse={reuse_method},{pc_note},sched={schedule},"
-        f"kspec={'on' if cfg.get('cache', {}).get('kspec_skip', True) else 'off'}"
+        f"unmask={unmask},reuse={reuse_method},{pc_note},sched={schedule}"
     )
     return _append_note(note, _remask_note(cfg))
 
@@ -1059,8 +1059,6 @@ def evaluate_speculative(
                 # "aoae" schedule: use speculative_inference() — the same path
                 # used during GRPO training, ensuring eval/train consistency and
                 # enabling KV dynamics tracking via trajectory.kv_dynamics_summary.
-                # This replaces the former run_speculative_inference() (dinfer)
-                # routing for the aoae schedule.
                 output_ids, _spec_trajectory = _aoae_speculative_inference(
                     dual_model=dual_model,
                     policy=policy,
@@ -1179,23 +1177,17 @@ def evaluate_speculative(
 
         elapsed = t1 - t0
         total_time += elapsed
-        pri_steps = int(stats.get("primary_steps", T))
-        aux_steps = int(stats.get("aux_only_steps", 0))
-        cache_cfg = cfg.get("cache", {})
-        if float(stats.get("effective_flops", 0.0)) > 0.0:
-            # Use the same compute-aware accounting as GRPO: one NFE is one
-            # full verifier-equivalent diffusion step. This includes cheap
-            # auxiliary microsteps and verifier miss fraction after K_stable
-            # reuse, and avoids double-counting K_spec as persistent cache.
-            total_nfe += float(stats["effective_flops"]) * float(T)
-        else:
-            primary_step_cost = (
-                1
-                if bool(cache_cfg.get("stable_kv_cache", False))
-                and not bool(cache_cfg.get("kspec_skip", True))
-                else 2
+        if "effective_flops" not in stats:
+            raise RuntimeError(
+                "Speculative trajectory did not report effective_flops; "
+                "all canonical paths must populate trajectory.effective_flops "
+                "from speculative_inference."
             )
-            total_nfe += pri_steps * primary_step_cost + aux_steps
+        # Compute-aware NFE: one unit is one full verifier-equivalent diffusion
+        # step.  Cheap auxiliary microsteps and the verifier miss fraction after
+        # K_stable reuse both feed into the trajectory's effective_flops, so the
+        # number reported here matches the GRPO reward's compute term.
+        total_nfe += float(stats["effective_flops"]) * float(T)
         total_cache_commits += int(stats.get("total_commits", 0))
         total_cache_invalidations += int(stats.get("total_invalidations", 0))
         total_stable_cache_fraction += float(stats.get("stable_cache_fraction", 0.0))
@@ -1607,10 +1599,14 @@ def _build_run_metadata(
 ) -> Dict[str, Any]:
     runtime = collect_runtime_info()
     eval_cfg = cfg.get("evaluation", {})
+    inf_cfg = cfg.get("inference", {})
+    base_cfg = cfg.get("base_model", {})
+    hw_cfg = cfg.get("hardware", {})
     llada_speed = resolve_llada21_official_settings(cfg, mode="speed")
     llada_quality = resolve_llada21_official_settings(cfg, mode="quality")
+    verifier_schedule = inf_cfg.get("verifier_schedule", {}) or {}
     return {
-        "schema_version": "aoae_eval_v2",
+        "schema_version": "aoae_eval_v3",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "run_name": cfg.get("logging", {}).get("run_name", ""),
         "output_dir": cfg.get("logging", {}).get("output_dir", ""),
@@ -1619,12 +1615,23 @@ def _build_run_metadata(
         "config_path": config_path,
         "checkpoint_path": checkpoint_path,
         "mode": mode,
-        "model_name_or_path": cfg.get("base_model", {}).get("name_or_path", ""),
-        "backend": cfg.get("base_model", {}).get("backend", "auto"),
-        "speculative_schedule": cfg.get("inference", {}).get("speculative_schedule", "aoae"),
-        "routing_temperature": cfg.get("base_model", {}).get("routing_temperature"),
-        "seed": int(cfg.get("hardware", {}).get("seed", 42)),
-        "deterministic": bool(cfg.get("hardware", {}).get("deterministic", False)),
+        "model_name_or_path": base_cfg.get("name_or_path", ""),
+        "backend": base_cfg.get("backend", "auto"),
+        "torch_dtype": base_cfg.get("torch_dtype", "bfloat16"),
+        "soft_topk": base_cfg.get("soft_topk"),
+        "lossless_verification": bool(base_cfg.get("lossless_verification", False)),
+        "speculative_schedule": inf_cfg.get("speculative_schedule", "aoae"),
+        "inference_steps": int(inf_cfg.get("steps", 0)),
+        "inference_gen_length": int(inf_cfg.get("gen_length", 0)),
+        "inference_temperature": float(inf_cfg.get("temperature", 0.0)),
+        "verifier_schedule_mode": verifier_schedule.get("mode", "candidate_budget"),
+        "verifier_draft_token_budget": int(verifier_schedule.get("draft_token_budget", 0) or 0),
+        "verifier_max_draft_microsteps": int(verifier_schedule.get("max_draft_microsteps", 0) or 0),
+        "routing_temperature": base_cfg.get("routing_temperature"),
+        "tp_size": int(hw_cfg.get("tp_size", 1) or 1),
+        "bf16": bool(hw_cfg.get("bf16", False)),
+        "seed": int(hw_cfg.get("seed", 42)),
+        "deterministic": bool(hw_cfg.get("deterministic", False)),
         "task_type": eval_cfg.get("task_type", "math"),
         "task_evaluator": describe_evaluator(cfg),
         "baseline_methods_requested": eval_cfg.get("baseline_methods"),
@@ -2022,117 +2029,3 @@ def main(
                 close_fn()
 
 
-if __name__ == "__main__":
-    import argparse
-    def _parse_float_list(raw: str) -> List[float]:
-        values = []
-        for chunk in raw.split(","):
-            chunk = chunk.strip()
-            if not chunk:
-                continue
-            values.append(float(chunk))
-        if not values:
-            raise ValueError("Expected at least one float value.")
-        return values
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="configs/llada21_hard.yaml")
-    parser.add_argument("--checkpoint", type=str, default=None)
-    parser.add_argument("--max_samples", type=int, default=None)
-    parser.add_argument("--mode", type=str, default="standard",
-                        choices=["standard", "speculative"],
-                        help="'standard' for single-model, 'speculative' for dual-model")
-    parser.add_argument("--reuse_signal_method", type=str, default=None,
-                        choices=[
-                            "argmax_match", "topk_overlap", "min_confidence",
-                            "min_margin", "js_divergence", "temporal_confidence",
-                        ],
-                        help="Override inference.reuse_signal.method.")
-    parser.add_argument("--reuse_signal_threshold", type=float, default=None,
-                        help="Override inference.reuse_signal.threshold.")
-    parser.add_argument("--track_kv_dynamics", action="store_true",
-                        help="Enable analysis.track_kv_dynamics.")
-    parser.add_argument("--disable_remask", action="store_true",
-                        help="Set inference.disable_remask=true.")
-    parser.add_argument("--enable_positional_cache", action="store_true",
-                        help="Enable inference.positional_cache for next-H access experiments.")
-    parser.add_argument("--positional_cache_horizon", type=int, default=None,
-                        help="Override inference.positional_cache.horizon.")
-    parser.add_argument("--positional_cache_refresh_budget", type=int, default=None,
-                        help="Override inference.positional_cache.refresh_budget.")
-    parser.add_argument("--policy_temperatures", type=str, default=None,
-                        help=(
-                            "Comma-separated tau_pi values for speculative runs. "
-                            "When provided, overrides evaluation.speculative_sweep.points "
-                            "with a temperature-only sweep."
-                        ))
-    parser.add_argument("--skip_baselines", action="store_true",
-                        help="Skip baseline decoding methods.")
-    parser.add_argument("--eval_dataset", type=str, default=None,
-                        help="Override data.eval_dataset.")
-    parser.add_argument("--eval_dataset_config", type=str, default=None,
-                        help="Override data.eval_dataset_config (empty string = none).")
-    parser.add_argument("--eval_split", type=str, default=None,
-                        help="Override data.eval_split.")
-    parser.add_argument("--task_type", type=str, default=None, choices=["math", "code"],
-                        help="Override evaluation.task_type.")
-    parser.add_argument("--code_timeout_sec", type=float, default=None,
-                        help="Override evaluation.code.timeout_sec for task_type=code.")
-    parser.add_argument("--code_cpu_time_limit_sec", type=int, default=None,
-                        help="Override evaluation.code.cpu_time_limit_sec.")
-    parser.add_argument("--code_memory_limit_mb", type=int, default=None,
-                        help="Override evaluation.code.memory_limit_mb.")
-    parser.add_argument("--candidate_policy", type=str, default=None,
-                        choices=["learned_topb", "sliding_window", "confidence_topb"],
-                        help="Override inference.positional_cache.candidate_policy.")
-    args = parser.parse_args()
-
-    with open(args.config) as f:
-        cfg = yaml.safe_load(f)
-
-    ic = cfg.setdefault("inference", {})
-    dc = cfg.setdefault("data", {})
-    if args.reuse_signal_method is not None:
-        ic.setdefault("reuse_signal", {})["method"] = args.reuse_signal_method
-    if args.reuse_signal_threshold is not None:
-        ic.setdefault("reuse_signal", {})["threshold"] = float(args.reuse_signal_threshold)
-    if args.disable_remask:
-        ic["disable_remask"] = True
-    if args.track_kv_dynamics:
-        cfg.setdefault("analysis", {})["track_kv_dynamics"] = True
-    if args.enable_positional_cache:
-        ic.setdefault("positional_cache", {})["enabled"] = True
-    if args.positional_cache_horizon is not None:
-        ic.setdefault("positional_cache", {})["horizon"] = int(args.positional_cache_horizon)
-    if args.positional_cache_refresh_budget is not None:
-        ic.setdefault("positional_cache", {})["refresh_budget"] = int(args.positional_cache_refresh_budget)
-    if args.candidate_policy is not None:
-        ic.setdefault("positional_cache", {})["candidate_policy"] = args.candidate_policy
-    if args.eval_dataset is not None:
-        dc["eval_dataset"] = args.eval_dataset
-    if args.eval_dataset_config is not None:
-        dc["eval_dataset_config"] = args.eval_dataset_config or None
-    if args.eval_split is not None:
-        dc["eval_split"] = args.eval_split
-    if args.task_type is not None:
-        cfg.setdefault("evaluation", {})["task_type"] = args.task_type
-    if args.code_timeout_sec is not None:
-        cfg.setdefault("evaluation", {}).setdefault("code", {})["timeout_sec"] = float(args.code_timeout_sec)
-    if args.code_cpu_time_limit_sec is not None:
-        cfg.setdefault("evaluation", {}).setdefault("code", {})["cpu_time_limit_sec"] = int(args.code_cpu_time_limit_sec)
-    if args.code_memory_limit_mb is not None:
-        cfg.setdefault("evaluation", {}).setdefault("code", {})["memory_limit_mb"] = int(args.code_memory_limit_mb)
-
-    policy_temperatures = None
-    if args.policy_temperatures is not None:
-        policy_temperatures = _parse_float_list(args.policy_temperatures)
-
-    main(
-        cfg,
-        checkpoint_path=args.checkpoint,
-        max_samples=args.max_samples,
-        mode=args.mode,
-        config_path=args.config,
-        skip_baselines=args.skip_baselines,
-        speculative_policy_temperatures=policy_temperatures,
-    )

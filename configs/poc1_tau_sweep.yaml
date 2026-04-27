@@ -4,7 +4,7 @@
 # Goal: Does soft-routed LLaDA 2.1 give a speed–quality tradeoff?
 #
 # Design: Sweep τ_r with everything else held fixed.
-#   - primary_every_n=1  → always run both models (isolate routing effect)
+#   - verifier_schedule.step_interval=1 → always run primary (isolate routing effect)
 #   - disable_remask=true → no remasking confound
 #   - compose_gamma=0     → pure primary prediction (no blending)
 #   - 32 diffusion steps  → matches official LLaDA 2.1 default
@@ -60,9 +60,11 @@ inference:
   temperature: 0.0
   fallback_unmask: true
   disable_remask: true               # OFF — isolate routing effect
-  primary_every_n: 1                 # always run both models
   primary_agree_threshold: 0.0       # no EMA-based primary forcing
-  force_primary_first_last: false
+  verifier_schedule:
+    mode: "step_interval"
+    step_interval: 1                 # always run primary (one-step verifier)
+    force_first_last: false
   compose_gamma: 0.0                 # pure primary prediction
   positional_cache:
     enabled: false

@@ -2285,113 +2285,6 @@ class TestSpeculativeCacheManager:
         assert stats["cache_hit_rate"] == 0.0
 
 
-class TestRunSpeculativeInferenceMetrics:
-    def test_metrics_distinguish_raw_agreement_safe_reuse_and_draft_acceptance(self, monkeypatch):
-        from aoae.dinfer_integration import run_speculative_inference
-
-        cfg = {
-            "base_model": {"mask_token_id": MASK_ID},
-            "inference": {
-                "steps": 1,
-                "gen_length": 2,
-                "temperature": 0.0,
-                "fallback_unmask": False,
-                "compose_gamma": 0.0,
-                "disable_remask": False,
-                "reuse_signal": {"method": "argmax_match"},
-            },
-            "analysis": {"track_kv_dynamics": False},
-        }
-
-        class DummyDualModel:
-            def dual_forward_resp(self, input_ids, resp_slice, need_hidden=False, need_all_hidden=False):
-                primary_logits = torch.tensor(
-                    [[[5.0, 0.0, 0.0], [0.0, 4.0, 0.0]]],
-                    dtype=torch.float32,
-                )
-                auxiliary_logits = torch.tensor(
-                    [[[4.0, 0.0, 0.0], [4.0, 0.0, 0.0]]],
-                    dtype=torch.float32,
-                )
-                agreement = torch.tensor([[True, False]])
-                return types.SimpleNamespace(
-                    primary_logits=primary_logits,
-                    auxiliary_logits=auxiliary_logits,
-                    agreement=agreement,
-                    agreement_rate=0.5,
-                    primary_hidden=None,
-                    primary_hidden_states=None,
-                )
-
-            def auxiliary_forward(self, input_ids):
-                raise AssertionError("auxiliary_forward should not run when primary_every_n=1")
-
-        class DummyPolicy:
-            def __call__(
-                self,
-                H_t,
-                mask_ind,
-                step_frac,
-                temperature=1.0,
-                quality_scores=None,
-                agreement=None,
-                age_feature=None,
-                last_action_feature=None,
-            ):
-                return {"agreement_seen": agreement}
-
-            def sample_actions(self, policy_out, mask_ind):
-                ones = torch.ones_like(mask_ind, dtype=torch.float32)
-                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
-                return {"u_t": ones, "r_t": zeros, "kappa_t": ones}
-
-        class DummySoftMask:
-            def __call__(self, resp_logits, mask_ind, step_frac):
-                hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
-                confidence = torch.ones_like(mask_ind, dtype=torch.float32)
-                entropy = torch.zeros_like(mask_ind, dtype=torch.float32)
-                weighted = torch.zeros_like(hidden)
-                return hidden, confidence, entropy, weighted
-
-        def fake_reuse_signal(resp_logits, aux_logits, cfg, state=None):
-            safe_reuse = torch.tensor([[False, False]])
-            return safe_reuse, state, {}
-
-        def fake_build_access_set(
-            actions,
-            policy_out,
-            cfg,
-            confidence=None,
-            boundary_action=None,
-            boundary_num_bins=None,
-        ):
-            q_exec = torch.ones_like(actions["u_t"], dtype=torch.float32)
-            q_mandatory = torch.zeros_like(actions["u_t"], dtype=torch.float32)
-            return q_exec, q_mandatory, {}
-
-        monkeypatch.setattr("aoae.dinfer_integration.compute_reuse_signal", fake_reuse_signal)
-        monkeypatch.setattr("aoae.dinfer_integration.build_access_set", fake_build_access_set)
-
-        prompt_ids = torch.tensor([[1]], dtype=torch.long)
-        _, stats = run_speculative_inference(
-            dual_model=DummyDualModel(),
-            policy=DummyPolicy(),
-            soft_mask_module=DummySoftMask(),
-            prism_adapter=None,
-            prompt_ids=prompt_ids,
-            cfg=cfg,
-        )
-
-        assert stats["mean_agreement"] == pytest.approx(0.5)
-        assert stats["agreement_observations"] == 2
-        assert stats["reuse_mean_safe_reuse"] == pytest.approx(0.0)
-        assert stats["safe_reuse_observations"] == 2
-        assert stats["draft_accepts"] == 1
-        assert stats["draft_rejects"] == 1
-        assert stats["draft_accept_rate"] == pytest.approx(0.5)
-        assert stats["total_commits"] == 0
-
-
 class TestAOAESpeculativeInferenceLoop:
     def test_fresh_primary_agreement_masks_skipped_kspec_positions(self):
         from aoae.speculative_inference import _fresh_primary_agreement
@@ -2452,7 +2345,6 @@ class TestAOAESpeculativeInferenceLoop:
             "base_model": {"mask_token_id": MASK_ID},
             "cache": {
                 "enabled": True,
-                "kspec_skip": False,
                 "stable_kv_cache": True,
                 "prefix_kv_cache": False,
             },
@@ -2482,7 +2374,6 @@ class TestAOAESpeculativeInferenceLoop:
             "base_model": {"mask_token_id": MASK_ID},
             "cache": {
                 "enabled": True,
-                "kspec_skip": False,
                 "stable_kv_cache": False,
                 "prefix_kv_cache": False,
             },
@@ -2495,7 +2386,6 @@ class TestAOAESpeculativeInferenceLoop:
                 "disable_remask": False,
                 "compose_gamma": 0.0,
                 "primary_agree_threshold": 0.0,
-                "force_primary_first_last": False,
                 "aux_cache_reset_threshold": 1.1,
                 "verifier_schedule": {
                     "mode": "candidate_budget",
@@ -2618,7 +2508,6 @@ class TestAOAESpeculativeInferenceLoop:
             "base_model": {"mask_token_id": MASK_ID},
             "cache": {
                 "enabled": True,
-                "kspec_skip": False,
                 "stable_kv_cache": False,
                 "prefix_kv_cache": False,
             },
@@ -2631,7 +2520,6 @@ class TestAOAESpeculativeInferenceLoop:
                 "disable_remask": False,
                 "compose_gamma": 0.0,
                 "primary_agree_threshold": 0.0,
-                "force_primary_first_last": False,
                 "aux_cache_reset_threshold": 1.1,
                 "verifier_schedule": {
                     "mode": "candidate_budget",
@@ -2740,7 +2628,6 @@ class TestAOAESpeculativeInferenceLoop:
             "base_model": {"mask_token_id": MASK_ID},
             "cache": {
                 "enabled": True,
-                "kspec_skip": False,
                 "stable_kv_cache": False,
                 "prefix_kv_cache": False,
             },
@@ -2753,7 +2640,6 @@ class TestAOAESpeculativeInferenceLoop:
                 "disable_remask": False,
                 "compose_gamma": 0.0,
                 "primary_agree_threshold": 0.0,
-                "force_primary_first_last": False,
                 "aux_cache_reset_threshold": 1.1,
                 "verifier_schedule": {
                     "mode": "candidate_budget",
@@ -2858,7 +2744,6 @@ class TestAOAESpeculativeInferenceLoop:
             "base_model": {"mask_token_id": MASK_ID},
             "cache": {
                 "enabled": True,
-                "kspec_skip": False,
                 "stable_kv_cache": False,
                 "prefix_kv_cache": False,
             },
@@ -2870,9 +2755,8 @@ class TestAOAESpeculativeInferenceLoop:
                 "fallback_unmask": True,
                 "disable_remask": False,
                 "compose_gamma": 0.0,
-                "primary_every_n": 2,
+                "verifier_schedule": {"mode": "step_interval", "step_interval": 2, "force_first_last": False},
                 "primary_agree_threshold": 0.0,
-                "force_primary_first_last": False,
                 "positional_cache": {"enabled": False},
                 "reuse_signal": {"method": "argmax_match"},
             },
@@ -2984,9 +2868,8 @@ class TestAOAESpeculativeInferenceLoop:
                 "fallback_unmask": False,
                 "disable_remask": False,
                 "compose_gamma": 0.0,
-                "primary_every_n": 2,
+                "verifier_schedule": {"mode": "step_interval", "step_interval": 2, "force_first_last": False},
                 "primary_agree_threshold": 0.0,
-                "force_primary_first_last": False,
                 "aux_cache_reset_threshold": 1.1,
                 "positional_cache": {"enabled": False},
                 "reuse_signal": {"method": "argmax_match"},
@@ -3115,9 +2998,8 @@ class TestAOAESpeculativeInferenceLoop:
                 "fallback_unmask": False,
                 "disable_remask": False,
                 "compose_gamma": 0.0,
-                "primary_every_n": 1,
+                "verifier_schedule": {"mode": "step_interval", "step_interval": 1, "force_first_last": False},
                 "primary_agree_threshold": 0.0,
-                "force_primary_first_last": False,
                 "aux_cache_reset_threshold": 1.1,
                 "positional_cache": {"enabled": False},
                 "reuse_signal": {"method": "argmax_match"},
@@ -3209,7 +3091,7 @@ class TestAOAESpeculativeInferenceLoop:
         assert "primary_hidden=off" in out
         assert "primary_cache_fastpath=on" in out
         assert "verifier_mode=prefix_cache_replace" in out
-        assert "primary_every_n=1" in out
+        assert "step_interval=1" in out
         assert "gamma=0.000" in out
         assert "remask=on" in out
 

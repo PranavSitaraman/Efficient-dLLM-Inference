@@ -152,8 +152,7 @@ def test_speculative_eval_points_come_from_config_sweep(tmp_path):
                 "policy_temperature": 0.7,
                 "overrides": {
                     "inference.speculative_schedule": "aoae",
-                    "cache.kspec_skip": False,
-                    "inference.primary_every_n": 1,
+                    "inference.verifier_schedule.draft_token_budget": 4,
                     "inference.primary_agree_threshold": 0.98,
                     "inference.max_unmask_fraction_per_step": 0.0625,
                 },
@@ -161,7 +160,7 @@ def test_speculative_eval_points_come_from_config_sweep(tmp_path):
             {
                 "name": "fast",
                 "tau_pi": 1.5,
-                "primary_every_n": 8,
+                "draft_token_budget": 16,
                 "disable_remask": True,
             },
         ],
@@ -172,19 +171,16 @@ def test_speculative_eval_points_come_from_config_sweep(tmp_path):
     assert [point["name"] for point in points] == ["verified", "fast"]
     assert points[0]["policy_temperature"] == 0.7
     assert points[0]["overrides"]["inference.speculative_schedule"] == "aoae"
-    assert points[0]["overrides"]["cache.kspec_skip"] is False
-    assert points[0]["overrides"]["inference.primary_every_n"] == 1
+    assert points[0]["overrides"]["inference.verifier_schedule.draft_token_budget"] == 4
     assert points[1]["policy_temperature"] == 1.5
-    assert points[1]["overrides"]["inference.primary_every_n"] == 8
+    assert points[1]["overrides"]["inference.verifier_schedule.draft_token_budget"] == 16
     assert points[1]["overrides"]["inference.disable_remask"] is True
 
     point_cfg = mod._apply_speculative_eval_point(cfg, points[0])
     assert point_cfg["_active_speculative_eval_point"] == "verified"
     assert point_cfg["inference"]["speculative_schedule"] == "aoae"
-    assert point_cfg["cache"]["kspec_skip"] is False
-    assert point_cfg["inference"]["primary_every_n"] == 1
+    assert point_cfg["inference"]["verifier_schedule"]["draft_token_budget"] == 4
     assert point_cfg["inference"]["primary_agree_threshold"] == 0.98
-    assert "primary_every_n" not in cfg["inference"]
 
 
 def test_eval_auto_checkpoint_allows_low_shaped_reward(tmp_path):
@@ -222,7 +218,7 @@ def test_explicit_policy_temperatures_override_config_sweep(tmp_path):
     cfg = _base_cfg(tmp_path)
     cfg["evaluation"]["speculative_sweep"] = {
         "enabled": True,
-        "points": [{"name": "quality", "policy_temperature": 0.7, "primary_every_n": 1}],
+        "points": [{"name": "quality", "policy_temperature": 0.7, "draft_token_budget": 4}],
     }
 
     points = mod._build_speculative_eval_points(cfg, explicit_policy_temperatures=[0.4, 1.2])
