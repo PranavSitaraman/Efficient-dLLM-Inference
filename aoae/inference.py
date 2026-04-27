@@ -554,8 +554,15 @@ def _force_complete_masked_positions(
     mask_id: int,
     max_passes: int = 4,
     skip_rows: Optional[torch.BoolTensor] = None,
+    stats: Optional[Dict[str, Any]] = None,
 ) -> torch.Tensor:
-    """Fill any remaining [MASK] positions so eval compares complete outputs."""
+    """Fill any remaining [MASK] positions so eval compares complete outputs.
+
+    Each forward pass is counted into ``stats['iterations']`` if a ``stats``
+    dict is provided; this keeps NFE reporting honest across baselines whose
+    decoders run a variable number of forwards.
+    """
+    extra = 0
     for _ in range(max(1, int(max_passes))):
         resp = y[:, resp_slice]
         masked = resp.eq(mask_id)
@@ -565,6 +572,7 @@ def _force_complete_masked_positions(
             break
 
         logits = base_model.forward(y)[:, resp_slice, :]
+        extra += 1
         if 0 <= int(mask_id) < int(logits.shape[-1]):
             logits = logits.clone()
             logits[..., int(mask_id)] = torch.finfo(logits.dtype).min
@@ -574,6 +582,9 @@ def _force_complete_masked_positions(
         resp[masked] = fill_tokens[masked]
         y[:, resp_slice] = resp
 
+    if stats is not None:
+        stats["iterations"] = int(stats.get("iterations", 0)) + extra
+        stats["force_complete_passes"] = extra
     return y
 
 def uniform_decode(
@@ -629,12 +640,17 @@ def confidence_threshold_decode(
     enable_t2t: bool = True,
     gen_length: Optional[int] = None,
     eos_early_stop: bool = False,
+    stats: Optional[Dict[str, Any]] = None,
 ) -> torch.Tensor:
     """
     LLaDA 2.1-style confidence threshold decoding.
 
     Implements S-Mode (aggressive thresholds) or Q-Mode (conservative)
     depending on tau_mask and tau_edit.
+
+    Pass a ``stats`` dict to receive the *actual* number of model forwards
+    (loop iterations + force-complete passes); the loop terminates early when
+    every position has been unmasked, so NFE is typically much smaller than T.
     """
     ic = cfg["inference"]
     T = ic["steps"]
@@ -652,6 +668,7 @@ def confidence_threshold_decode(
     ], dim=1)
 
     resp_slice = slice(P, P + L_gen)
+    iterations = 0
 
     for t in range(T, 0, -1):
         resp = y[:, resp_slice]
@@ -662,6 +679,7 @@ def confidence_threshold_decode(
             break
 
         logits = base_model.forward(y)[:, resp_slice, :]
+        iterations += 1
         max_prob, max_tok = _max_prob_and_argmax(logits)
 
         # M2T: unmask positions above tau_mask
@@ -698,12 +716,15 @@ def confidence_threshold_decode(
         if eos_early_stop and finished.all():
             break
 
+    if stats is not None:
+        stats["iterations"] = int(stats.get("iterations", 0)) + iterations
     return _force_complete_masked_positions(
         base_model,
         y,
         resp_slice,
         mask_id,
         skip_rows=finished if eos_early_stop else None,
+        stats=stats,
     )
 
 
@@ -717,6 +738,7 @@ def block_smode_decode(
     enable_mbe: bool = False,
     gen_length: Optional[int] = None,
     eos_early_stop: bool = False,
+    stats: Optional[Dict[str, Any]] = None,
 ) -> torch.Tensor:
     """
     Block-wise Semi-Autoregressive S-Mode Decoding (LLaDA 2.1 paper §2).
@@ -751,6 +773,7 @@ def block_smode_decode(
     n_blocks = (L_gen + block_len - 1) // block_len
     eos_token_id = _resolve_eos_token_id(base_model) if eos_early_stop else None
     finished = torch.zeros(B, dtype=torch.bool, device=device)
+    iterations = 0
 
     # Start with prompt + all masks
     y = torch.cat([
@@ -782,6 +805,7 @@ def block_smode_decode(
                 )[:, blk_slice, :]
             else:
                 logits = base_model.forward(prefix_ids)[:, blk_slice, :]
+            iterations += 1
             max_prob, max_tok = _max_prob_and_argmax(logits)
 
             # M2T: unmask confident positions
@@ -826,6 +850,7 @@ def block_smode_decode(
                 )[:, blk_slice, :]
             else:
                 final_logits = base_model.forward(prefix_ids)[:, blk_slice, :]
+            iterations += 1
             _, final_tok = _max_prob_and_argmax(final_logits)
             completed = y[:, blk_slice].clone()
             completed[remaining_mask] = final_tok[remaining_mask]
@@ -851,6 +876,7 @@ def block_smode_decode(
                 )[:, prev_slice, :]
             else:
                 logits = base_model.forward(prefix_ids)[:, prev_slice, :]
+            iterations += 1
             max_prob, max_tok = _max_prob_and_argmax(logits)
 
             prev_tokens = y[:, prev_slice].clone()
@@ -858,6 +884,8 @@ def block_smode_decode(
             prev_tokens[disagree] = max_tok[disagree]
             y[:, prev_slice] = prev_tokens
 
+    if stats is not None:
+        stats["iterations"] = int(stats.get("iterations", 0)) + iterations
     return y
 
 
@@ -866,6 +894,7 @@ def llada21_official_decode(
     prompt_ids: torch.LongTensor,
     cfg: dict,
     mode: str = "speed",
+    stats: Optional[Dict[str, Any]] = None,
 ) -> torch.Tensor:
     """
     LLaDA2.1 paper/model-card style threshold decoding.
@@ -889,6 +918,7 @@ def llada21_official_decode(
             enable_mbe=settings["enable_mbe"],
             gen_length=settings["gen_length"],
             eos_early_stop=settings["eos_early_stop"],
+            stats=stats,
         )
 
     return confidence_threshold_decode(
@@ -898,6 +928,7 @@ def llada21_official_decode(
         tau_mask=settings["threshold"],
         tau_edit=settings["editing_threshold"],
         enable_t2t=True,
+        stats=stats,
         gen_length=settings["gen_length"],
         eos_early_stop=settings["eos_early_stop"],
     )

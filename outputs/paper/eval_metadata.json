@@ -1,6 +1,6 @@
 {
   "schema_version": "aoae_eval_v3",
-  "created_at_utc": "2026-04-26T22:11:07.508539+00:00",
+  "created_at_utc": "2026-04-27T13:02:30.481085+00:00",
   "run_name": "paper_grpo_self_spec",
   "output_dir": "outputs/paper/",
   "results_path": "outputs/paper/eval_results.json",
@@ -60,10 +60,10 @@
   "speculative_sweep_enabled": true,
   "speculative_sweep_point_count": 4,
   "speculative_sweep_points": [
-    "verified",
-    "balanced",
-    "fast",
-    "fastest"
+    "quality_max",
+    "quality_balanced",
+    "speed_balanced",
+    "speed_max"
   ],
   "boundary_head_enabled": false,
   "boundary_num_bins": 8,
@@ -85,8 +85,8 @@
   "saved_predictions": 50,
   "max_saved_predictions": 50,
   "num_results": 7,
-  "host": "holygpu8a11601.rc.fas.harvard.edu",
-  "git_commit": "d6a7f249b2fcf5c66d749d5c2f062d3472b7ec2c",
+  "host": "holygpu8a13403.rc.fas.harvard.edu",
+  "git_commit": "0f9a70a51b6e976bb4bd4d2d2242851324a19cf8",
   "torch_version": "2.9.0+cu128",
   "vllm_version": "0.11.2",
   "transformers_version": "4.57.1",

@@ -183,6 +183,53 @@ def test_speculative_eval_points_come_from_config_sweep(tmp_path):
     assert point_cfg["inference"]["primary_agree_threshold"] == 0.98
 
 
+def test_lossless_verification_override_flows_through_per_point(tmp_path):
+    # The Pareto frontier mixes soft and lossless operating points; the
+    # per-point lossless override must mutate the dual model wrapper's
+    # _lossless flag so primary_forward switches to hard routing in place.
+    import aoae.evaluate as mod
+
+    cfg = _base_cfg(tmp_path)
+    cfg["base_model"]["lossless_verification"] = False
+    cfg["evaluation"]["speculative_sweep"] = {
+        "enabled": True,
+        "points": [
+            {
+                "name": "soft_point",
+                "policy_temperature": 1.0,
+                "overrides": {"base_model.lossless_verification": False},
+            },
+            {
+                "name": "lossless_point",
+                "policy_temperature": 1.0,
+                "overrides": {"base_model.lossless_verification": True},
+            },
+        ],
+    }
+
+    points = mod._build_speculative_eval_points(cfg, explicit_policy_temperatures=None)
+    soft_cfg = mod._apply_speculative_eval_point(cfg, points[0])
+    lossless_cfg = mod._apply_speculative_eval_point(cfg, points[1])
+    assert soft_cfg["base_model"]["lossless_verification"] is False
+    assert lossless_cfg["base_model"]["lossless_verification"] is True
+
+    class StubDual:
+        def __init__(self):
+            self._lossless = False
+
+        def set_tau_r(self, value):
+            self.tau_r = value
+
+        def set_soft_topk(self, value):
+            self.soft_topk = value
+
+    dual = StubDual()
+    mod._configure_dual_model_for_eval_cfg(dual, soft_cfg)
+    assert dual._lossless is False
+    mod._configure_dual_model_for_eval_cfg(dual, lossless_cfg)
+    assert dual._lossless is True
+
+
 def test_eval_auto_checkpoint_allows_low_shaped_reward(tmp_path):
     import json
     import aoae.evaluate as mod

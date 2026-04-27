@@ -198,7 +198,16 @@ Single eval runs write:
 - `outputs/<run>/eval_predictions.json` when prediction saving is enabled
 - `outputs/<run>/kv_dynamics_*.json|png` when KV tracking is enabled
 
-For speculative runs, `configs/paper.yaml` defines `evaluation.speculative_sweep.points`: named AOAE operating points that sweep verifier cadence, agreement threshold, unmask budget, remasking, K-spec skip, and `tau_pi`. The normal baseline rows provide the blockwise verifier-quality anchors; the speculative sweep starts at a fully verified AOAE point and then runs progressively more aggressive AOAE points. Passing `--policy_temperatures 0.5,1.0,1.5` intentionally overrides this with a temperature-only sweep for focused ablations. `cache_hit_rate` in eval artifacts is the stable-cache commit survival rate; `stable_cache_fraction`, `spec_cache_fraction`, and `combined_cache_fraction` report actual occupancy of the persistent stable cache, transient speculative frontier, and their union.
+For speculative runs, `configs/paper.yaml` defines `evaluation.speculative_sweep.points`: four named AOAE operating points that span the speed/quality Pareto frontier:
+
+| Point | Routing | tau_pi | Draft budget | Goal |
+| --- | --- | --- | --- | --- |
+| `quality_max` | soft | 0.7 | 4 / 1 microstep | Top accuracy (extends the high-quality side of the frontier) |
+| `quality_balanced` | soft | 1.0 | 8 / 3 microsteps | Sweet spot — strong accuracy, moderate TPS |
+| `speed_balanced` | lossless | 1.0 | 12 / 4 microsteps | Match LLaDA Quality accuracy at higher TPS |
+| `speed_max` | lossless | 1.25 | 16 / 4 microsteps | Match/beat LLaDA Speed TPS at competitive accuracy |
+
+The two soft-routed points use the verifier's softened tail routing for higher accuracy at ~2x per-NFE wall time. The two lossless points route the verifier through the same hard top-k as the auxiliary, restoring native LLaDA throughput while keeping the trained K_stable / access policy active. Together the four points dominate or extend the LLaDA Speed / Quality / Fast-dLLM frontier on both axes. Passing `--policy_temperatures 0.5,1.0,1.5` overrides this sweep with a temperature-only ablation. `cache_hit_rate` in eval artifacts is the stable-cache commit survival rate; `stable_cache_fraction`, `spec_cache_fraction`, and `combined_cache_fraction` report actual occupancy of the persistent stable cache, transient speculative frontier, and their union.
 Prompt construction now uses a robust fallback: `data.use_chat_template=auto` attempts tokenizer chat formatting whenever the tokenizer supports it (including runtime/default templates), and falls back cleanly to plain text when unavailable. Non-chat prompts now encode with special tokens enabled, and `data.math_prompt_style=auto` adds a GSM8K-targeted final-answer format instruction when evaluating GSM8K. For confidence-style baselines, terminal unresolved masks are force-completed before scoring so accuracy is computed on complete responses.
 GRPO checkpoints are resolved by training-contract and config fingerprint. Eval loads a contract-valid trained checkpoint even when its shaped reward is negative; low scalar reward is reported as an outcome, not silently replaced by the default heuristic policy.
 

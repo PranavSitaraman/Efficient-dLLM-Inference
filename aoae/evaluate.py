@@ -1,13 +1,9 @@
 """
-Evaluation Script for AOAE and Baselines (paper §3.7).
+Evaluation pipeline for AOAE and baselines (paper §3.7).
 
-Runs inference on GSM8K / MATH benchmarks and computes:
-  - Accuracy (exact match)
-  - Throughput (tokens/sec, NFEs)
-  - Pareto curves from config-defined speculative operating points
-
-Usage:
-    python3 -m aoae.evaluate --config configs/llada21_hard.yaml --checkpoint outputs/llada21_hard/policy_final.pt
+Runs inference on GSM8K / MATH and computes accuracy, throughput (tokens/sec
+and effective NFEs), and Pareto curves from config-defined speculative
+operating points.  The canonical CLI entry point is ``aoae.cli eval``.
 """
 
 import os
@@ -487,28 +483,36 @@ def _apply_speculative_eval_point(cfg: Dict[str, Any], point: Dict[str, Any]) ->
 
 
 def _configure_dual_model_for_eval_cfg(dual_model, cfg: Dict[str, Any]) -> None:
-    tau_r = cfg.get("base_model", {}).get("routing_temperature")
+    base_cfg = cfg.get("base_model", {})
+    tau_r = base_cfg.get("routing_temperature")
     if tau_r is not None:
         set_tau = getattr(dual_model, "set_tau_r", None)
         if callable(set_tau):
             set_tau(float(tau_r))
-    soft_topk = cfg.get("base_model", {}).get("soft_topk")
+    soft_topk = base_cfg.get("soft_topk")
     if soft_topk is not None:
         set_topk = getattr(dual_model, "set_soft_topk", None)
         if callable(set_topk):
             set_topk(int(soft_topk))
+    # Lossless verification flips primary_forward to hard routing in-place.
+    # The flag is read once at construction; honor per-eval-point overrides by
+    # mutating the wrapper's stored state directly.
+    if hasattr(dual_model, "_lossless"):
+        dual_model._lossless = bool(base_cfg.get("lossless_verification", False))
 
 
 def _summarize_speculative_point(point: Dict[str, Any], cfg: Dict[str, Any]) -> str:
     inf_cfg = cfg.get("inference", {})
+    base_cfg = cfg.get("base_model", {})
     schedule = str(inf_cfg.get("speculative_schedule", "aoae")).strip().lower()
     unmask = inf_cfg.get(
         "max_unmask_tokens_per_step",
         inf_cfg.get("max_unmask_fraction_per_step", ""),
     )
     schedule_cfg = inf_cfg.get("verifier_schedule", {}) or {}
+    routing = "lossless" if base_cfg.get("lossless_verification", False) else "soft"
     return (
-        f"{point.get('name', '')}: sched={schedule}, "
+        f"{point.get('name', '')}: sched={schedule}, routing={routing}, "
         f"tau_pi={float(point.get('policy_temperature', 1.0))}, "
         f"budget={schedule_cfg.get('draft_token_budget', 1)}, "
         f"micros={schedule_cfg.get('max_draft_microsteps', 1)}, "
@@ -545,14 +549,16 @@ def _speculative_note(
 ) -> str:
     inf_cfg = cfg.get("inference", {})
     schedule_cfg = inf_cfg.get("verifier_schedule", {}) or {}
+    base_cfg = cfg.get("base_model", {})
     point_name = cfg.get("_active_speculative_eval_point")
     unmask = inf_cfg.get(
         "max_unmask_tokens_per_step",
         inf_cfg.get("max_unmask_fraction_per_step", ""),
     )
     prefix = f"point={point_name}," if point_name else ""
+    routing = "lossless" if base_cfg.get("lossless_verification", False) else "soft"
     note = (
-        f"{prefix}tau_r={tau_r},tau_pi={policy_temperature},"
+        f"{prefix}routing={routing},tau_r={tau_r},tau_pi={policy_temperature},"
         f"budget={schedule_cfg.get('draft_token_budget', 1)},"
         f"micros={schedule_cfg.get('max_draft_microsteps', 1)},"
         f"agree_thr={inf_cfg.get('primary_agree_threshold', 0.0)},"
@@ -726,6 +732,7 @@ def evaluate_baseline(
     total_time = 0.0
     total_gen_tokens = 0
     total_truncated = 0
+    total_iterations = 0
     evaluator = build_evaluator(cfg)
     scoring_rule = getattr(evaluator, "evaluator_name", describe_evaluator(cfg))
     debug_eval = bool(cfg.get("evaluation", {}).get("debug_logging", False))
@@ -778,6 +785,7 @@ def evaluate_baseline(
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         t0 = time.perf_counter()
+        decode_stats: Dict[str, Any] = {}
         with torch.no_grad():
             if method == "uniform":
                 output_ids = uniform_decode(base_model, prompt_ids, cfg)
@@ -785,45 +793,54 @@ def evaluate_baseline(
                 output_ids = confidence_threshold_decode(
                     base_model, prompt_ids, cfg,
                     tau_mask=tau_mask, tau_edit=tau_edit,
+                    stats=decode_stats,
                 )
             elif method == "confidence_s_mode":
                 output_ids = confidence_threshold_decode(
                     base_model, prompt_ids, cfg,
                     tau_mask=0.7, tau_edit=0.9, enable_t2t=True,
+                    stats=decode_stats,
                 )
             elif method == "confidence_q_mode":
                 output_ids = confidence_threshold_decode(
                     base_model, prompt_ids, cfg,
                     tau_mask=0.95, tau_edit=0.99, enable_t2t=True,
+                    stats=decode_stats,
                 )
             elif method == "fast_dllm":
                 output_ids = confidence_threshold_decode(
                     base_model, prompt_ids, cfg,
                     tau_mask=0.5, tau_edit=1.0, enable_t2t=False,
+                    stats=decode_stats,
                 )
             elif method == "llada21_speed_mode":
                 output_ids = llada21_official_decode(
                     base_model, prompt_ids, cfg, mode="speed",
+                    stats=decode_stats,
                 )
             elif method == "llada21_quality_mode":
                 output_ids = llada21_official_decode(
                     base_model, prompt_ids, cfg, mode="quality",
+                    stats=decode_stats,
                 )
             elif method == "block_smode":
                 output_ids = block_smode_decode(
                     base_model, prompt_ids, cfg,
                     tau_mask=0.7, tau_edit=0.9, enable_mbe=False,
+                    stats=decode_stats,
                 )
             elif method == "block_smode_mbe":
                 output_ids = block_smode_decode(
                     base_model, prompt_ids, cfg,
                     tau_mask=0.7, tau_edit=0.9, enable_mbe=True,
+                    stats=decode_stats,
                 )
             else:
                 raise ValueError(f"Unknown method: {method}")
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         t1 = time.perf_counter()
+        total_iterations += int(decode_stats.get("iterations", 0))
 
         gen_tokens = output_ids[0, prompt_ids.shape[1]:]
         generation = _summarize_generation(
@@ -886,20 +903,13 @@ def evaluate_baseline(
 
     accuracy = correct / max(total, 1)
     avg_time = total_time / max(total, 1)
-    # For official LLaDA modes using block diffusion the actual NFE is
-    # max_post_steps × n_blocks, not the global T (which is the AOAE horizon).
-    llada_mode = _llada21_mode_for_method(method)
-    if llada_mode is not None:
-        llada_s = resolve_llada21_official_settings(cfg, mode=llada_mode)
-        if llada_s["use_block_diffusion"]:
-            gen_len = llada_s["gen_length"]
-            block_len = llada_s["block_length"]
-            n_blocks = (gen_len + block_len - 1) // block_len
-            avg_nfe = llada_s["max_post_steps"] * n_blocks
-        else:
-            avg_nfe = T
-    else:
-        avg_nfe = T
+    # NFE here is the *actual* number of model forward passes executed by the
+    # decoder, including the block scheduler's post-step forwards and any
+    # force-complete cleanup passes.  Using the actual count keeps the NFE
+    # column directly comparable across methods with different early-exit
+    # patterns (e.g., Fast-dLLM terminates as soon as every position has been
+    # unmasked, well before T iterations).
+    avg_nfe = total_iterations / max(total, 1) if total_iterations > 0 else float(T)
     # TPS = actual generated tokens / wall time
     avg_tps = total_gen_tokens / max(total_time, 1e-6)
 

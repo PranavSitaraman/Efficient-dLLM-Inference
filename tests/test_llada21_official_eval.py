@@ -16,6 +16,7 @@ def test_llada21_official_decode_speed_uses_block_diffusion(monkeypatch):
         enable_mbe,
         gen_length,
         eos_early_stop,
+        stats=None,
     ):
         calls["tau_mask"] = tau_mask
         calls["tau_edit"] = tau_edit
@@ -57,6 +58,7 @@ def test_llada21_official_decode_uses_mode_specific_thresholds(monkeypatch):
         enable_mbe,
         gen_length,
         eos_early_stop,
+        stats=None,
     ):
         calls["tau_mask"] = tau_mask
         calls["tau_edit"] = tau_edit
@@ -97,6 +99,45 @@ def test_resolve_llada21_official_settings_defaults_to_model_card_recipe():
     assert speed["max_post_steps"] == 16
     assert speed["gen_length"] == 512
     assert speed["eos_early_stop"] is True
+
+
+def test_confidence_threshold_decode_reports_actual_iterations():
+    # Honest NFE accounting: the iteration counter must reflect *actual* model
+    # forward passes, not the upper-bound horizon T.  When every position can
+    # be unmasked in a single step, the loop terminates immediately and only
+    # one forward should be counted (plus zero force-complete passes).
+    from aoae.inference import confidence_threshold_decode
+
+    class AlwaysConfidentModel:
+        vocab_size = 8
+
+        def __init__(self):
+            self.calls = 0
+
+        def forward(self, input_ids):
+            self.calls += 1
+            B, L = input_ids.shape
+            logits = torch.full((B, L, self.vocab_size), -10.0)
+            logits[..., 1] = 10.0
+            return logits
+
+    cfg = {
+        "inference": {"steps": 100, "gen_length": 4, "temperature": 0.0},
+        "base_model": {"mask_token_id": 7},
+    }
+    prompt_ids = torch.tensor([[2, 3]], dtype=torch.long)
+    stats = {}
+    confidence_threshold_decode(
+        AlwaysConfidentModel(),
+        prompt_ids,
+        cfg,
+        tau_mask=0.5,
+        tau_edit=1.0,
+        enable_t2t=False,
+        stats=stats,
+    )
+    assert stats["iterations"] == 1
+    assert stats["force_complete_passes"] == 0
 
 
 def test_get_baseline_methods_respects_config_override():

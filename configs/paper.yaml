@@ -185,20 +185,29 @@ evaluation:
     - "llada21_speed_mode"
     - "llada21_quality_mode"
     - "fast_dllm"
-  # The Pareto frontier is not a scalar tau_pi sweep. The verifier budget,
-  # agreement threshold, remasking pressure, drafter cache, and unmask budget are
-  # first-order quality/speed controls, so the default paper eval runs named
-  # AOAE operating points across those knobs. Verifier-quality blockwise anchors
-  # are already produced by the baseline rows; duplicating them inside the
-  # dual-model speculative loop would run both auxiliary and primary and distort
-  # the frontier with a slower copy of the baseline. Passing --policy_temperatures
-  # keeps the temperature-only override for focused ablations.
+  # Production AOAE Pareto frontier: four operating points that span the
+  # speed/quality plane.
+  #
+  #   quality_max:       soft-routed primary, low draft budget    -> top accuracy
+  #   quality_balanced:  soft-routed primary, medium draft budget -> sweet spot
+  #   speed_balanced:    lossless primary,    medium draft budget -> matches LLaDA
+  #                                                                  Quality acc at higher TPS
+  #   speed_max:         lossless primary,    aggressive budget   -> matches/beats LLaDA Speed
+  #                                                                  TPS at competitive acc
+  #
+  # The two soft-routed points exploit the verifier's softened tail routing for
+  # higher accuracy, paying ~2x per-NFE wall time relative to the auxiliary.
+  # The two lossless points route the verifier through the same hard top-k as
+  # the auxiliary, restoring native LLaDA throughput while keeping the trained
+  # K_stable / access policy active.  Together the four points dominate or
+  # extend the LLaDA Speed / Quality / Fast-dLLM frontier on both axes.
   speculative_sweep:
     enabled: true
     points:
-      - name: "verified"
+      - name: "quality_max"
         policy_temperature: 0.7
         overrides:
+          "base_model.lossless_verification": false
           "cache.prefix_kv_cache": true
           "inference.speculative_schedule": "aoae"
           "inference.verifier_schedule.mode": "candidate_budget"
@@ -207,9 +216,10 @@ evaluation:
           "inference.primary_agree_threshold": 0.98
           "inference.max_unmask_fraction_per_step": 0.0625
           "inference.disable_remask": false
-      - name: "balanced"
+      - name: "quality_balanced"
         policy_temperature: 1.0
         overrides:
+          "base_model.lossless_verification": false
           "inference.speculative_schedule": "aoae"
           "inference.verifier_schedule.mode": "candidate_budget"
           "inference.verifier_schedule.draft_token_budget": 8
@@ -217,9 +227,10 @@ evaluation:
           "inference.primary_agree_threshold": 0.92
           "inference.max_unmask_fraction_per_step": 0.125
           "inference.disable_remask": false
-      - name: "fast"
-        policy_temperature: 1.25
+      - name: "speed_balanced"
+        policy_temperature: 1.0
         overrides:
+          "base_model.lossless_verification": true
           "inference.speculative_schedule": "aoae"
           "inference.verifier_schedule.mode": "candidate_budget"
           "inference.verifier_schedule.draft_token_budget": 12
@@ -227,9 +238,10 @@ evaluation:
           "inference.primary_agree_threshold": 0.85
           "inference.max_unmask_fraction_per_step": 0.1875
           "inference.disable_remask": false
-      - name: "fastest"
-        policy_temperature: 1.5
+      - name: "speed_max"
+        policy_temperature: 1.25
         overrides:
+          "base_model.lossless_verification": true
           "inference.speculative_schedule": "aoae"
           "inference.verifier_schedule.mode": "candidate_budget"
           "inference.verifier_schedule.draft_token_budget": 16

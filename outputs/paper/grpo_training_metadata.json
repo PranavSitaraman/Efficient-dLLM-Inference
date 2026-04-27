@@ -20,10 +20,10 @@
   "resume_from": null,
   "seed": 42,
   "train_contract_version": 5,
-  "config_fingerprint": "6cb6719bf625b70bad44ab1bbaa181f8ccb041b91dc6678ea5339cd794761c39",
+  "config_fingerprint": "db3851410e15e7500ae7a334caacc6e63290bd0ec62eb805eb34857cfcead49d",
   "runtime": {
-    "host": "holygpu8a13301.rc.fas.harvard.edu",
-    "pid": 2513593,
+    "host": "holygpu8a13403.rc.fas.harvard.edu",
+    "pid": 139465,
     "python_version": "3.10.19",
     "torch_version": "2.9.0+cu128",
     "cuda_available": true,
@@ -34,6 +34,6 @@
     ],
     "vllm_version": "0.11.2",
     "transformers_version": "4.57.1",
-    "git_commit": "469924d2fb5ea21c46ec67db56e38f1503896098"
+    "git_commit": "0f9a70a51b6e976bb4bd4d2d2242851324a19cf8"
   }
 }
