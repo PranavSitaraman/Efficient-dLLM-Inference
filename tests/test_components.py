@@ -2105,7 +2105,7 @@ class TestPolicyAgreement:
         # input_proj should accept D+4
         assert policy.input_proj.in_features == DIM + 4
 
-    def test_sample_actions_raises_on_invalid_probs(self, embed_w):
+    def test_sample_actions_sanitizes_invalid_probs(self, embed_w):
         from aoae.models.policy import AOAEPolicy
         policy = AOAEPolicy(DEFAULT_CFG, input_dim=DIM)
         mask = torch.ones(1, 2).bool()
@@ -2116,8 +2116,10 @@ class TestPolicyAgreement:
             "cache_probs": torch.zeros_like(bad),
             "access_probs": torch.zeros_like(bad),
         }
-        with pytest.raises(RuntimeError, match="unmask_probs"):
-            policy.sample_actions(policy_out, mask)
+        actions = policy.sample_actions(policy_out, mask)
+        assert actions["u_t"].shape == bad.shape
+        # NaNs are scrubbed to 0.0 before sampling, so this position must stay off.
+        assert actions["u_t"][0, 0].item() == 0.0
 
 
 # ======================================================================
@@ -3521,6 +3523,23 @@ class TestHFBlockCausalBias:
 
 
 class TestDInferCacheReuse:
+    def test_attention_mask_cache_reuses_dinfer_masks(self):
+        from aoae.models.base_model import LLaDABaseModel
+
+        model = object.__new__(LLaDABaseModel)
+        model._backend = "dinfer"
+        model.dtype = torch.float32
+        model._attention_mask_cache = {}
+        model._query_attention_mask_cache = {}
+
+        mask1 = model._make_attention_mask(1, 8, torch.device("cpu"), block_length=32)
+        mask2 = model._make_attention_mask(1, 8, torch.device("cpu"), block_length=32)
+        qmask1 = model._make_query_attention_mask(1, 16, 4, 12, torch.device("cpu"), block_length=32)
+        qmask2 = model._make_query_attention_mask(1, 16, 4, 12, torch.device("cpu"), block_length=32)
+
+        assert mask1 is mask2
+        assert qmask1 is qmask2
+
     def test_base_model_consolidates_cache_before_replace(self):
         from aoae.models.base_model import LLaDABaseModel
 

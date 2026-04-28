@@ -383,6 +383,8 @@ class LLaDABaseModel(nn.Module):
         # vLLM config context manager (kept alive for dInfer forward passes)
         self._vllm_config_ctx = None
         self._vllm_config = None
+        self._attention_mask_cache = {}
+        self._query_attention_mask_cache = {}
 
         _INIT = {
             "hf": self._init_hf,
@@ -794,6 +796,22 @@ class LLaDABaseModel(nn.Module):
         Returns a float mask for HF backends (0.0=attend, -inf=block) or a
         boolean mask for dInfer/SDPA backends (True=attend, False=block).
         """
+        cache = getattr(self, "_attention_mask_cache", None)
+        if cache is None:
+            cache = {}
+            self._attention_mask_cache = cache
+        key = (
+            str(self._backend),
+            batch_size,
+            seq_len,
+            int(block_length),
+            device.type,
+            device.index,
+        )
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+
         if block_length > 0:
             pos = torch.arange(seq_len, device=device)
             block_ends = (pos // block_length + 1) * block_length  # [L]
@@ -801,28 +819,35 @@ class LLaDABaseModel(nn.Module):
             ends = block_ends.unsqueeze(1)  # [L, 1]
             if self._backend in ("dinfer", "soft_moe"):
                 # dInfer SDPA converts to .bool() — True=attend, False=block
-                mask = (col < ends)  # [L, L] bool
-                return mask.unsqueeze(0).unsqueeze(0).expand(
+                mask = (col < ends).unsqueeze(0).unsqueeze(0).expand(
                     batch_size, -1, -1, -1,
                 )
+                cache[key] = mask
+                return mask
             else:
-                mask = torch.where(col < ends, 0.0, float("-inf"))  # [L, L]
-                return mask.to(dtype=self.dtype).unsqueeze(0).unsqueeze(0).expand(
+                mask = torch.where(col < ends, 0.0, float("-inf")).to(dtype=self.dtype)
+                mask = mask.unsqueeze(0).unsqueeze(0).expand(
                     batch_size, -1, -1, -1,
                 )
+                cache[key] = mask
+                return mask
         else:
             if self._backend in ("dinfer", "soft_moe"):
-                return torch.ones(
+                mask = torch.ones(
                     (batch_size, 1, seq_len, seq_len),
                     dtype=torch.bool,
                     device=device,
                 )
+                cache[key] = mask
+                return mask
             else:
-                return torch.zeros(
+                mask = torch.zeros(
                     (batch_size, 1, seq_len, seq_len),
                     dtype=self.dtype,
                     device=device,
                 )
+                cache[key] = mask
+                return mask
 
     def _make_query_attention_mask(
         self,
@@ -839,6 +864,24 @@ class LLaDABaseModel(nn.Module):
                 f"Invalid query range [{query_start}, {query_end}) for full_seq_len={full_seq_len}."
             )
 
+        cache = getattr(self, "_query_attention_mask_cache", None)
+        if cache is None:
+            cache = {}
+            self._query_attention_mask_cache = cache
+        key = (
+            str(self._backend),
+            batch_size,
+            full_seq_len,
+            int(query_start),
+            int(query_end),
+            int(block_length),
+            device.type,
+            device.index,
+        )
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+
         q_len = query_end - query_start
         if block_length > 0:
             query_pos = torch.arange(query_start, query_end, device=device)
@@ -846,24 +889,31 @@ class LLaDABaseModel(nn.Module):
             cols = torch.arange(full_seq_len, device=device).unsqueeze(0)
             ends = block_ends.unsqueeze(1)
             if self._backend in ("dinfer", "soft_moe"):
-                mask = (cols < ends)
-                return mask.unsqueeze(0).unsqueeze(0).expand(batch_size, -1, -1, -1)
-            mask = torch.where(cols < ends, 0.0, float("-inf"))
-            return mask.to(dtype=self.dtype).unsqueeze(0).unsqueeze(0).expand(
+                mask = (cols < ends).unsqueeze(0).unsqueeze(0).expand(batch_size, -1, -1, -1)
+                cache[key] = mask
+                return mask
+            mask = torch.where(cols < ends, 0.0, float("-inf")).to(dtype=self.dtype)
+            mask = mask.unsqueeze(0).unsqueeze(0).expand(
                 batch_size, -1, -1, -1,
             )
+            cache[key] = mask
+            return mask
 
         if self._backend in ("dinfer", "soft_moe"):
-            return torch.ones(
+            mask = torch.ones(
                 (batch_size, 1, q_len, full_seq_len),
                 dtype=torch.bool,
                 device=device,
             )
-        return torch.zeros(
+            cache[key] = mask
+            return mask
+        mask = torch.zeros(
             (batch_size, 1, q_len, full_seq_len),
             dtype=self.dtype,
             device=device,
         )
+        cache[key] = mask
+        return mask
 
     def _forward_dinfer_outputs(self, **kwargs):
         """Direct dInfer forward preserving the active runtime context."""
@@ -1050,6 +1100,7 @@ class LLaDABaseModel(nn.Module):
             raise NotImplementedError("forward_with_cache is only supported for dInfer-backed models.")
         if input_ids.device != self.device:
             input_ids = input_ids.to(self.device)
+        input_ids = input_ids.contiguous()
         batch_size, seq_len = input_ids.shape
         attention_mask = self._make_attention_mask(
             batch_size, seq_len, input_ids.device, block_length=self._block_length,
@@ -1083,13 +1134,14 @@ class LLaDABaseModel(nn.Module):
             past_key_values.consolidate()
         if full_input_ids.device != self.device:
             full_input_ids = full_input_ids.to(self.device)
+        full_input_ids = full_input_ids.contiguous()
         self._aoae_last_cache_replace_fell_back = False
         self._aoae_last_full_recompute_logits = None
 
         start = int(replace_slice.start)
         end = int(replace_slice.stop)
         batch_size, full_seq_len = full_input_ids.shape
-        query_ids = full_input_ids[:, start:end]
+        query_ids = full_input_ids[:, start:end].contiguous()
         attention_mask = self._make_query_attention_mask(
             batch_size,
             full_seq_len,

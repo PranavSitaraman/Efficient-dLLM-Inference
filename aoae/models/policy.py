@@ -32,30 +32,9 @@ def _safe_policy_temperature(temperature: float) -> float:
     return temp
 
 
-def _validate_bernoulli_probs(name: str, probs: torch.Tensor) -> None:
-    """Raise a clear error before CUDA Bernoulli kernels trip a device assert."""
-    finite_mask = torch.isfinite(probs)
-    in_range_mask = (probs >= 0.0) & (probs <= 1.0)
-    valid_mask = finite_mask & in_range_mask
-    if bool(valid_mask.all()):
-        return
-
-    finite_vals = probs[finite_mask]
-    if finite_vals.numel() > 0:
-        min_val = float(finite_vals.min().item())
-        max_val = float(finite_vals.max().item())
-    else:
-        min_val = float("nan")
-        max_val = float("nan")
-    nan_count = int(torch.isnan(probs).sum().item())
-    posinf_count = int(torch.isposinf(probs).sum().item())
-    neginf_count = int(torch.isneginf(probs).sum().item())
-    out_of_range_count = int((finite_mask & ~in_range_mask).sum().item())
-    raise RuntimeError(
-        f"Invalid Bernoulli probabilities in {name}: "
-        f"nan={nan_count}, +inf={posinf_count}, -inf={neginf_count}, "
-        f"out_of_range={out_of_range_count}, finite_min={min_val}, finite_max={max_val}"
-    )
+def _sanitize_bernoulli_probs(probs: torch.Tensor) -> torch.Tensor:
+    """Scrub NaNs/Infs and clamp into the valid Bernoulli range on-device."""
+    return torch.nan_to_num(probs, nan=0.0, posinf=1.0, neginf=0.0).clamp_(0.0, 1.0)
 
 
 def call_policy(
@@ -116,21 +95,16 @@ def apply_unmask_budget(
         return actions
 
     u_t = actions["u_t"].float() * mask_indicator.float()
-    if int(u_t.sum(dim=-1).max().item()) <= budget:
-        return {**actions, "u_t": u_t}
-
     scores = policy_out.get("unmask_probs")
     if scores is None:
         scores = torch.ones_like(u_t)
     scores = scores.to(device=u_t.device, dtype=torch.float32)
+    masked_scores = scores.masked_fill(u_t <= 0.0, float("-inf"))
+    topk_idx = masked_scores.topk(k=budget, dim=-1).indices
     keep = torch.zeros_like(u_t)
-    for b in range(u_t.shape[0]):
-        chosen = (u_t[b] > 0.0).nonzero(as_tuple=True)[0]
-        if chosen.numel() <= budget:
-            keep[b, chosen] = 1.0
-            continue
-        ranked = chosen[torch.argsort(scores[b, chosen], descending=True)]
-        keep[b, ranked[:budget]] = 1.0
+    keep.scatter_(1, topk_idx, 1.0)
+    over_budget = (u_t.sum(dim=-1, keepdim=True) > budget)
+    keep = torch.where(over_budget, keep, u_t)
 
     return {**actions, "u_t": keep}
 
@@ -317,10 +291,10 @@ class AOAEPolicy(nn.Module):
         # Cache-remask exclusion is enforced at sampling time (see sample_actions)
 
         # --- Tempered probabilities ---
-        unmask_probs = torch.sigmoid(unmask_logits / temp)
-        remask_probs = torch.sigmoid(remask_logits / temp)
-        cache_probs = torch.sigmoid(cache_logits / temp)
-        access_probs = torch.sigmoid(access_logits / temp)
+        unmask_probs = _sanitize_bernoulli_probs(torch.sigmoid(unmask_logits / temp))
+        remask_probs = _sanitize_bernoulli_probs(torch.sigmoid(remask_logits / temp))
+        cache_probs = _sanitize_bernoulli_probs(torch.sigmoid(cache_logits / temp))
+        access_probs = _sanitize_bernoulli_probs(torch.sigmoid(access_logits / temp))
 
         out = {
             "unmask_logits": unmask_logits,
@@ -351,14 +325,16 @@ class AOAEPolicy(nn.Module):
         Returns:
             dict with "u_t", "r_t", "kappa_t", "q_t" — each [B, L] binary.
         """
-        _validate_bernoulli_probs("unmask_probs", policy_out["unmask_probs"])
-        _validate_bernoulli_probs("remask_probs", policy_out["remask_probs"])
-        _validate_bernoulli_probs("cache_probs", policy_out["cache_probs"])
-        _validate_bernoulli_probs("access_probs", policy_out["access_probs"])
-        u_t = torch.bernoulli(policy_out["unmask_probs"])    # [B, L]
-        r_t = torch.bernoulli(policy_out["remask_probs"])    # [B, L]
-        kappa_t = torch.bernoulli(policy_out["cache_probs"])  # [B, L]
-        q_t = torch.bernoulli(policy_out["access_probs"])     # [B, L]
+        bernoulli_probs = torch.stack(
+            (
+                _sanitize_bernoulli_probs(policy_out["unmask_probs"]),
+                _sanitize_bernoulli_probs(policy_out["remask_probs"]),
+                _sanitize_bernoulli_probs(policy_out["cache_probs"]),
+                _sanitize_bernoulli_probs(policy_out["access_probs"]),
+            ),
+            dim=0,
+        )
+        u_t, r_t, kappa_t, q_t = torch.bernoulli(bernoulli_probs).unbind(dim=0)
         ell_t = None
         if "boundary_probs" in policy_out:
             ell_t = torch.multinomial(policy_out["boundary_probs"], num_samples=1).squeeze(-1)

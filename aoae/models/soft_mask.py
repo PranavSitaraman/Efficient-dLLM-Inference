@@ -96,13 +96,13 @@ class SoftMaskedState(nn.Module):
         bsz, seq_len, vocab_size = logits.shape
 
         logits_f = torch.nan_to_num(logits.float(), nan=0.0)
-        log_probs = F.log_softmax(logits_f, dim=-1)
-        probs = log_probs.exp()
-        confidence = probs.max(dim=-1).values
-        entropy = -(torch.nan_to_num(probs * log_probs, nan=0.0)).sum(dim=-1)
+        log_z = torch.logsumexp(logits_f, dim=-1, keepdim=True)
+        probs = F.softmax(logits_f, dim=-1)
+        confidence = (logits_f.amax(dim=-1, keepdim=True) - log_z).exp().squeeze(-1)
+        entropy = (log_z.squeeze(-1) - (probs * logits_f).sum(dim=-1)).clamp_min_(0.0)
 
-        topk_probs, topk_ids = probs.topk(self.top_k, dim=-1)
-        topk_probs_norm = topk_probs / topk_probs.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+        topk_logits, topk_ids = logits_f.topk(self.top_k, dim=-1)
+        topk_probs_norm = F.softmax(topk_logits, dim=-1)
 
         topk_embeds = F.embedding(topk_ids, self.embedding_weight)
         weighted_embeds = (topk_probs_norm.unsqueeze(-1) * topk_embeds).sum(dim=2)

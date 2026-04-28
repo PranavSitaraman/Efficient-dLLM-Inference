@@ -64,24 +64,19 @@ def _topb_non_mandatory(
     else:
         per_sample_budget = torch.full((B,), int(budget), dtype=torch.long, device=scores.device)
     selected = torch.zeros_like(mandatory)
-    if int(per_sample_budget.max().item()) <= 0:
+    max_budget = int(per_sample_budget.max().item())
+    if max_budget <= 0:
         return selected
 
-    for b in range(B):
-        budget_b = int(per_sample_budget[b].item())
-        if budget_b <= 0:
-            continue
-        eligible_mask = ~mandatory[b]
-        if candidate is not None:
-            eligible_mask = eligible_mask & candidate[b]
-        eligible = eligible_mask.nonzero(as_tuple=True)[0]
-        if eligible.numel() == 0:
-            continue
-        k = min(budget_b, int(eligible.numel()))
-        vals = scores[b, eligible]
-        topk_idx = vals.topk(k=k).indices
-        chosen = eligible[topk_idx]
-        selected[b, chosen] = True
+    eligible_mask = ~mandatory
+    if candidate is not None:
+        eligible_mask = eligible_mask & candidate
+    masked_scores = scores.masked_fill(~eligible_mask, float("-inf"))
+    k = min(max_budget, L)
+    top_vals, top_idx = masked_scores.topk(k=k, dim=-1)
+    rank_mask = torch.arange(k, device=scores.device).unsqueeze(0) < per_sample_budget.unsqueeze(1)
+    valid = rank_mask & torch.isfinite(top_vals)
+    selected.scatter_(1, top_idx, valid)
     return selected
 
 
