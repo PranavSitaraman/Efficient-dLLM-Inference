@@ -810,7 +810,9 @@ class LLaDABaseModel(nn.Module):
         )
         cached = cache.get(key)
         if cached is not None:
-            return cached
+            # Clone so vLLM's TP kernels can't corrupt the cached base tensor
+            # via in-place writes to the returned view.
+            return cached.expand(batch_size, -1, -1, -1).clone()
 
         if block_length > 0:
             pos = torch.arange(seq_len, device=device)
@@ -819,18 +821,14 @@ class LLaDABaseModel(nn.Module):
             ends = block_ends.unsqueeze(1)  # [L, 1]
             if self._backend in ("dinfer", "soft_moe"):
                 # dInfer SDPA converts to .bool() — True=attend, False=block
-                mask = (col < ends).unsqueeze(0).unsqueeze(0).expand(
-                    batch_size, -1, -1, -1,
-                )
-                cache[key] = mask
-                return mask
+                base = (col < ends).unsqueeze(0).unsqueeze(0)  # [1, 1, L, L]
+                cache[key] = base
+                return base.expand(batch_size, -1, -1, -1).clone()
             else:
-                mask = torch.where(col < ends, 0.0, float("-inf")).to(dtype=self.dtype)
-                mask = mask.unsqueeze(0).unsqueeze(0).expand(
-                    batch_size, -1, -1, -1,
-                )
-                cache[key] = mask
-                return mask
+                base = torch.where(col < ends, 0.0, float("-inf")).to(dtype=self.dtype)
+                base = base.unsqueeze(0).unsqueeze(0)  # [1, 1, L, L]
+                cache[key] = base
+                return base.expand(batch_size, -1, -1, -1).clone()
         else:
             if self._backend in ("dinfer", "soft_moe"):
                 mask = torch.ones(
@@ -839,7 +837,7 @@ class LLaDABaseModel(nn.Module):
                     device=device,
                 )
                 cache[key] = mask
-                return mask
+                return mask.clone()
             else:
                 mask = torch.zeros(
                     (batch_size, 1, seq_len, seq_len),
@@ -847,7 +845,7 @@ class LLaDABaseModel(nn.Module):
                     device=device,
                 )
                 cache[key] = mask
-                return mask
+                return mask.clone()
 
     def _make_query_attention_mask(
         self,
@@ -880,7 +878,7 @@ class LLaDABaseModel(nn.Module):
         )
         cached = cache.get(key)
         if cached is not None:
-            return cached
+            return cached.expand(batch_size, -1, -1, -1).clone()
 
         q_len = query_end - query_start
         if block_length > 0:
@@ -889,15 +887,13 @@ class LLaDABaseModel(nn.Module):
             cols = torch.arange(full_seq_len, device=device).unsqueeze(0)
             ends = block_ends.unsqueeze(1)
             if self._backend in ("dinfer", "soft_moe"):
-                mask = (cols < ends).unsqueeze(0).unsqueeze(0).expand(batch_size, -1, -1, -1)
-                cache[key] = mask
-                return mask
-            mask = torch.where(cols < ends, 0.0, float("-inf")).to(dtype=self.dtype)
-            mask = mask.unsqueeze(0).unsqueeze(0).expand(
-                batch_size, -1, -1, -1,
-            )
-            cache[key] = mask
-            return mask
+                base = (cols < ends).unsqueeze(0).unsqueeze(0)  # [1, 1, q, L]
+                cache[key] = base
+                return base.expand(batch_size, -1, -1, -1).clone()
+            base = torch.where(cols < ends, 0.0, float("-inf")).to(dtype=self.dtype)
+            base = base.unsqueeze(0).unsqueeze(0)  # [1, 1, q, L]
+            cache[key] = base
+            return base.expand(batch_size, -1, -1, -1).clone()
 
         if self._backend in ("dinfer", "soft_moe"):
             mask = torch.ones(
@@ -906,14 +902,14 @@ class LLaDABaseModel(nn.Module):
                 device=device,
             )
             cache[key] = mask
-            return mask
+            return mask.clone()
         mask = torch.zeros(
             (batch_size, 1, q_len, full_seq_len),
             dtype=self.dtype,
             device=device,
         )
         cache[key] = mask
-        return mask
+        return mask.clone()
 
     def _forward_dinfer_outputs(self, **kwargs):
         """Direct dInfer forward preserving the active runtime context."""

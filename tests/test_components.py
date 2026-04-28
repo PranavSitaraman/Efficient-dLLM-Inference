@@ -3537,8 +3537,12 @@ class TestDInferCacheReuse:
         qmask1 = model._make_query_attention_mask(1, 16, 4, 12, torch.device("cpu"), block_length=32)
         qmask2 = model._make_query_attention_mask(1, 16, 4, 12, torch.device("cpu"), block_length=32)
 
-        assert mask1 is mask2
-        assert qmask1 is qmask2
+        # Each call returns a fresh clone (so vLLM can't corrupt the cache via
+        # in-place writes), but the values must be identical.
+        assert mask1 is not mask2
+        assert (mask1 == mask2).all()
+        assert qmask1 is not qmask2
+        assert (qmask1 == qmask2).all()
 
     def test_base_model_consolidates_cache_before_replace(self):
         from aoae.models.base_model import LLaDABaseModel
