@@ -140,7 +140,9 @@ def _maybe_relaunch_with_torchrun(argv_list: List[str]) -> Optional[int]:
         return None
 
     env = _apply_runtime_env_defaults(dict(os.environ))
-    torchrun_bin = shutil.which("torchrun")
+    py_bin_dir = os.path.dirname(sys.executable)
+    env_torchrun = os.path.join(py_bin_dir, "torchrun")
+    torchrun_bin = env_torchrun if os.path.isfile(env_torchrun) else shutil.which("torchrun")
     if torchrun_bin:
         cmd = [
             torchrun_bin,

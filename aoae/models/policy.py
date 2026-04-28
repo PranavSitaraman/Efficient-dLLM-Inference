@@ -15,6 +15,7 @@ preserving the any-order property of masked diffusion models.
 
 import inspect
 import math
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -32,9 +33,35 @@ def _safe_policy_temperature(temperature: float) -> float:
     return temp
 
 
-def _sanitize_bernoulli_probs(probs: torch.Tensor) -> torch.Tensor:
-    """Scrub NaNs/Infs and clamp into the valid Bernoulli range on-device."""
-    return torch.nan_to_num(probs, nan=0.0, posinf=1.0, neginf=0.0).clamp_(0.0, 1.0)
+_DEBUG_POLICY_CHECKS = os.environ.get("AOAE_DEBUG_POLICY", "0") == "1"
+
+
+def _validate_bernoulli_probs(name: str, probs: torch.Tensor) -> None:
+    """Sanitize Bernoulli probabilities in-place to prevent CUDA device asserts.
+
+    Normal mode: async clamp+nan_to_num — no CPU-GPU sync, effectively free.
+    Debug mode (AOAE_DEBUG_POLICY=1): sync check with a descriptive error.
+    """
+    if _DEBUG_POLICY_CHECKS:
+        finite_mask = torch.isfinite(probs)
+        in_range_mask = (probs >= 0.0) & (probs <= 1.0)
+        valid_mask = finite_mask & in_range_mask
+        if not bool(valid_mask.all()):
+            finite_vals = probs[finite_mask]
+            min_val = float(finite_vals.min().item()) if finite_vals.numel() > 0 else float("nan")
+            max_val = float(finite_vals.max().item()) if finite_vals.numel() > 0 else float("nan")
+            nan_count = int(torch.isnan(probs).sum().item())
+            posinf_count = int(torch.isposinf(probs).sum().item())
+            neginf_count = int(torch.isneginf(probs).sum().item())
+            out_of_range = int((finite_mask & ~in_range_mask).sum().item())
+            raise RuntimeError(
+                f"Invalid Bernoulli probabilities in {name}: "
+                f"nan={nan_count}, +inf={posinf_count}, -inf={neginf_count}, "
+                f"out_of_range={out_of_range}, finite_min={min_val}, finite_max={max_val}"
+            )
+    # Clamp in-place: NaN → 0.0, out-of-range → [0, 1]. No CPU sync.
+    probs.nan_to_num_(nan=0.0, posinf=1.0, neginf=0.0)
+    probs.clamp_(0.0, 1.0)
 
 
 def call_policy(
@@ -291,10 +318,14 @@ class AOAEPolicy(nn.Module):
         # Cache-remask exclusion is enforced at sampling time (see sample_actions)
 
         # --- Tempered probabilities ---
-        unmask_probs = _sanitize_bernoulli_probs(torch.sigmoid(unmask_logits / temp))
-        remask_probs = _sanitize_bernoulli_probs(torch.sigmoid(remask_logits / temp))
-        cache_probs = _sanitize_bernoulli_probs(torch.sigmoid(cache_logits / temp))
-        access_probs = _sanitize_bernoulli_probs(torch.sigmoid(access_logits / temp))
+        unmask_probs = torch.sigmoid(unmask_logits / temp)
+        _validate_bernoulli_probs("unmask_probs", unmask_probs)
+        remask_probs = torch.sigmoid(remask_logits / temp)
+        _validate_bernoulli_probs("remask_probs", remask_probs)
+        cache_probs = torch.sigmoid(cache_logits / temp)
+        _validate_bernoulli_probs("cache_probs", cache_probs)
+        access_probs = torch.sigmoid(access_logits / temp)
+        _validate_bernoulli_probs("access_probs", access_probs)
 
         out = {
             "unmask_logits": unmask_logits,
@@ -327,10 +358,10 @@ class AOAEPolicy(nn.Module):
         """
         bernoulli_probs = torch.stack(
             (
-                _sanitize_bernoulli_probs(policy_out["unmask_probs"]),
-                _sanitize_bernoulli_probs(policy_out["remask_probs"]),
-                _sanitize_bernoulli_probs(policy_out["cache_probs"]),
-                _sanitize_bernoulli_probs(policy_out["access_probs"]),
+                policy_out["unmask_probs"],
+                policy_out["remask_probs"],
+                policy_out["cache_probs"],
+                policy_out["access_probs"],
             ),
             dim=0,
         )
