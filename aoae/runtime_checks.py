@@ -111,6 +111,15 @@ def _build_triton_moe_align() -> Optional[object]:
         num_tokens_post_pad: torch.Tensor,
     ) -> None:
         numel = topk_ids.numel()
+        # Pre-fill padding sentinels before Triton writes the live positions.
+        # sorted_token_ids padding positions must hold `numel` (the sentinel
+        # that tells the fused-MoE kernel to skip that slot).
+        # expert_ids padding positions beyond num_tokens_post_pad//block_size
+        # are never read by the fused-MoE Triton kernel, but vLLM's Python
+        # wrapper applies expert_map[expert_ids] to the FULL tensor before
+        # the kernel runs — uninitialized values here cause IndexKernel OOB.
+        sorted_token_ids.fill_(numel)
+        expert_ids.zero_()
         grid = (num_experts,)
         tokens_cnts = torch.zeros(
             (num_experts + 1, num_experts), dtype=torch.int32,
