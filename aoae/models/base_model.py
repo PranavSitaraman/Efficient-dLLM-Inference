@@ -796,6 +796,12 @@ class LLaDABaseModel(nn.Module):
         Returns a float mask for HF backends (0.0=attend, -inf=block) or a
         boolean mask for dInfer/SDPA backends (True=attend, False=block).
         """
+        tp_size = int(self.cfg.get("hardware", {}).get("tp_size", 1) or 1)
+        use_cache = not (
+            self._backend in ("dinfer", "soft_moe")
+            and tp_size > 1
+        )
+
         cache = getattr(self, "_attention_mask_cache", None)
         if cache is None:
             cache = {}
@@ -808,11 +814,12 @@ class LLaDABaseModel(nn.Module):
             device.type,
             device.index,
         )
-        cached = cache.get(key)
-        if cached is not None:
-            # Clone so vLLM's TP kernels can't corrupt the cached base tensor
-            # via in-place writes to the returned view.
-            return cached.expand(batch_size, -1, -1, -1).clone()
+        if use_cache:
+            cached = cache.get(key)
+            if cached is not None:
+                # Clone so vLLM's TP kernels can't corrupt the cached base tensor
+                # via in-place writes to the returned view.
+                return cached.expand(batch_size, -1, -1, -1).clone()
 
         if block_length > 0:
             pos = torch.arange(seq_len, device=device)
@@ -822,12 +829,14 @@ class LLaDABaseModel(nn.Module):
             if self._backend in ("dinfer", "soft_moe"):
                 # dInfer SDPA converts to .bool() — True=attend, False=block
                 base = (col < ends).unsqueeze(0).unsqueeze(0)  # [1, 1, L, L]
-                cache[key] = base
+                if use_cache:
+                    cache[key] = base
                 return base.expand(batch_size, -1, -1, -1).clone()
             else:
                 base = torch.where(col < ends, 0.0, float("-inf")).to(dtype=self.dtype)
                 base = base.unsqueeze(0).unsqueeze(0)  # [1, 1, L, L]
-                cache[key] = base
+                if use_cache:
+                    cache[key] = base
                 return base.expand(batch_size, -1, -1, -1).clone()
         else:
             if self._backend in ("dinfer", "soft_moe"):
@@ -836,7 +845,8 @@ class LLaDABaseModel(nn.Module):
                     dtype=torch.bool,
                     device=device,
                 )
-                cache[key] = mask
+                if use_cache:
+                    cache[key] = mask
                 return mask.clone()
             else:
                 mask = torch.zeros(
@@ -844,7 +854,8 @@ class LLaDABaseModel(nn.Module):
                     dtype=self.dtype,
                     device=device,
                 )
-                cache[key] = mask
+                if use_cache:
+                    cache[key] = mask
                 return mask.clone()
 
     def _make_query_attention_mask(
@@ -862,6 +873,12 @@ class LLaDABaseModel(nn.Module):
                 f"Invalid query range [{query_start}, {query_end}) for full_seq_len={full_seq_len}."
             )
 
+        tp_size = int(self.cfg.get("hardware", {}).get("tp_size", 1) or 1)
+        use_cache = not (
+            self._backend in ("dinfer", "soft_moe")
+            and tp_size > 1
+        )
+
         cache = getattr(self, "_query_attention_mask_cache", None)
         if cache is None:
             cache = {}
@@ -876,9 +893,10 @@ class LLaDABaseModel(nn.Module):
             device.type,
             device.index,
         )
-        cached = cache.get(key)
-        if cached is not None:
-            return cached.expand(batch_size, -1, -1, -1).clone()
+        if use_cache:
+            cached = cache.get(key)
+            if cached is not None:
+                return cached.expand(batch_size, -1, -1, -1).clone()
 
         q_len = query_end - query_start
         if block_length > 0:
@@ -888,11 +906,13 @@ class LLaDABaseModel(nn.Module):
             ends = block_ends.unsqueeze(1)
             if self._backend in ("dinfer", "soft_moe"):
                 base = (cols < ends).unsqueeze(0).unsqueeze(0)  # [1, 1, q, L]
-                cache[key] = base
+                if use_cache:
+                    cache[key] = base
                 return base.expand(batch_size, -1, -1, -1).clone()
             base = torch.where(cols < ends, 0.0, float("-inf")).to(dtype=self.dtype)
             base = base.unsqueeze(0).unsqueeze(0)  # [1, 1, q, L]
-            cache[key] = base
+            if use_cache:
+                cache[key] = base
             return base.expand(batch_size, -1, -1, -1).clone()
 
         if self._backend in ("dinfer", "soft_moe"):
@@ -901,14 +921,16 @@ class LLaDABaseModel(nn.Module):
                 dtype=torch.bool,
                 device=device,
             )
-            cache[key] = mask
+            if use_cache:
+                cache[key] = mask
             return mask.clone()
         mask = torch.zeros(
             (batch_size, 1, q_len, full_seq_len),
             dtype=self.dtype,
             device=device,
         )
-        cache[key] = mask
+        if use_cache:
+            cache[key] = mask
         return mask.clone()
 
     def _forward_dinfer_outputs(self, **kwargs):
