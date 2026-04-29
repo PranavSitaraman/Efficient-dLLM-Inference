@@ -115,6 +115,8 @@ def load_comparison_rows(eval_path: Path) -> List[Dict[str, Any]]:
             "frontier_reject_rate": f"{_safe_float(result.get('frontier_reject_rate')):.6f}",
             "mean_frontier_size": f"{_safe_float(result.get('mean_frontier_size')):.6f}",
             "verifier_call_rate": f"{_safe_float(result.get('verifier_call_rate')):.6f}",
+            "verifier_skips": f"{_safe_float(result.get('verifier_skips')):.3f}",
+            "self_accept_events": f"{_safe_float(result.get('self_accept_events')):.3f}",
             "draft_microsteps": f"{_safe_float(result.get('draft_microsteps')):.3f}",
             "drafter_cache_resets": f"{_safe_float(result.get('drafter_cache_resets')):.3f}",
             "effective_flops": f"{_safe_float(result.get('effective_flops')):.6f}",

@@ -67,10 +67,25 @@ def test_paper_config_enables_full_aoae_stack():
     # sanity-check operating point.
     assert cfg["inference"]["compose_gamma"] == 0
     assert cfg["inference"]["verifier_schedule"]["mode"] == "candidate_budget"
-    assert cfg["inference"]["verifier_schedule"]["draft_token_budget"] == 1
+    assert cfg["inference"]["verifier_schedule"]["draft_token_budget"] == 12
+    assert cfg["inference"]["verifier_schedule"]["max_draft_microsteps"] == 4
     assert cfg["inference"]["verifier"]["acceptance_mode"] == "argmax_match"
     assert cfg["inference"]["verifier"]["rejection_action"] == "remask"
     assert cfg["inference"]["verifier"]["recompute_after_reject"] is True
     assert cfg["inference"]["drafter"]["confidence_threshold"] == 0.7
     assert cfg["inference"]["drafter"]["aux_compute_ratio"] == 0.35
+    assert cfg["inference"]["drafter"]["run_on_verifier"] == "auto"
+    sweep_points = cfg["evaluation"]["speculative_sweep"]["points"]
+    assert any(
+        point["overrides"].get("inference.speculative_schedule") == "aoae_block"
+        for point in sweep_points
+    )
+    assert any(
+        point["overrides"].get("inference.block_speculative.verifier_mode") == "self_accept_lossless"
+        for point in sweep_points
+    )
+    for point in sweep_points:
+        overrides = point.get("overrides", {})
+        if overrides.get("inference.speculative_schedule") == "aoae_block":
+            assert overrides.get("inference.block_speculative.rejection_action") == "replace"
     assert cfg["hardware"]["tp_size"] == 1

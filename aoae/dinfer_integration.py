@@ -13,7 +13,7 @@ from typing import Optional, Dict, Tuple, List
 from dataclasses import dataclass
 
 from .cache import DKVCacheManager
-from .inference import _max_prob_and_argmax
+from .inference import _max_prob_and_argmax, resolve_llada21_official_settings
 from .agreement_signals import compute_reuse_signal
 from .kv_dynamics import SpeculativeDynamicsTracker
 from .positional_cache import compute_next_h_access_metrics
@@ -216,6 +216,352 @@ def _active_span(mask: torch.Tensor) -> Optional[Tuple[int, int]]:
         return None
     cols = mask.any(dim=0).nonzero(as_tuple=True)[0]
     return int(cols[0].item()), int(cols[-1].item()) + 1
+
+
+def _topb_mask(candidate_mask: torch.Tensor, scores: torch.Tensor, budget: int) -> torch.Tensor:
+    """Keep the top-scoring candidate positions per row."""
+    if budget <= 0 or budget >= candidate_mask.shape[-1]:
+        return candidate_mask
+    masked = torch.where(
+        candidate_mask,
+        scores.float(),
+        torch.full_like(scores.float(), float("-inf")),
+    )
+    idx = masked.topk(min(budget, candidate_mask.shape[-1]), dim=-1).indices
+    keep = torch.zeros_like(candidate_mask)
+    keep.scatter_(-1, idx, True)
+    return keep & candidate_mask
+
+
+def _force_one_candidate_per_row(
+    candidate_mask: torch.Tensor,
+    active_mask: torch.Tensor,
+    scores: torch.Tensor,
+) -> torch.Tensor:
+    """Fallback: if a row has active masks but no candidate, keep its best mask."""
+    out = candidate_mask.clone()
+    no_candidate = active_mask.any(dim=-1) & ~candidate_mask.any(dim=-1)
+    for b_idx in no_candidate.nonzero(as_tuple=True)[0]:
+        active_pos = active_mask[b_idx].nonzero(as_tuple=True)[0]
+        if active_pos.numel() == 0:
+            continue
+        best = active_pos[scores[b_idx, active_pos].argmax()]
+        out[b_idx, best] = True
+    return out
+
+
+def _auxiliary_block_logits(dual_model, prefix_ids: torch.LongTensor, block_slice: slice) -> torch.Tensor:
+    if hasattr(dual_model, "auxiliary_forward_resp"):
+        return dual_model.auxiliary_forward_resp(prefix_ids, block_slice)
+    return dual_model.auxiliary_forward(prefix_ids)[:, block_slice, :]
+
+
+def _primary_block_logits(dual_model, prefix_ids: torch.LongTensor, block_slice: slice) -> torch.Tensor:
+    if hasattr(dual_model, "primary_forward_resp"):
+        return dual_model.primary_forward_resp(prefix_ids, block_slice)
+    if hasattr(dual_model, "primary_forward"):
+        return dual_model.primary_forward(prefix_ids)[:, block_slice, :]
+    if hasattr(dual_model, "primary_forward_with_hidden"):
+        logits, _ = dual_model.primary_forward_with_hidden(prefix_ids)
+        return logits[:, block_slice, :]
+    out = dual_model.dual_forward_resp(prefix_ids, block_slice)
+    return out.primary_logits
+
+
+def run_block_frontier_speculative_inference(
+    dual_model,
+    policy,
+    soft_mask_module,
+    prism_adapter,
+    prompt_ids: torch.LongTensor,
+    cfg: dict,
+    policy_temperature: float = 1.0,
+) -> Tuple[torch.Tensor, dict]:
+    """Block-local draft-frontier speculative decoding.
+
+    This is the MDLM analogue of autoregressive speculative decoding: the
+    hard-routed drafter advances the current LLaDA block for several cheap
+    microsteps, storing a transient frontier of proposed tokens; one verifier
+    pass then validates the whole frontier, corrects rejected positions, and
+    applies the normal LLaDA quality threshold update.  Unlike the generic
+    AOAE loop, this runner never scores future response blocks, so wall-clock
+    work tracks the official block-diffusion baseline.
+    """
+    del policy, soft_mask_module, prism_adapter, policy_temperature
+
+    ic = cfg["inference"]
+    speed_settings = resolve_llada21_official_settings(cfg, mode="speed")
+    quality_settings = resolve_llada21_official_settings(cfg, mode="quality")
+    block_cfg = ic.get("block_speculative", {}) or {}
+    schedule_cfg = ic.get("verifier_schedule", {}) or {}
+
+    block_len = int(ic.get("block_length", 32))
+    max_verifier_steps = int(
+        block_cfg.get("max_verifier_steps_per_block", quality_settings["max_post_steps"])
+    )
+    max_draft_microsteps = max(1, int(schedule_cfg.get("max_draft_microsteps", 3)))
+    draft_token_budget = max(1, int(schedule_cfg.get("draft_token_budget", block_len)))
+    draft_threshold = float(block_cfg.get("draft_threshold", speed_settings["threshold"]))
+    verifier_threshold = float(block_cfg.get("verifier_threshold", quality_settings["threshold"]))
+    verifier_edit_threshold = float(
+        block_cfg.get("verifier_editing_threshold", quality_settings["editing_threshold"])
+    )
+    draft_edit_threshold = float(
+        block_cfg.get("draft_editing_threshold", speed_settings["editing_threshold"])
+    )
+    enable_draft_editing = bool(block_cfg.get("enable_draft_editing", False))
+    rejection_action = str(block_cfg.get("rejection_action", "correct_confident")).lower()
+    verifier_mode = str(block_cfg.get("verifier_mode", "primary")).strip().lower()
+    self_accept_min_conf = float(block_cfg.get("self_accept_min_confidence", 0.95))
+    force_verify_every = int(block_cfg.get("force_verify_every_n_self_accepts", 0) or 0)
+    disable_remask = bool(ic.get("disable_remask", False))
+    L_gen = int(ic["gen_length"])
+    mask_id = int(cfg["base_model"]["mask_token_id"])
+    lossless_verifier = bool(cfg.get("base_model", {}).get("lossless_verification", False))
+    if verifier_mode == "self_accept_lossless" and not lossless_verifier:
+        raise ValueError(
+            "inference.block_speculative.verifier_mode='self_accept_lossless' "
+            "requires base_model.lossless_verification=true."
+        )
+    aux_compute_ratio = float(ic.get("drafter", {}).get("aux_compute_ratio", 0.35))
+    primary_compute_ratio = float(
+        block_cfg.get(
+            "verifier_compute_ratio",
+            1.0 if cfg.get("base_model", {}).get("lossless_verification", False) else 2.0,
+        )
+    )
+
+    B, P = prompt_ids.shape
+    device = prompt_ids.device
+    n_blocks = (L_gen + block_len - 1) // block_len
+    y = torch.cat(
+        [
+            prompt_ids,
+            torch.full((B, L_gen), mask_id, dtype=torch.long, device=device),
+        ],
+        dim=1,
+    )
+
+    primary_steps = 0
+    aux_steps = 0
+    draft_accepts = 0
+    draft_rejects = 0
+    self_accept_events = 0
+    verifier_skips = 0
+    self_accept_streak = 0
+    frontier_sizes: List[float] = []
+    verifier_rates: List[float] = []
+    verified_positions = 0
+    full_equiv_positions = 0
+
+    for blk_idx in range(n_blocks):
+        blk_start = P + blk_idx * block_len
+        blk_end = min(P + (blk_idx + 1) * block_len, P + L_gen)
+        blk_slice = slice(blk_start, blk_end)
+        blk_width = blk_end - blk_start
+
+        frontier = torch.zeros((B, blk_width), dtype=torch.bool, device=device)
+        frontier_tokens = torch.full((B, blk_width), -1, dtype=torch.long, device=device)
+        frontier_scores = torch.zeros((B, blk_width), dtype=torch.float32, device=device)
+
+        verifier_steps = 0
+        while verifier_steps < max_verifier_steps:
+            blk_tokens = y[:, blk_slice]
+            mask_ind = blk_tokens == mask_id
+            if not mask_ind.any() and not frontier.any():
+                break
+
+            # Draft several cheap microsteps before paying for the verifier.
+            draft_microsteps = 0
+            while mask_ind.any() and draft_microsteps < max_draft_microsteps:
+                prefix_ids = y[:, :blk_end]
+                aux_logits = _auxiliary_block_logits(dual_model, prefix_ids, blk_slice)
+                aux_steps += 1
+                aux_conf, aux_tok = _max_prob_and_argmax(aux_logits)
+                draft_mask = mask_ind & (aux_conf >= draft_threshold)
+                draft_mask = _force_one_candidate_per_row(draft_mask, mask_ind, aux_conf)
+
+                remaining_budget = max(1, draft_token_budget - int(frontier.sum().item()))
+                draft_mask = _topb_mask(draft_mask, aux_conf, remaining_budget)
+                if not draft_mask.any():
+                    break
+
+                blk_tokens = y[:, blk_slice].clone()
+                blk_tokens[draft_mask] = aux_tok[draft_mask]
+                frontier = frontier | draft_mask
+                frontier_tokens = torch.where(draft_mask, blk_tokens.long(), frontier_tokens)
+                frontier_scores = torch.where(draft_mask, aux_conf.float(), frontier_scores)
+
+                if enable_draft_editing:
+                    remaining_budget = max(0, draft_token_budget - int(frontier.sum().item()))
+                    if remaining_budget > 0:
+                        live = blk_tokens != mask_id
+                        edit_mask = (
+                            live
+                            & aux_tok.ne(blk_tokens)
+                            & (aux_conf >= draft_edit_threshold)
+                            & ~draft_mask
+                        )
+                        edit_mask = _topb_mask(edit_mask, aux_conf, remaining_budget)
+                        if edit_mask.any():
+                            blk_tokens[edit_mask] = aux_tok[edit_mask]
+                            frontier = frontier | edit_mask
+                            frontier_tokens = torch.where(edit_mask, blk_tokens.long(), frontier_tokens)
+                            frontier_scores = torch.where(edit_mask, aux_conf.float(), frontier_scores)
+
+                y[:, blk_slice] = blk_tokens
+
+                draft_microsteps += 1
+                mask_ind = blk_tokens == mask_id
+                if int(frontier.sum().item()) >= draft_token_budget:
+                    break
+
+            if not frontier.any() and not mask_ind.any():
+                break
+
+            skip_verifier = False
+            if frontier.any():
+                if verifier_mode in {"self_accept", "draft_only"}:
+                    skip_verifier = True
+                elif verifier_mode == "self_accept_lossless":
+                    skip_verifier = True
+                elif verifier_mode in {"confidence_gate", "adaptive_confidence_gate"}:
+                    frontier_conf = frontier_scores[frontier]
+                    high_conf = bool(
+                        frontier_conf.numel() > 0
+                        and float(frontier_conf.min().item()) >= self_accept_min_conf
+                    )
+                    force_due = force_verify_every > 0 and self_accept_streak >= force_verify_every
+                    skip_verifier = high_conf and not force_due
+
+            if skip_verifier:
+                frontier_sizes.append(float(frontier.float().sum().item()) / max(B, 1))
+                accepted = int(frontier.sum().item())
+                draft_accepts += accepted
+                if accepted:
+                    verifier_rates.append(1.0)
+                self_accept_events += 1
+                verifier_skips += 1
+                self_accept_streak += 1
+                frontier.zero_()
+                frontier_tokens.fill_(-1)
+                frontier_scores.zero_()
+                continue
+
+            # One verifier pass validates every drafted token in the block and
+            # may also advance remaining masks under the normal quality rule.
+            prefix_ids = y[:, :blk_end]
+            pri_logits = _primary_block_logits(dual_model, prefix_ids, blk_slice)
+            primary_steps += 1
+            self_accept_streak = 0
+            verified_positions += B * blk_width
+            full_equiv_positions += B * blk_width
+            verifier_steps += 1
+            pri_conf, pri_tok = _max_prob_and_argmax(pri_logits)
+
+            blk_tokens = y[:, blk_slice].clone()
+            frontier_sizes.append(float(frontier.float().sum().item()) / max(B, 1))
+            accept = frontier & pri_tok.eq(frontier_tokens.clamp(min=0))
+            reject = frontier & ~accept
+            draft_accepts += int(accept.sum().item())
+            draft_rejects += int(reject.sum().item())
+            if frontier.any():
+                verifier_rates.append(float(accept.float().sum().item() / max(frontier.float().sum().item(), 1.0)))
+
+            if reject.any():
+                if rejection_action in {"correct", "replace"}:
+                    blk_tokens[reject] = pri_tok[reject]
+                elif rejection_action == "correct_confident":
+                    confident = reject & (pri_conf >= verifier_threshold)
+                    blk_tokens[confident] = pri_tok[confident]
+                    if not disable_remask:
+                        blk_tokens[reject & ~confident] = mask_id
+                elif rejection_action in {"remask", "mask"} and not disable_remask:
+                    blk_tokens[reject] = mask_id
+                elif rejection_action not in {"keep", "none"}:
+                    raise ValueError(
+                        "Unsupported inference.block_speculative.rejection_action="
+                        f"{rejection_action!r}."
+                    )
+
+            mask_after_reject = blk_tokens == mask_id
+            verifier_unmask = mask_after_reject & (pri_conf >= verifier_threshold)
+            verifier_unmask = _force_one_candidate_per_row(
+                verifier_unmask, mask_after_reject, pri_conf,
+            )
+            if verifier_unmask.any():
+                blk_tokens[verifier_unmask] = pri_tok[verifier_unmask]
+
+            if not disable_remask:
+                unmasked = blk_tokens != mask_id
+                edit = unmasked & (pri_tok != blk_tokens) & (pri_conf >= verifier_edit_threshold)
+                if edit.any():
+                    blk_tokens[edit] = pri_tok[edit]
+
+            y[:, blk_slice] = blk_tokens
+            frontier.zero_()
+            frontier_tokens.fill_(-1)
+            frontier_scores.zero_()
+
+        remaining = y[:, blk_slice] == mask_id
+        if remaining.any():
+            prefix_ids = y[:, :blk_end]
+            if verifier_mode in {"self_accept", "draft_only", "self_accept_lossless"}:
+                pri_logits = _auxiliary_block_logits(dual_model, prefix_ids, blk_slice)
+                aux_steps += 1
+            else:
+                pri_logits = _primary_block_logits(dual_model, prefix_ids, blk_slice)
+                primary_steps += 1
+                verified_positions += B * blk_width
+                full_equiv_positions += B * blk_width
+            _, pri_tok = _max_prob_and_argmax(pri_logits)
+            completed = y[:, blk_slice].clone()
+            completed[remaining] = pri_tok[remaining]
+            y[:, blk_slice] = completed
+
+    total_frontier = draft_accepts + draft_rejects
+    total_steps = primary_steps + aux_steps
+    effective_units = aux_steps * aux_compute_ratio + primary_steps * primary_compute_ratio
+    T = max(int(ic.get("steps", max(total_steps, 1))), 1)
+    stats = {
+        "total_commits": 0,
+        "total_invalidations": 0,
+        "total_remasks": 0,
+        "total_unmasks": 0,
+        "cache_hit_rate": 0.0,
+        "steps_used": total_steps,
+        "primary_steps": primary_steps,
+        "aux_only_steps": aux_steps,
+        "primary_full_steps": primary_steps,
+        "primary_partial_steps": 0,
+        "primary_verified_positions": verified_positions,
+        "primary_full_equiv_positions": max(full_equiv_positions, 1),
+        "primary_skip_ratio": 0.0,
+        "verifier_call_rate": primary_steps / max(total_steps, 1),
+        "draft_microsteps": aux_steps,
+        "draft_accepts": draft_accepts,
+        "draft_rejects": draft_rejects,
+        "draft_accept_rate": draft_accepts / max(total_frontier, 1),
+        "frontier_accept_rate": draft_accepts / max(total_frontier, 1),
+        "frontier_reject_rate": draft_rejects / max(total_frontier, 1),
+        "self_accept_events": self_accept_events,
+        "verifier_skips": verifier_skips,
+        "verifier_mode": verifier_mode,
+        "mean_frontier_size": float(sum(frontier_sizes) / max(len(frontier_sizes), 1)),
+        "mean_agreement": float(sum(verifier_rates) / max(len(verifier_rates), 1)),
+        "agreement_observations": total_frontier,
+        "reuse_mean_safe_reuse": float(sum(verifier_rates) / max(len(verifier_rates), 1)),
+        "safe_reuse_observations": total_frontier,
+        "reuse_mean_js_divergence": 0.0,
+        "effective_flops": effective_units / T,
+        "aux_compute_units": aux_steps * aux_compute_ratio,
+        "verifier_compute_units": primary_steps * primary_compute_ratio,
+        "baseline_compute_units": float(T),
+    }
+    stats.update(compute_next_h_access_metrics([], [], None, 1))
+    stats["mean_boundary_depth"] = 0.0
+    stats["boundary_distribution"] = "{}"
+    return y, stats
 
 
 def run_blockwise_speculative_inference(

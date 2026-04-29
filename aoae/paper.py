@@ -1119,7 +1119,12 @@ def tau_sweep_main(argv: Optional[List[str]] = None) -> None:
     if pending_tau_values and dc.get("eval_dataset") and is_global_rank_zero():
         print(f"Loading eval dataset: {dc.get('eval_dataset', '')}...")
     if pending_tau_values and dc.get("eval_dataset"):
-        shared_eval_ds = _load_eval_dataset(dc)
+        try:
+            shared_eval_ds = _load_eval_dataset(dc)
+        except ImportError as exc:
+            shared_eval_ds = None
+            if is_global_rank_zero():
+                print(f"Shared eval dataset preload skipped; per-run evaluation will load it if needed: {exc}")
 
     summary_rows: List[Dict[str, Any]] = []
     for idx, tau_r in enumerate(tau_values):

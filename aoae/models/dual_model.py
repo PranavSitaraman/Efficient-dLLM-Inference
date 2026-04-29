@@ -160,6 +160,13 @@ class DualModelWrapper(nn.Module):
             set_hard_routing(self._model.model)
 
     @torch.no_grad()
+    def primary_forward_resp(
+        self, input_ids: torch.LongTensor, resp_slice: slice,
+    ) -> torch.Tensor:
+        """Primary forward returning logits only for the requested response span."""
+        return self.primary_forward(input_ids)[:, resp_slice, :]
+
+    @torch.no_grad()
     def primary_forward_with_cache(
         self, input_ids: torch.LongTensor,
     ) -> Tuple[torch.Tensor, object]:
@@ -221,9 +228,8 @@ class DualModelWrapper(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Soft-routed forward → (logits [B,L,V], hidden [B,L,D])."""
         if self._lossless:
-            logits = self.auxiliary_forward(input_ids)
-            hidden = self._model.forward_with_hidden(input_ids)[1]
-            return logits, hidden
+            set_hard_routing(self._model.model)
+            return self._model.forward_with_hidden(input_ids)
         set_soft_routing(self._model.model)
         try:
             return self._model.forward_with_hidden(input_ids)
@@ -236,9 +242,8 @@ class DualModelWrapper(nn.Module):
     ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """Soft-routed forward → (logits [B,L,V], all hidden states)."""
         if self._lossless:
-            logits = self.auxiliary_forward(input_ids)
-            _, all_hidden = self._model.forward_with_all_hidden(input_ids)
-            return logits, all_hidden
+            set_hard_routing(self._model.model)
+            return self._model.forward_with_all_hidden(input_ids)
         set_soft_routing(self._model.model)
         try:
             return self._model.forward_with_all_hidden(input_ids)

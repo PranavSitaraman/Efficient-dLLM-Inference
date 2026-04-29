@@ -43,6 +43,7 @@ from .inference import (
     uniform_decode,
 )
 from .dinfer_integration import (
+    run_block_frontier_speculative_inference,
     run_blockwise_speculative_inference,
 )
 from .speculative_inference import speculative_inference as _aoae_speculative_inference
@@ -124,6 +125,8 @@ class EvalResult:
     primary_verified_positions: float = 0.0
     primary_full_equiv_positions: float = 0.0
     verifier_call_rate: float = 0.0
+    verifier_skips: float = 0.0
+    self_accept_events: float = 0.0
     draft_microsteps: float = 0.0
     mean_frontier_size: float = 0.0
     frontier_accept_rate: float = 0.0
@@ -510,12 +513,22 @@ def _summarize_speculative_point(point: Dict[str, Any], cfg: Dict[str, Any]) -> 
         inf_cfg.get("max_unmask_fraction_per_step", ""),
     )
     schedule_cfg = inf_cfg.get("verifier_schedule", {}) or {}
+    block_cfg = inf_cfg.get("block_speculative", {}) or {}
     routing = "lossless" if base_cfg.get("lossless_verification", False) else "soft"
+    block_note = ""
+    if schedule in {"aoae_block", "draft_frontier_block", "block_frontier"}:
+        block_note = (
+            f" draft_thr={block_cfg.get('draft_threshold', '')}, "
+            f"verify_thr={block_cfg.get('verifier_threshold', '')}, "
+            f"reject={block_cfg.get('rejection_action', '')}, "
+            f"verify_mode={block_cfg.get('verifier_mode', 'primary')}, "
+        )
     return (
         f"{point.get('name', '')}: sched={schedule}, routing={routing}, "
         f"tau_pi={float(point.get('policy_temperature', 1.0))}, "
         f"budget={schedule_cfg.get('draft_token_budget', 1)}, "
         f"micros={schedule_cfg.get('max_draft_microsteps', 1)}, "
+        f"{block_note}"
         f"agree={inf_cfg.get('primary_agree_threshold', 0.0)}, "
         f"unmask={unmask}, "
         f"{_remask_note(cfg)}"
@@ -549,6 +562,7 @@ def _speculative_note(
 ) -> str:
     inf_cfg = cfg.get("inference", {})
     schedule_cfg = inf_cfg.get("verifier_schedule", {}) or {}
+    block_cfg = inf_cfg.get("block_speculative", {}) or {}
     base_cfg = cfg.get("base_model", {})
     point_name = cfg.get("_active_speculative_eval_point")
     unmask = inf_cfg.get(
@@ -564,6 +578,13 @@ def _speculative_note(
         f"agree_thr={inf_cfg.get('primary_agree_threshold', 0.0)},"
         f"unmask={unmask},reuse={reuse_method},{pc_note},sched={schedule}"
     )
+    if schedule in {"aoae_block", "draft_frontier_block", "block_frontier"}:
+        note += (
+            f",draft_thr={block_cfg.get('draft_threshold', '')}"
+            f",verify_thr={block_cfg.get('verifier_threshold', '')}"
+            f",reject={block_cfg.get('rejection_action', '')}"
+            f",verify_mode={block_cfg.get('verifier_mode', 'primary')}"
+        )
     return _append_note(note, _remask_note(cfg))
 
 
@@ -992,6 +1013,8 @@ def evaluate_speculative(
     total_primary_verified_positions = 0.0
     total_primary_full_equiv_positions = 0.0
     total_verifier_call_rate = 0.0
+    total_verifier_skips = 0.0
+    total_self_accept_events = 0.0
     total_draft_microsteps = 0.0
     total_frontier_size = 0.0
     total_frontier_accept_rate = 0.0
@@ -1056,6 +1079,17 @@ def evaluate_speculative(
         with torch.no_grad():
             if schedule == "llada21_block":
                 output_ids, stats = run_blockwise_speculative_inference(
+                    dual_model=dual_model,
+                    policy=policy,
+                    soft_mask_module=soft_mask,
+                    prism_adapter=prism,
+                    prompt_ids=prompt_ids,
+                    cfg=cfg,
+                    policy_temperature=policy_temperature,
+                )
+                _spec_trajectory = None
+            elif schedule in {"aoae_block", "draft_frontier_block", "block_frontier"}:
+                output_ids, stats = run_block_frontier_speculative_inference(
                     dual_model=dual_model,
                     policy=policy,
                     soft_mask_module=soft_mask,
@@ -1230,6 +1264,8 @@ def evaluate_speculative(
         total_primary_verified_positions += float(stats.get("primary_verified_positions", 0.0))
         total_primary_full_equiv_positions += float(stats.get("primary_full_equiv_positions", 0.0))
         total_verifier_call_rate += float(stats.get("verifier_call_rate", 0.0))
+        total_verifier_skips += float(stats.get("verifier_skips", 0.0))
+        total_self_accept_events += float(stats.get("self_accept_events", 0.0))
         total_draft_microsteps += float(stats.get("draft_microsteps", stats.get("aux_only_steps", 0.0)))
         total_frontier_size += float(stats.get("mean_frontier_size", 0.0))
         total_frontier_accept_rate += float(stats.get("frontier_accept_rate", 0.0))
@@ -1299,6 +1335,8 @@ def evaluate_speculative(
     primary_verified_positions = total_primary_verified_positions / max(total, 1)
     primary_full_equiv_positions = total_primary_full_equiv_positions / max(total, 1)
     verifier_call_rate = total_verifier_call_rate / max(total, 1)
+    verifier_skips = total_verifier_skips / max(total, 1)
+    self_accept_events = total_self_accept_events / max(total, 1)
     draft_microsteps = total_draft_microsteps / max(total, 1)
     mean_frontier_size = total_frontier_size / max(total, 1)
     frontier_accept_rate = total_frontier_accept_rate / max(total, 1)
@@ -1349,6 +1387,8 @@ def evaluate_speculative(
         primary_verified_positions=primary_verified_positions,
         primary_full_equiv_positions=primary_full_equiv_positions,
         verifier_call_rate=verifier_call_rate,
+        verifier_skips=verifier_skips,
+        self_accept_events=self_accept_events,
         draft_microsteps=draft_microsteps,
         mean_frontier_size=mean_frontier_size,
         frontier_accept_rate=frontier_accept_rate,
@@ -1637,6 +1677,11 @@ def _build_run_metadata(
         "verifier_schedule_mode": verifier_schedule.get("mode", "candidate_budget"),
         "verifier_draft_token_budget": int(verifier_schedule.get("draft_token_budget", 0) or 0),
         "verifier_max_draft_microsteps": int(verifier_schedule.get("max_draft_microsteps", 0) or 0),
+        "block_speculative_draft_threshold": float((inf_cfg.get("block_speculative", {}) or {}).get("draft_threshold", 0.0) or 0.0),
+        "block_speculative_verifier_threshold": float((inf_cfg.get("block_speculative", {}) or {}).get("verifier_threshold", 0.0) or 0.0),
+        "block_speculative_rejection_action": str((inf_cfg.get("block_speculative", {}) or {}).get("rejection_action", "")),
+        "block_speculative_verifier_mode": str((inf_cfg.get("block_speculative", {}) or {}).get("verifier_mode", "primary")),
+        "block_speculative_max_verifier_steps_per_block": int((inf_cfg.get("block_speculative", {}) or {}).get("max_verifier_steps_per_block", 0) or 0),
         "routing_temperature": base_cfg.get("routing_temperature"),
         "tp_size": int(hw_cfg.get("tp_size", 1) or 1),
         "bf16": bool(hw_cfg.get("bf16", False)),
@@ -2037,5 +2082,3 @@ def main(
             close_fn = getattr(owned_model, "close", None)
             if callable(close_fn):
                 close_fn()
-
-

@@ -3203,6 +3203,192 @@ class TestAOAESpeculativeInferenceLoop:
 
 
 class TestRunBlockwiseSpeculativeInference:
+    def test_block_frontier_runner_drafts_multiple_microsteps_then_verifies_once(self):
+        from aoae.dinfer_integration import run_block_frontier_speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "inference": {
+                "steps": 8,
+                "gen_length": 2,
+                "block_length": 2,
+                "disable_remask": False,
+                "drafter": {"aux_compute_ratio": 0.35},
+                "verifier_schedule": {
+                    "mode": "candidate_budget",
+                    "draft_token_budget": 2,
+                    "max_draft_microsteps": 2,
+                },
+                "llada21_official": {
+                    "use_block_diffusion": True,
+                    "max_post_steps": 4,
+                    "speed": {"threshold": 0.5, "editing_threshold": 0.0},
+                    "quality": {"threshold": 0.7, "editing_threshold": 0.5},
+                },
+                "block_speculative": {
+                    "draft_threshold": 0.9,
+                    "verifier_threshold": 0.1,
+                    "verifier_editing_threshold": 0.99,
+                    "max_verifier_steps_per_block": 2,
+                    "rejection_action": "correct_confident",
+                    "verifier_compute_ratio": 1.0,
+                },
+            },
+        }
+
+        class DummyDualModel:
+            def __init__(self):
+                self.aux_calls = 0
+                self.primary_calls = 0
+
+            def auxiliary_forward_resp(self, input_ids, resp_slice):
+                del input_ids, resp_slice
+                self.aux_calls += 1
+                logits = torch.zeros(1, 2, 3)
+                if self.aux_calls == 1:
+                    logits[0, 0, 0] = 10.0
+                else:
+                    logits[0, 1, 0] = 10.0
+                return logits
+
+            def primary_forward(self, input_ids):
+                self.primary_calls += 1
+                logits = torch.zeros(1, input_ids.shape[1], 3)
+                logits[:, -2, 0] = 10.0
+                logits[:, -1, 1] = 10.0
+                return logits
+
+        dual = DummyDualModel()
+        output_ids, stats = run_block_frontier_speculative_inference(
+            dual_model=dual,
+            policy=None,
+            soft_mask_module=None,
+            prism_adapter=None,
+            prompt_ids=torch.tensor([[1]], dtype=torch.long),
+            cfg=cfg,
+        )
+
+        assert output_ids[0, 1:].tolist() == [0, 1]
+        assert dual.aux_calls == 2
+        assert dual.primary_calls == 1
+        assert stats["primary_steps"] == 1
+        assert stats["aux_only_steps"] == 2
+        assert stats["draft_accepts"] == 1
+        assert stats["draft_rejects"] == 1
+        assert stats["frontier_accept_rate"] == pytest.approx(0.5)
+        assert stats["effective_flops"] == pytest.approx((2 * 0.35 + 1.0) / 8)
+
+    def test_block_frontier_replace_rejection_uses_primary_argmax_even_when_uncertain(self):
+        from aoae.dinfer_integration import run_block_frontier_speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "inference": {
+                "steps": 4,
+                "gen_length": 1,
+                "block_length": 1,
+                "disable_remask": True,
+                "drafter": {"aux_compute_ratio": 0.35},
+                "verifier_schedule": {"draft_token_budget": 1, "max_draft_microsteps": 1},
+                "llada21_official": {
+                    "use_block_diffusion": True,
+                    "max_post_steps": 1,
+                    "speed": {"threshold": 0.0, "editing_threshold": 0.0},
+                    "quality": {"threshold": 0.99, "editing_threshold": 0.99},
+                },
+                "block_speculative": {
+                    "draft_threshold": 0.0,
+                    "verifier_threshold": 0.99,
+                    "verifier_editing_threshold": 0.99,
+                    "max_verifier_steps_per_block": 1,
+                    "rejection_action": "replace",
+                },
+            },
+        }
+
+        class DummyDualModel:
+            def auxiliary_forward_resp(self, input_ids, resp_slice):
+                del input_ids, resp_slice
+                return torch.tensor([[[10.0, 0.0, 0.0]]])
+
+            def primary_forward(self, input_ids):
+                logits = torch.zeros(1, input_ids.shape[1], 3)
+                logits[:, -1, :] = torch.tensor([0.1, 0.2, 0.0])
+                return logits
+
+        output_ids, stats = run_block_frontier_speculative_inference(
+            dual_model=DummyDualModel(),
+            policy=None,
+            soft_mask_module=None,
+            prism_adapter=None,
+            prompt_ids=torch.tensor([[1]], dtype=torch.long),
+            cfg=cfg,
+        )
+
+        assert output_ids[0, 1].item() == 1
+        assert stats["draft_rejects"] == 1
+
+    def test_block_frontier_self_accept_lossless_skips_redundant_primary(self):
+        from aoae.dinfer_integration import run_block_frontier_speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID, "lossless_verification": True},
+            "inference": {
+                "steps": 8,
+                "gen_length": 2,
+                "block_length": 2,
+                "disable_remask": True,
+                "drafter": {"aux_compute_ratio": 0.35},
+                "verifier_schedule": {"draft_token_budget": 2, "max_draft_microsteps": 1},
+                "llada21_official": {
+                    "use_block_diffusion": True,
+                    "max_post_steps": 4,
+                    "speed": {"threshold": 0.0, "editing_threshold": 0.0},
+                    "quality": {"threshold": 0.7, "editing_threshold": 0.5},
+                },
+                "block_speculative": {
+                    "draft_threshold": 0.0,
+                    "max_verifier_steps_per_block": 4,
+                    "verifier_mode": "self_accept_lossless",
+                    "rejection_action": "replace",
+                },
+            },
+        }
+
+        class DummyDualModel:
+            def __init__(self):
+                self.aux_calls = 0
+                self.primary_calls = 0
+
+            def auxiliary_forward_resp(self, input_ids, resp_slice):
+                del input_ids, resp_slice
+                self.aux_calls += 1
+                return torch.tensor([[[5.0, 0.0, 0.0], [0.0, 6.0, 0.0]]])
+
+            def primary_forward(self, input_ids):
+                self.primary_calls += 1
+                logits = torch.zeros(1, input_ids.shape[1], 3)
+                logits[:, -2:, 2] = 10.0
+                return logits
+
+        dual = DummyDualModel()
+        output_ids, stats = run_block_frontier_speculative_inference(
+            dual_model=dual,
+            policy=None,
+            soft_mask_module=None,
+            prism_adapter=None,
+            prompt_ids=torch.tensor([[1]], dtype=torch.long),
+            cfg=cfg,
+        )
+
+        assert output_ids[0, 1:].tolist() == [0, 1]
+        assert dual.aux_calls == 1
+        assert dual.primary_calls == 0
+        assert stats["primary_steps"] == 0
+        assert stats["verifier_skips"] == 1
+        assert stats["self_accept_events"] == 1
+        assert stats["frontier_accept_rate"] == pytest.approx(1.0)
+
     def test_blockwise_runner_uses_primary_thresholds_and_editing(self, monkeypatch):
         from aoae.dinfer_integration import run_blockwise_speculative_inference
 
