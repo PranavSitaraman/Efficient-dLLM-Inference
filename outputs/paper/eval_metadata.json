@@ -1,6 +1,6 @@
 {
   "schema_version": "aoae_eval_v3",
-  "created_at_utc": "2026-04-29T04:32:53.559903+00:00",
+  "created_at_utc": "2026-04-29T07:47:12.544834+00:00",
   "run_name": "paper_grpo_self_spec",
   "output_dir": "outputs/paper/",
   "results_path": "outputs/paper/eval_results.json",
@@ -86,8 +86,8 @@
   "saved_predictions": 50,
   "max_saved_predictions": 50,
   "num_results": 8,
-  "host": "holygpu8a17503.rc.fas.harvard.edu",
-  "git_commit": "7892fd8556bdc7acaad3a704937e1faedbb068dc",
+  "host": "holygpu8a11404.rc.fas.harvard.edu",
+  "git_commit": "5772030fbfe73fdd5aea3c00b3c6f2af3ff98fcf",
   "torch_version": "2.9.0+cu128",
   "vllm_version": "0.11.2",
   "transformers_version": "4.57.1",

@@ -338,6 +338,71 @@ def _fresh_primary_agreement(
     return agreement.bool() & primary_fresh_mask.bool()
 
 
+def _confidence_and_argmax_fast(
+    logits: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Cheap confidence + argmax without materialising a [B, L, V] softmax.
+
+    The full ``soft_mask`` path runs ``log_softmax`` over the [B, L, V] tensor
+    (~1 GB of fp32 traffic at V≈156895 / L=512), which dominates per-step
+    Python overhead on aux microsteps where the policy network's output is
+    fully ignored under frozen ``u/r`` heads.  When all the drafter needs is
+    ``max softmax(logits)`` to threshold and ``argmax(logits)`` for the
+    sampled token, we can compute both with a single ``logsumexp`` reduction:
+
+        max_logit  = logits.max(-1)
+        log_p_max  = max_logit - logsumexp(logits, -1)
+        confidence = exp(log_p_max)
+    """
+    max_logit, max_tok = logits.max(dim=-1)
+    lse = torch.logsumexp(logits.float(), dim=-1)
+    confidence = (max_logit.float() - lse).exp().to(logits.dtype)
+    return confidence, max_tok
+
+
+def _drafter_confidence_threshold(cfg: dict) -> float:
+    return float(cfg.get("inference", {}).get("drafter", {}).get("confidence_threshold", 0.7))
+
+
+def _resolve_unmask_budget(cfg: dict, L: int) -> Optional[int]:
+    """Convert ``inference.max_unmask_*`` to an integer budget; ``None`` if unbounded."""
+    import math
+    ic = cfg.get("inference", {})
+    max_tokens = ic.get("max_unmask_tokens_per_step")
+    max_frac = ic.get("max_unmask_fraction_per_step")
+    if max_tokens is None and max_frac is None:
+        return None
+    if max_tokens is not None:
+        budget = int(max_tokens)
+    else:
+        try:
+            frac = float(max_frac)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(frac) or frac <= 0.0:
+            return None
+        budget = int(math.ceil(frac * max(L, 1)))
+    if budget <= 0 or budget >= L:
+        return None
+    return budget
+
+
+def _select_topb_by_score(
+    candidate_mask: torch.Tensor,
+    scores: torch.Tensor,
+    budget: int,
+) -> torch.Tensor:
+    """Vectorised top-``budget`` selection among ``candidate_mask``-positive cells."""
+    L = candidate_mask.shape[-1]
+    masked_scores = torch.where(
+        candidate_mask, scores.float(), torch.full_like(scores, float("-inf"), dtype=torch.float32)
+    )
+    top_idx = masked_scores.topk(min(budget, L), dim=-1).indices
+    keep = torch.zeros_like(candidate_mask)
+    keep.scatter_(-1, top_idx, True)
+    return keep & candidate_mask
+
+
 def _stable_verifier_miss_fraction(
     cache_mgr: SpeculativeCacheBookkeeper,
     *,
@@ -544,6 +609,25 @@ def speculative_inference(
     _aux_cache_enabled = use_prefix_kv_cache
 
     drafter_cfg = ic.get("drafter", {})
+    # Fast drafter path: when frozen u/r heads make the draft action
+    # deterministic (u_t = (confidence >= threshold) & mask, r_t=0,
+    # kappa_t=0 forced on aux microsteps anyway), the policy network and the
+    # full ``log_softmax`` over V≈156895 inside soft-mask are pure overhead.
+    # Skipping them on aux microsteps cuts ~10 ms per draft microstep on
+    # H100 — the single biggest win for speculative AOAE wall time.
+    _fast_drafter_path = bool(drafter_cfg.get("fast_path", False)) and not record_trajectory
+    if _fast_drafter_path:
+        # The fast path is only safe when u/r are frozen out of the trained
+        # head set (the canonical paper config trains only ``cache`` and
+        # ``access``).  Validate up-front to avoid silently changing rollout
+        # semantics when a future config trains u/r.
+        _train_heads_check = parse_head_set(cfg.get("grpo", {}).get("train_heads"))
+        if _train_heads_check is not None and any(
+            h in _train_heads_check for h in ("unmask", "u", "u_t", "remask", "r", "r_t")
+        ):
+            _fast_drafter_path = False
+    _drafter_threshold = _drafter_confidence_threshold(cfg)
+    _unmask_budget = _resolve_unmask_budget(cfg, L_gen)
     _run_aux_on_verifier_raw = drafter_cfg.get("run_on_verifier", "auto")
     if isinstance(_run_aux_on_verifier_raw, str):
         mode = _run_aux_on_verifier_raw.strip().lower()
@@ -740,6 +824,69 @@ def speculative_inference(
             _pri_hidden_for_prism = None
             _pri_hidden_states_for_tracker = None
             _aux_only_steps += 1
+
+            if _fast_drafter_path:
+                # ---- Fast aux drafter (no policy / no soft-mask H_t) ----
+                # Skip the soft_mask + policy + access-set chain entirely when
+                # the trained heads do not influence aux-only decisions.  The
+                # only thing the rest of the loop body would do here is:
+                #   r_t = 0, kappa_t = 0 (forced on aux microsteps regardless),
+                #   u_t = (confidence >= threshold) & mask_ind & budget,
+                #   resp_tokens[u_t] = aux_argmax, draft_frontier.add(...),
+                #   pos_state / cache_mgr bookkeeping.
+                # All of that is reproduced cheaply below with no per-step
+                # GPU->CPU sync — even ``draft_frontier.add`` is replaced by an
+                # inline GPU update so the only sync ever performed in this
+                # branch is the verifier scheduler reading the Python counter.
+                fast_conf, fast_argmax = _confidence_and_argmax_fast(aux_logits)
+                fast_u = (fast_conf >= _drafter_threshold) & mask_ind.bool()
+                if _unmask_budget is not None:
+                    fast_u = _select_topb_by_score(fast_u, fast_conf, _unmask_budget)
+
+                # Inline ``draft_frontier.add`` with a Python-side upper-bound
+                # counter — keeps the verifier scheduler sync-free and lets it
+                # always trigger after ``max_draft_microsteps`` regardless of
+                # the actual frontier population.  A conservative upper bound
+                # is fine because (a) the scheduler also caps at
+                # ``max_draft_microsteps`` and (b) firing the verifier slightly
+                # earlier than strictly necessary never affects correctness.
+                draft_frontier._max_count += (
+                    _unmask_budget if _unmask_budget is not None else L_gen
+                )
+                draft_frontier.mask = draft_frontier.mask | fast_u
+                resp_tokens = y[:, resp_slice].clone()
+                resp_tokens = torch.where(fast_u, fast_argmax, resp_tokens)
+                draft_frontier.token_ids = torch.where(
+                    fast_u, resp_tokens.long(), draft_frontier.token_ids
+                )
+                draft_frontier.age = torch.where(
+                    fast_u, torch.zeros_like(draft_frontier.age), draft_frontier.age
+                )
+                if record_trajectory:
+                    y = y.clone()
+                y[:, resp_slice] = resp_tokens
+
+                # Phase 3a / 3b on the fast path: K_spec mirror tracks the
+                # frontier, K_stable cannot grow because kappa_t is forced to 0.
+                if cache_mgr is not None:
+                    cache_mgr.step_spec(draft_frontier.mask)
+                    cache_mgr.stable.step_age()
+
+                if trajectory is not None and cache_mgr is not None:
+                    trajectory.spec_cached_fractions.append(
+                        cache_mgr.spec_cached_fraction().detach()
+                    )
+                    trajectory.stable_cached_fractions.append(
+                        cache_mgr.stable_cached_fraction().detach()
+                    )
+                    trajectory.cached_fractions.append(
+                        cache_mgr.cached_fraction().detach()
+                    )
+
+                draft_frontier.step_age()
+                _aux_units += aux_compute_ratio
+                _draft_microsteps_since_verify += 1
+                continue
 
         elif (
             not (

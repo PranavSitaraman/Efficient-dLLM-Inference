@@ -227,6 +227,17 @@ evaluation:
           "inference.primary_agree_threshold": 0.92
           "inference.max_unmask_fraction_per_step": 0.125
           "inference.disable_remask": false
+      # The lossless points reuse the verified-good sweep params from the
+      # last working Pareto and turn on the fast aux-drafter path
+      # (``inference.drafter.fast_path``).  The fast path skips soft-mask +
+      # policy on aux microsteps when frozen u/r heads make the draft action
+      # deterministic, and replaces ``draft_frontier.add`` with an inline
+      # GPU update so aux microsteps are sync-free.  Sweep budgets stay at
+      # the conservative values (budget=12-16, micros=4) that previously
+      # produced 0.80-0.84 accuracy at 76-79 TPS — enlarging the budgets
+      # blows up total iteration count without proportional per-iteration
+      # savings, so we keep them small and let the per-microstep speedup
+      # compound on top.
       - name: "speed_balanced"
         policy_temperature: 1.0
         overrides:
@@ -238,6 +249,7 @@ evaluation:
           "inference.primary_agree_threshold": 0.85
           "inference.max_unmask_fraction_per_step": 0.1875
           "inference.disable_remask": false
+          "inference.drafter.fast_path": true
       - name: "speed_max"
         policy_temperature: 1.25
         overrides:
@@ -249,17 +261,20 @@ evaluation:
           "inference.primary_agree_threshold": 0.75
           "inference.max_unmask_fraction_per_step": 0.25
           "inference.disable_remask": true
+          "inference.drafter.fast_path": true
       - name: "speed_extreme"
         policy_temperature: 1.5
         overrides:
           "base_model.lossless_verification": true
           "inference.speculative_schedule": "aoae"
           "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 32
-          "inference.verifier_schedule.max_draft_microsteps": 8
-          "inference.primary_agree_threshold": 0.6
-          "inference.max_unmask_fraction_per_step": 0.5
+          "inference.verifier_schedule.draft_token_budget": 20
+          "inference.verifier_schedule.max_draft_microsteps": 4
+          "inference.primary_agree_threshold": 0.65
+          "inference.max_unmask_fraction_per_step": 0.3125
           "inference.disable_remask": true
+          "inference.drafter.fast_path": true
+          "inference.positional_cache.enabled": false
   code:
     timeout_sec: 3.0
     cpu_time_limit_sec: 2

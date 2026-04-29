@@ -2501,6 +2501,112 @@ class TestAOAESpeculativeInferenceLoop:
         assert traj.frontier_accept_rate == pytest.approx(2 / 3)
         assert traj.frontier_reject_rate == pytest.approx(1 / 3)
 
+    def test_fast_drafter_path_skips_policy_and_softmask_on_aux_microsteps(self):
+        # Fast drafter mode short-circuits the soft-mask + policy stack on aux
+        # microsteps when frozen u/r heads make the draft action deterministic.
+        # This regression test asserts the policy and the soft-mask module are
+        # never invoked on aux microsteps but the verifier path still runs the
+        # full stack and produces a valid completion.
+        from aoae.speculative_inference import speculative_inference
+
+        cfg = {
+            "base_model": {"mask_token_id": MASK_ID},
+            "cache": {"enabled": True, "stable_kv_cache": False, "prefix_kv_cache": False},
+            "grpo": {
+                "thrash_age_decay": 0.0,
+                "train_heads": ["cache", "access"],
+            },
+            "inference": {
+                "steps": 3,
+                "gen_length": 3,
+                "temperature": 0.0,
+                "fallback_unmask": False,
+                "disable_remask": True,
+                "compose_gamma": 0.0,
+                "primary_agree_threshold": 0.0,
+                "aux_cache_reset_threshold": 1.1,
+                "verifier_schedule": {
+                    "mode": "candidate_budget",
+                    "draft_token_budget": 4,
+                    "min_draft_microsteps": 1,
+                    "max_draft_microsteps": 2,
+                    "force_first_last": False,
+                },
+                "verifier": {"acceptance_mode": "argmax_match"},
+                "drafter": {"confidence_threshold": 0.1, "fast_path": True},
+                "positional_cache": {"enabled": False},
+                "reuse_signal": {"method": "argmax_match"},
+            },
+            "analysis": {"track_kv_dynamics": False},
+        }
+
+        class DummyDualModel:
+            @staticmethod
+            def _logits(batch, length):
+                logits = torch.zeros(batch, length, 3)
+                logits[..., 0] = 8.0
+                return logits
+
+            def auxiliary_forward(self, input_ids):
+                return self._logits(input_ids.shape[0], input_ids.shape[1])
+
+            def primary_forward(self, input_ids):
+                return self._logits(input_ids.shape[0], input_ids.shape[1])
+
+        class TrackingPolicy:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(self, *args, **kwargs):
+                self.calls += 1
+                mask_ind = args[1]
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return {
+                    "unmask_probs": zeros,
+                    "remask_probs": zeros,
+                    "cache_probs": zeros,
+                    "access_probs": zeros,
+                    "access_logits": zeros,
+                }
+
+            def sample_actions(self, policy_out, mask_ind):
+                del policy_out
+                zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+                return {"u_t": zeros, "r_t": zeros, "kappa_t": zeros, "q_t": zeros}
+
+        class TrackingSoftMask:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(self, resp_logits, mask_ind, step_frac, return_weighted=False):
+                self.calls += 1
+                hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
+                confidence = torch.ones_like(mask_ind, dtype=torch.float32)
+                entropy = torch.zeros_like(confidence)
+                weighted = torch.zeros_like(hidden)
+                if return_weighted:
+                    return hidden, confidence, entropy, weighted
+                return hidden, confidence, entropy
+
+        policy = TrackingPolicy()
+        soft_mask = TrackingSoftMask()
+        _, traj = speculative_inference(
+            dual_model=DummyDualModel(),
+            policy=policy,
+            soft_mask_module=soft_mask,
+            prism_adapter=None,
+            prompt_ids=torch.tensor([[1]], dtype=torch.long),
+            cfg=cfg,
+            collect_stats=True,
+        )
+
+        # The verifier still runs the full stack; only aux microsteps are
+        # short-circuited.  Each verifier event should bump policy/soft_mask
+        # call counts by one, while aux microsteps should not.
+        assert policy.calls == traj.primary_steps
+        assert soft_mask.calls == traj.primary_steps
+        assert traj.aux_only_steps >= 1
+
     def test_recompute_after_reject_false_does_not_rerun_verifier(self):
         from aoae.speculative_inference import speculative_inference
 
