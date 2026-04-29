@@ -204,40 +204,40 @@ evaluation:
   speculative_sweep:
     enabled: true
     points:
- #     - name: "quality_max"
- #       policy_temperature: 0.7
- #      overrides:
- #         "base_model.lossless_verification": false
- #         "cache.prefix_kv_cache": true
- #         "inference.speculative_schedule": "aoae"
- #         "inference.verifier_schedule.mode": "candidate_budget"
- #         "inference.verifier_schedule.draft_token_budget": 4
- #         "inference.verifier_schedule.max_draft_microsteps": 1
- #         "inference.primary_agree_threshold": 0.98
- #         "inference.max_unmask_fraction_per_step": 0.0625
- #         "inference.disable_remask": false
- #     - name: "quality_balanced"
- #       policy_temperature: 1.0
- #       overrides:
- #         "base_model.lossless_verification": false
- #         "inference.speculative_schedule": "aoae"
- #         "inference.verifier_schedule.mode": "candidate_budget"
- #         "inference.verifier_schedule.draft_token_budget": 8
- #         "inference.verifier_schedule.max_draft_microsteps": 3
- #         "inference.primary_agree_threshold": 0.92
- #         "inference.max_unmask_fraction_per_step": 0.125
- #         "inference.disable_remask": false
- #     - name: "speed_balanced"
- #       policy_temperature: 1.0
- #       overrides:
- #         "base_model.lossless_verification": true
- #         "inference.speculative_schedule": "aoae"
- #         "inference.verifier_schedule.mode": "candidate_budget"
- #         "inference.verifier_schedule.draft_token_budget": 12
- #         "inference.verifier_schedule.max_draft_microsteps": 4
- #         "inference.primary_agree_threshold": 0.85
- #         "inference.max_unmask_fraction_per_step": 0.1875
- #         "inference.disable_remask": false
+      - name: "quality_max"
+        policy_temperature: 0.7
+        overrides:
+          "base_model.lossless_verification": false
+          "cache.prefix_kv_cache": true
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 4
+          "inference.verifier_schedule.max_draft_microsteps": 1
+          "inference.primary_agree_threshold": 0.98
+          "inference.max_unmask_fraction_per_step": 0.0625
+          "inference.disable_remask": false
+      - name: "quality_balanced"
+        policy_temperature: 1.0
+        overrides:
+          "base_model.lossless_verification": false
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 8
+          "inference.verifier_schedule.max_draft_microsteps": 3
+          "inference.primary_agree_threshold": 0.92
+          "inference.max_unmask_fraction_per_step": 0.125
+          "inference.disable_remask": false
+      - name: "speed_balanced"
+        policy_temperature: 1.0
+        overrides:
+          "base_model.lossless_verification": true
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 12
+          "inference.verifier_schedule.max_draft_microsteps": 4
+          "inference.primary_agree_threshold": 0.85
+          "inference.max_unmask_fraction_per_step": 0.1875
+          "inference.disable_remask": false
       - name: "speed_max"
         policy_temperature: 1.25
         overrides:
@@ -249,27 +249,16 @@ evaluation:
           "inference.primary_agree_threshold": 0.75
           "inference.max_unmask_fraction_per_step": 0.25
           "inference.disable_remask": true
-      - name: "burst_balanced"
-        policy_temperature: 1.25
-        overrides:
-          "base_model.lossless_verification": true
-          "inference.speculative_schedule": "aoae"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 24
-          "inference.verifier_schedule.max_draft_microsteps": 8
-          "inference.primary_agree_threshold": 0.70
-          "inference.max_unmask_fraction_per_step": 0.25
-          "inference.disable_remask": true
-      - name: "burst_max"
+      - name: "speed_extreme"
         policy_temperature: 1.5
         overrides:
           "base_model.lossless_verification": true
           "inference.speculative_schedule": "aoae"
           "inference.verifier_schedule.mode": "candidate_budget"
           "inference.verifier_schedule.draft_token_budget": 32
-          "inference.verifier_schedule.max_draft_microsteps": 12
-          "inference.primary_agree_threshold": 0.60
-          "inference.max_unmask_fraction_per_step": 0.25
+          "inference.verifier_schedule.max_draft_microsteps": 8
+          "inference.primary_agree_threshold": 0.6
+          "inference.max_unmask_fraction_per_step": 0.5
           "inference.disable_remask": true
   code:
     timeout_sec: 3.0
@@ -288,5 +277,9 @@ logging:
 hardware:
   seed: 42
   bf16: true
-  tp_size: 2
+  # vLLM expert-parallel TP>1 currently corrupts LLaDA2.1-mini MoE quality on
+  # this stack (the symptom is ~0.12 GSM8K baseline accuracy). Keep the
+  # canonical paper path on one process; the 2-GPU node can still host other
+  # jobs or explicit TP ablations.
+  tp_size: 1
   deterministic: false

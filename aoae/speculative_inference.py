@@ -132,12 +132,16 @@ class DraftFrontier:
         self.L = seq_len
         self.device = device
         self.mask = torch.zeros(batch_size, seq_len, dtype=torch.bool, device=device)
-        self.counts = torch.zeros(batch_size, dtype=torch.long, device=device)
         self.token_ids = torch.full(
             (batch_size, seq_len), -1, dtype=torch.long, device=device
         )
         self.scores = torch.zeros(batch_size, seq_len, dtype=torch.float32, device=device)
         self.age = torch.zeros(batch_size, seq_len, dtype=torch.float32, device=device)
+        # Python-side maximum count over the batch.  Tracked on CPU so the
+        # per-step verifier scheduler does not need a GPU->CPU sync.  Updated
+        # on add()/clear() and is a strict upper bound on the live max(); the
+        # verifier still re-counts authoritatively when it fires.
+        self._max_count = 0
 
     def add(
         self,
@@ -145,14 +149,23 @@ class DraftFrontier:
         response_tokens: torch.Tensor,
         draft_logits: Optional[torch.Tensor] = None,
     ) -> None:
-        del draft_logits
         drafted = drafted_mask.bool()
         if not drafted.any():
             return
-        newly_added = drafted & ~self.mask
-        self.mask = self.mask | drafted
-        self.counts = self.counts + newly_added.sum(dim=-1)
+        new_mask = self.mask | drafted
+        # Best-effort upper bound on the per-batch max count without forcing a
+        # CPU sync: if any new positions were added, increment by the maximum
+        # number of newly drafted positions in this batch (an overestimate is
+        # safe for scheduling because it only triggers earlier verifier calls).
+        added_per_row = (drafted & ~self.mask).sum(dim=-1)
+        self._max_count = self._max_count + int(added_per_row.max().item())
+        self.mask = new_mask
         self.token_ids = torch.where(drafted, response_tokens.long(), self.token_ids)
+        if draft_logits is not None:
+            probs = F.softmax(draft_logits.float(), dim=-1)
+            safe_ids = response_tokens.long().clamp(min=0, max=probs.shape[-1] - 1)
+            token_scores = torch.gather(probs, dim=-1, index=safe_ids.unsqueeze(-1)).squeeze(-1)
+            self.scores = torch.where(drafted, token_scores.detach(), self.scores)
         self.age = torch.where(drafted, torch.zeros_like(self.age), self.age)
 
     def step_age(self) -> None:
@@ -160,16 +173,20 @@ class DraftFrontier:
 
     def clear(self) -> None:
         self.mask.zero_()
-        self.counts.zero_()
         self.token_ids.fill_(-1)
         self.scores.zero_()
         self.age.zero_()
+        self._max_count = 0
 
     def numel_per_batch(self) -> torch.Tensor:
-        return self.counts
+        return self.mask.float().sum(dim=-1)
 
     def fraction_per_batch(self) -> torch.Tensor:
-        return self.counts.float() / float(max(self.L, 1))
+        return self.mask.float().mean(dim=-1)
+
+    def max_count_cpu(self) -> int:
+        """Python-side upper bound on max(numel_per_batch); avoids GPU sync."""
+        return int(self._max_count)
 
     def validate(
         self,
@@ -272,7 +289,8 @@ def _should_run_verifier(
     budget = int(schedule.get("draft_token_budget", 12))
     if budget <= 0:
         return True
-    return bool((frontier.numel_per_batch() >= budget).any().item())
+    # Python-side counter tracked on add()/clear() — avoids per-step GPU->CPU sync.
+    return frontier.max_count_cpu() >= budget
 
 
 def _apply_frozen_action_heads(
@@ -318,19 +336,6 @@ def _fresh_primary_agreement(
             f"got {tuple(agreement.shape)} and {tuple(primary_fresh_mask.shape)}"
         )
     return agreement.bool() & primary_fresh_mask.bool()
-
-
-def _first_true_index(mask: torch.Tensor) -> Optional[int]:
-    """Return the earliest active position across the batch, or None if empty."""
-    if mask.numel() == 0:
-        return None
-    if mask.dim() == 1:
-        active = mask.bool()
-    else:
-        active = mask.bool().any(dim=0)
-    if not bool(active.any()):
-        return None
-    return int(active.to(dtype=torch.int64).argmax().item())
 
 
 def _stable_verifier_miss_fraction(
@@ -482,7 +487,6 @@ def speculative_inference(
     )
 
     trajectory = SpeculativeTrajectory() if (record_trajectory or collect_stats) else None
-    agreement_rates = []
     reuse_state = None
     pos_state = init_positional_state(B, L_gen, device)
     draft_frontier = DraftFrontier(B, L_gen, device)
@@ -513,10 +517,6 @@ def speculative_inference(
     pri_past_kv = None
     _aux_cache_initialized = False
     _primary_cache_initialized = False
-    _aux_cache_dirty_from = 0
-    _primary_cache_dirty_from = 0
-    _aux_resp_logits_cache: Optional[torch.Tensor] = None
-    _primary_resp_logits_cache: Optional[torch.Tensor] = None
 
     # --- KV dynamics tracker (eval diagnostic, off during GRPO rollouts) ---
     # Uses primary model all-layer hidden states as a hidden-state proxy for KV
@@ -564,50 +564,26 @@ def speculative_inference(
     else:
         _run_aux_on_verifier = bool(_run_aux_on_verifier_raw)
 
-    def _mark_cache_dirty(
-        start_idx: Optional[int],
-        *,
-        aux: bool = True,
-        primary: bool = True,
-    ) -> None:
-        nonlocal _aux_cache_dirty_from, _primary_cache_dirty_from
-        if start_idx is None:
-            return
-        clipped = max(0, min(int(start_idx), L_gen))
-        if aux and _aux_cache_enabled and _aux_cache_initialized:
-            _aux_cache_dirty_from = min(_aux_cache_dirty_from, clipped)
-        if primary and _primary_cache_enabled and _primary_cache_initialized:
-            _primary_cache_dirty_from = min(_primary_cache_dirty_from, clipped)
-
     def _run_auxiliary_resp(current_y: torch.Tensor) -> torch.Tensor:
-        nonlocal aux_past_kv, _aux_cache_initialized, _aux_cache_dirty_from, _aux_resp_logits_cache
+        nonlocal aux_past_kv, _aux_cache_initialized
 
         if _aux_cache_enabled and _aux_cache_initialized:
-            start_idx = 0 if _aux_cache_dirty_from >= L_gen else max(0, min(int(_aux_cache_dirty_from), L_gen))
-            query_slice = slice(resp_slice.start + start_idx, resp_slice.stop)
-            aux_tail_logits, aux_past_kv = dual_model.auxiliary_forward_replace_with_cache(
-                current_y, query_slice, aux_past_kv,
+            aux_logits, aux_past_kv = dual_model.auxiliary_forward_replace_with_cache(
+                current_y, resp_slice, aux_past_kv,
             )
-            if start_idx == 0 or _aux_resp_logits_cache is None:
-                _aux_resp_logits_cache = aux_tail_logits.contiguous()
-            else:
-                _aux_resp_logits_cache[:, start_idx:, :] = aux_tail_logits
-            _aux_cache_dirty_from = L_gen
-            return _aux_resp_logits_cache
+            return aux_logits
 
         if _aux_cache_enabled:
             aux_full, aux_past_kv = dual_model.auxiliary_forward_with_cache(current_y)
             _aux_cache_initialized = True
-            _aux_cache_dirty_from = L_gen
-            _aux_resp_logits_cache = aux_full[:, resp_slice, :].contiguous()
-            return _aux_resp_logits_cache
+            return aux_full[:, resp_slice, :]
 
         return dual_model.auxiliary_forward(current_y)[:, resp_slice, :]
 
     def _run_primary_cached_resp(
         current_y: torch.Tensor,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[List[torch.Tensor]]]:
-        nonlocal pri_past_kv, _primary_cache_initialized, _primary_cache_dirty_from, _primary_resp_logits_cache
+        nonlocal pri_past_kv, _primary_cache_initialized
 
         if (
             use_prefix_kv_cache
@@ -616,41 +592,25 @@ def speculative_inference(
             and hasattr(dual_model, "primary_forward_replace_with_cache")
         ):
             if _primary_cache_initialized:
-                start_idx = 0 if _primary_cache_dirty_from >= L_gen else max(0, min(int(_primary_cache_dirty_from), L_gen))
-                query_slice = slice(resp_slice.start + start_idx, resp_slice.stop)
-                pri_tail_logits, pri_past_kv = dual_model.primary_forward_replace_with_cache(
-                    current_y, query_slice, pri_past_kv,
+                logits, pri_past_kv = dual_model.primary_forward_replace_with_cache(
+                    current_y, resp_slice, pri_past_kv,
                 )
-                if start_idx == 0 or _primary_resp_logits_cache is None:
-                    _primary_resp_logits_cache = pri_tail_logits.contiguous()
-                else:
-                    _primary_resp_logits_cache[:, start_idx:, :] = pri_tail_logits
-                _primary_cache_dirty_from = L_gen
-                return _primary_resp_logits_cache, None, None
+                return logits, None, None
 
             pri_full, pri_past_kv = dual_model.primary_forward_with_cache(current_y)
             _primary_cache_initialized = True
-            _primary_cache_dirty_from = L_gen
-            _primary_resp_logits_cache = pri_full[:, resp_slice, :].contiguous()
-            return _primary_resp_logits_cache, None, None
+            return pri_full[:, resp_slice, :], None, None
 
         return _run_primary_full_resp(current_y)
 
     def _reset_prefix_caches(*, aux: bool = True, primary: bool = True) -> None:
-        nonlocal aux_past_kv, pri_past_kv
-        nonlocal _aux_cache_initialized, _primary_cache_initialized
-        nonlocal _aux_cache_dirty_from, _primary_cache_dirty_from
-        nonlocal _aux_resp_logits_cache, _primary_resp_logits_cache
+        nonlocal aux_past_kv, pri_past_kv, _aux_cache_initialized, _primary_cache_initialized
         if aux:
             aux_past_kv = None
             _aux_cache_initialized = False
-            _aux_cache_dirty_from = 0
-            _aux_resp_logits_cache = None
         if primary:
             pri_past_kv = None
             _primary_cache_initialized = False
-            _primary_cache_dirty_from = 0
-            _primary_resp_logits_cache = None
 
     def _run_primary_full_resp(
         current_y: torch.Tensor,
@@ -719,12 +679,18 @@ def speculative_inference(
     _ema_agreement = 1.0
     _primary_steps = 0
     _aux_only_steps = 0
-    _agreement_sum = torch.zeros((), dtype=torch.float32, device=device)
-    _agreement_obs = torch.zeros((), dtype=torch.long, device=device)
-    _draft_accepts = torch.zeros((), dtype=torch.long, device=device)
-    _draft_rejects = torch.zeros((), dtype=torch.long, device=device)
-    _stable_commits = torch.zeros((), dtype=torch.long, device=device)
-    _stable_invalidations = torch.zeros((), dtype=torch.long, device=device)
+    # Counters live on the GPU and accumulate across steps; we sync to Python
+    # ints exactly once at the end of the rollout.  This eliminates ~10 per-step
+    # GPU->CPU syncs (each ~0.1-0.5 ms on H100), which dominates the per-NFE
+    # Python overhead for the speculative loop.
+    _agreement_sum_t = torch.zeros((), dtype=torch.float64, device=device)
+    _agreement_obs_t = torch.zeros((), dtype=torch.long, device=device)
+    _safe_reuse_sum_t = torch.zeros((), dtype=torch.float64, device=device)
+    _safe_reuse_obs_t = torch.zeros((), dtype=torch.long, device=device)
+    _draft_accepts_t = torch.zeros((), dtype=torch.long, device=device)
+    _draft_rejects_t = torch.zeros((), dtype=torch.long, device=device)
+    _stable_commits_t = torch.zeros((), dtype=torch.long, device=device)
+    _stable_invalidations_t = torch.zeros((), dtype=torch.long, device=device)
     _drafter_cache_resets = 0
     _draft_microsteps_since_verify = 0
     _force_next_verifier = False
@@ -734,11 +700,6 @@ def speculative_inference(
     # diffusion microstep. Keeping the denominator fixed at T gives credit both
     # for cheaper verifier passes and for early completion.
     _baseline_units = torch.full((B,), float(T), device=device)
-
-    # Wall-time optimization: skip per-step bookkeeping that is only needed
-    # for GRPO reward signals (cache quality F1, K_stable/K_spec occupancy
-    # fractions). These have no effect on the inference output.
-    _cache_bookkeeping_enabled = record_trajectory
 
     # --- Main speculative diffusion loop ---
     for t in range(T, 0, -1):
@@ -842,31 +803,29 @@ def speculative_inference(
                     cfg,
                     prism_scores=q_scores,
                 )
-                accept_counts = frontier_accept_mask.float().sum(dim=-1)
-                reject_counts = frontier_reject_mask.float().sum(dim=-1)
-                _draft_accepts += accept_counts.sum().to(dtype=torch.long)
-                _draft_rejects += reject_counts.sum().to(dtype=torch.long)
+                accept_counts = frontier_accept_mask.sum(dim=-1)
+                reject_counts = frontier_reject_mask.sum(dim=-1)
+                _draft_accepts_t = _draft_accepts_t + accept_counts.sum()
+                _draft_rejects_t = _draft_rejects_t + reject_counts.sum()
                 if trajectory is not None:
-                    trajectory.frontier_sizes.append(frontier_before.float().sum(dim=-1).detach())
+                    trajectory.frontier_sizes.append(frontier_before.sum(dim=-1).detach())
                     trajectory.frontier_accept_counts.append(accept_counts.detach())
                     trajectory.frontier_reject_counts.append(reject_counts.detach())
 
                 if frontier_reject_mask.any():
-                    reject_start = _first_true_index(frontier_reject_mask)
                     resp_tokens = y[:, resp_slice].clone()
                     if cache_mgr is not None:
-                        # Skipped bookkeeping for K_stable invalidation count (wall-time opt).
-                        if _cache_bookkeeping_enabled:
-                            _stable_invalidations += (
-                                cache_mgr.stable.get_cached_mask() & frontier_reject_mask
-                            ).sum().to(dtype=torch.long)
+                        _stable_invalidations_t = _stable_invalidations_t + (
+                            cache_mgr.stable.get_cached_mask() & frontier_reject_mask
+                        ).sum()
                         cache_mgr.invalidate(frontier_reject_mask.float())
 
                     if rejection_action in ("remask", "mask"):
                         resp_tokens[frontier_reject_mask] = mask_id
+                        y = y.clone()
                         y[:, resp_slice] = resp_tokens
                         mask_ind = (resp_tokens == mask_id)
-                        _mark_cache_dirty(reject_start, aux=True, primary=True)
+                        _reset_prefix_caches(aux=True, primary=True)
 
                         if recompute_after_reject:
                             # Policy state should normally be computed on the
@@ -898,6 +857,7 @@ def speculative_inference(
                         # Ablation mode: leave rejected draft tokens in the
                         # sequence but still mark their KV as unusable. They are
                         # excluded from K_stable commits below.
+                        y = y.clone()
                         y[:, resp_slice] = resp_tokens
 
                 rejected_total = float(frontier_reject_mask.float().sum().item())
@@ -906,18 +866,14 @@ def speculative_inference(
                 accept_rate = 1.0 - rejection_rate
                 _ema_agreement = 0.8 * _ema_agreement + 0.2 * accept_rate
                 if rejection_rate > aux_cache_reset_threshold:
-                    _mark_cache_dirty(0, aux=True, primary=True)
+                    _reset_prefix_caches(aux=True, primary=True)
                     _drafter_cache_resets += 1
                     _force_next_verifier = True
 
             # Keep a separate raw agreement diagnostic for safe-reuse analysis.
             if aux_logits is not None:
                 raw_agreement, reuse_state, _ = compute_reuse_signal(
-                    resp_logits,
-                    aux_logits,
-                    cfg,
-                    state=reuse_state,
-                    return_diagnostics=False,
+                    resp_logits, aux_logits, cfg, state=reuse_state
                 )
                 raw_agreement = _fresh_primary_agreement(raw_agreement, primary_fresh_mask)
                 composition_agreement = raw_agreement
@@ -925,10 +881,13 @@ def speculative_inference(
             else:
                 raw_agreement = frontier_accept_mask & primary_fresh_mask
                 active_for_agreement = frontier_before & primary_fresh_mask
-            active_count = active_for_agreement.sum()
-            if int(active_count.item()) > 0:
-                _agreement_sum += raw_agreement[active_for_agreement].float().sum()
-                _agreement_obs += active_count.to(dtype=torch.long)
+            if active_for_agreement.any():
+                _active_count = active_for_agreement.sum()
+                _hit_count = (raw_agreement & active_for_agreement).sum()
+                _agreement_sum_t = _agreement_sum_t + _hit_count.to(torch.float64)
+                _agreement_obs_t = _agreement_obs_t + _active_count
+                _safe_reuse_sum_t = _safe_reuse_sum_t + _hit_count.to(torch.float64)
+                _safe_reuse_obs_t = _safe_reuse_obs_t + _active_count
             if aux_logits is not None and not frontier_before.any() and primary_fresh_mask.any():
                 verifier_agreement = float(raw_agreement[primary_fresh_mask].float().mean().item())
                 _ema_agreement = 0.8 * _ema_agreement + 0.2 * verifier_agreement
@@ -938,10 +897,10 @@ def speculative_inference(
             _draft_microsteps_since_verify = 0
         else:
             _draft_microsteps_since_verify += 1
-        # Skipped bookkeeping for agreement_rates list (wall-time opt): only used
-        # as fallback when _agreement_obs==0; _agreement_sum/_obs path is preferred.
-        if _cache_bookkeeping_enabled:
-            agreement_rates.append(float(agreement.float().mean().item()))
+        # ``agreement_rates`` is only used as a fallback for
+        # trajectory.mean_agreement_rate when the authoritative observation
+        # counter is empty.  Skipping the per-step sync saves a CPU/GPU round
+        # trip every iteration for both eval and GRPO rollouts.
 
         # --- Construct soft-masked state from PRIMARY logits ---
         H_t, confidence, entropy, weighted_embeds = call_soft_mask(
@@ -984,10 +943,7 @@ def speculative_inference(
             # Harmonic mean (F1)
             _cache_f1 = 2.0 * _cached_prec * _recall / (_cached_prec + _recall + 1e-8)  # [B]
             trajectory.cache_quality_f1.append(_cache_f1.detach())
-        # Skipped bookkeeping for cache quality F1 (wall-time opt): only track
-        # _prev_H_t when the GRPO reward needs it.
-        if record_trajectory:
-            _prev_H_t = H_t.detach()
+        _prev_H_t = H_t.detach()
 
         age_feat = None
         last_action_feat = None
@@ -1085,12 +1041,10 @@ def speculative_inference(
                 trajectory.boundary_actions.append(actions["ell_t"].detach())
 
         # --- Count cache thrashing ---
-        # Skipped bookkeeping for thrash counting (wall-time opt): thrash penalty
-        # is only used in GRPO reward; not needed during eval inference.
         thrash = None
-        if cache_mgr is not None and _cache_bookkeeping_enabled:
+        if cache_mgr is not None:
             thrash = cache_mgr.count_thrash(r_t)
-            _stable_invalidations += thrash.sum().to(dtype=torch.long)
+            _stable_invalidations_t = _stable_invalidations_t + thrash.sum().to(_stable_invalidations_t.dtype)
         if record_trajectory and trajectory is not None and thrash is not None:
             trajectory.thrash_counts.append(thrash.detach())
 
@@ -1128,34 +1082,28 @@ def speculative_inference(
             still_masked = (resp_tokens == mask_id)
             no_unmasks = (u_t.sum(dim=-1) == 0) & still_masked.any(dim=-1)
             if no_unmasks.any():
-                best_masked_pos = confidence.masked_fill(~still_masked, float("-inf")).argmax(dim=-1)
-                best_tokens = resp_logits.argmax(dim=-1)
-                batch_idx = no_unmasks.nonzero(as_tuple=True)[0]
-                resp_tokens[batch_idx, best_masked_pos[batch_idx]] = best_tokens[
-                    batch_idx, best_masked_pos[batch_idx]
-                ]
-                fallback_positions[batch_idx, best_masked_pos[batch_idx]] = True
+                for b_idx in no_unmasks.nonzero(as_tuple=True)[0]:
+                    masked_pos = still_masked[b_idx].nonzero(as_tuple=True)[0]
+                    if len(masked_pos) > 0:
+                        best_pos = masked_pos[confidence[b_idx, masked_pos].argmax()]
+                        resp_tokens[b_idx, best_pos] = resp_logits[b_idx, best_pos].argmax()
+                        fallback_positions[b_idx, best_pos] = True
 
         drafted_positions = unmask_positions | fallback_positions
         if not run_primary and drafted_positions.any():
-            draft_frontier.add(drafted_positions, resp_tokens)
+            draft_frontier.add(drafted_positions, resp_tokens, aux_logits)
 
         # ====== Phase 3a: Speculative Frontier / Accept State (K_spec) ======
         # K_spec is the transient frontier of unverified drafted positions.  It
         # accumulates across auxiliary microsteps and is cleared only above when
         # the primary verifier consumes it.
-        # Skipped bookkeeping for K_spec mirror update (wall-time opt): cache_mgr
-        # mirrors draft_frontier.mask for metrics only; DraftFrontier is authoritative.
-        if cache_mgr is not None and _cache_bookkeeping_enabled:
+        if cache_mgr is not None:
             cache_mgr.step_spec(draft_frontier.mask)
 
         # ====== Phase 3b: Stable Cache (K_stable) ======
         # Positions the κ_t head predicts will remain stable across future steps.
         # Accumulated persistently; evicted by r_t (Phase 1 already called invalidate).
-        # Skipped bookkeeping for K_stable commit/age tracking (wall-time opt):
-        # K_stable is not part of the speculative inference path; occupancy metrics
-        # and GRPO cache quality reward only needed when record_trajectory=True.
-        if cache_mgr is not None and _cache_bookkeeping_enabled:
+        if cache_mgr is not None:
             stable_commit_mask = (
                 kappa_t
                 * (1.0 - r_t)
@@ -1167,18 +1115,18 @@ def speculative_inference(
             stable_before = cache_mgr.stable.get_cached_mask().clone()
             cache_mgr.step_stable(stable_commit_mask, r_t)
             newly_stable = stable_commit_mask.bool() & ~stable_before & ~r_t.bool()
-            _stable_commits += newly_stable.sum().to(dtype=torch.long)
+            _stable_commits_t = _stable_commits_t + newly_stable.sum()
 
         # --- Record cached fractions after commit (compute-aware speed bonus) ---
         # spec_cached_fractions: legacy metric name for K_spec frontier occupancy.
         # stable_cached_fractions: learned persistent cache occupancy.
         # cached_fractions:        K_spec ∪ K_stable diagnostic occupancy.
-        # Skipped bookkeeping for cached fraction appends (wall-time opt): only
-        # needed by GRPO reward; zeros reported for eval stable_cache_fraction.
-        if trajectory is not None and cache_mgr is not None and _cache_bookkeeping_enabled:
+        if trajectory is not None and cache_mgr is not None:
             trajectory.spec_cached_fractions.append(cache_mgr.spec_cached_fraction().detach())
             trajectory.stable_cached_fractions.append(cache_mgr.stable_cached_fraction().detach())
             trajectory.cached_fractions.append(cache_mgr.cached_fraction().detach())
+
+        draft_frontier.step_age()
 
         # --- KV dynamics tracker observation (eval diagnostic only) ---
         # Uses primary model all-layer hidden states as a hidden-state proxy for
@@ -1208,37 +1156,43 @@ def speculative_inference(
         if use_positional_cache:
             update_positional_state(pos_state, q_exec=q_exec, changed=changed, cfg=cfg)
 
+        # The full-rollout GRPO path keeps tensor identity stable for
+        # autograd-aware trajectory storage; eval / lightweight stat collection
+        # mutates y in place to skip a [B, P+L_gen] clone every step.
+        if record_trajectory:
+            y = y.clone()
         y[:, resp_slice] = resp_tokens
-        changed_start = _first_true_index(changed.bool())
-        _mark_cache_dirty(changed_start, aux=True, primary=True)
 
     # --- Record final state ---
     if trajectory is not None:
-        agreement_obs = int(_agreement_obs.item())
-        stable_commits = int(_stable_commits.item())
-        stable_invalidations = int(_stable_invalidations.item())
-        draft_accepts = int(_draft_accepts.item())
-        draft_rejects = int(_draft_rejects.item())
+        # Sync GPU-resident counters once now that the loop is over.
+        _agreement_sum = float(_agreement_sum_t.item())
+        _agreement_obs = int(_agreement_obs_t.item())
+        _safe_reuse_sum = float(_safe_reuse_sum_t.item())
+        _safe_reuse_obs = int(_safe_reuse_obs_t.item())
+        _draft_accepts = int(_draft_accepts_t.item())
+        _draft_rejects = int(_draft_rejects_t.item())
+        _stable_commits = int(_stable_commits_t.item())
+        _stable_invalidations = int(_stable_invalidations_t.item())
+
         trajectory.final_tokens = y[:, resp_slice].detach()
         if trajectory.completion_step is None:
             trajectory.completion_step = torch.full((B,), T, device=device)
-        if agreement_obs > 0:
-            trajectory.mean_agreement_rate = float(_agreement_sum.item()) / max(agreement_obs, 1)
-        elif agreement_rates:
-            trajectory.mean_agreement_rate = sum(agreement_rates) / len(agreement_rates)
-        trajectory.total_stable_commits = stable_commits
-        trajectory.total_stable_invalidations = stable_invalidations
-        trajectory.total_cache_hits = stable_commits
-        trajectory.total_cache_misses = stable_invalidations
-        trajectory.draft_accepts = draft_accepts
-        trajectory.draft_rejects = draft_rejects
-        trajectory.agreement_observations = agreement_obs
+        if _agreement_obs > 0:
+            trajectory.mean_agreement_rate = _agreement_sum / max(_agreement_obs, 1)
+        trajectory.total_stable_commits = _stable_commits
+        trajectory.total_stable_invalidations = _stable_invalidations
+        trajectory.total_cache_hits = _stable_commits
+        trajectory.total_cache_misses = _stable_invalidations
+        trajectory.draft_accepts = _draft_accepts
+        trajectory.draft_rejects = _draft_rejects
+        trajectory.agreement_observations = _agreement_obs
         trajectory.primary_steps = _primary_steps
         trajectory.aux_only_steps = _aux_only_steps
         trajectory.drafter_cache_resets = _drafter_cache_resets
-        frontier_total = float(draft_accepts + draft_rejects)
-        trajectory.frontier_accept_rate = float(draft_accepts / max(frontier_total, 1.0))
-        trajectory.frontier_reject_rate = float(draft_rejects / max(frontier_total, 1.0))
+        frontier_total = float(_draft_accepts + _draft_rejects)
+        trajectory.frontier_accept_rate = float(_draft_accepts / max(frontier_total, 1.0))
+        trajectory.frontier_reject_rate = float(_draft_rejects / max(frontier_total, 1.0))
         if trajectory.frontier_sizes:
             trajectory.mean_frontier_size = float(
                 torch.stack([x.float().mean() for x in trajectory.frontier_sizes]).mean().item()

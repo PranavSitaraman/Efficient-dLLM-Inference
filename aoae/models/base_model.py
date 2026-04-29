@@ -383,8 +383,6 @@ class LLaDABaseModel(nn.Module):
         # vLLM config context manager (kept alive for dInfer forward passes)
         self._vllm_config_ctx = None
         self._vllm_config = None
-        self._attention_mask_cache = {}
-        self._query_attention_mask_cache = {}
 
         _INIT = {
             "hf": self._init_hf,
@@ -795,68 +793,41 @@ class LLaDABaseModel(nn.Module):
 
         Returns a float mask for HF backends (0.0=attend, -inf=block) or a
         boolean mask for dInfer/SDPA backends (True=attend, False=block).
-        """
-        tp_size = int(self.cfg.get("hardware", {}).get("tp_size", 1) or 1)
-        use_cache = not (
-            self._backend in ("dinfer", "soft_moe")
-            and tp_size > 1
-        )
 
-        cache = getattr(self, "_attention_mask_cache", None)
-        if cache is None:
-            cache = {}
-            self._attention_mask_cache = cache
+        The 2D (L, L) base mask is cached on the instance because it is a pure
+        function of (backend, seq_len, block_length, device) and gets rebuilt
+        on every forward.  ``expand`` produces a stride-0 view onto the cached
+        tensor — no copy, no extra memory — so the live attention mask
+        delivered to attention kernels is always a fresh broadcast view.
+        """
+        cache = self.__dict__.setdefault("_aoae_attn_mask_2d_cache", {})
         key = (
             str(self._backend),
-            batch_size,
-            seq_len,
+            int(seq_len),
             int(block_length),
             device.type,
-            device.index,
+            device.index if device.index is not None else -1,
         )
-        if use_cache:
-            cached = cache.get(key)
-            if cached is not None:
-                # Clone so vLLM's TP kernels can't corrupt the cached base tensor
-                # via in-place writes to the returned view.
-                return cached.expand(batch_size, -1, -1, -1).clone()
-
-        if block_length > 0:
-            pos = torch.arange(seq_len, device=device)
-            block_ends = (pos // block_length + 1) * block_length  # [L]
-            col = pos.unsqueeze(0)       # [1, L]
-            ends = block_ends.unsqueeze(1)  # [L, 1]
-            if self._backend in ("dinfer", "soft_moe"):
-                # dInfer SDPA converts to .bool() — True=attend, False=block
-                base = (col < ends).unsqueeze(0).unsqueeze(0)  # [1, 1, L, L]
-                if use_cache:
-                    cache[key] = base
-                return base.expand(batch_size, -1, -1, -1).clone()
+        base = cache.get(key)
+        if base is None:
+            if block_length > 0:
+                pos = torch.arange(seq_len, device=device)
+                block_ends = (pos // block_length + 1) * block_length
+                col = pos.unsqueeze(0)
+                ends = block_ends.unsqueeze(1)
+                if self._backend in ("dinfer", "soft_moe"):
+                    base = (col < ends).contiguous()
+                else:
+                    base = torch.where(col < ends, 0.0, float("-inf")).to(
+                        dtype=self.dtype,
+                    ).contiguous()
             else:
-                base = torch.where(col < ends, 0.0, float("-inf")).to(dtype=self.dtype)
-                base = base.unsqueeze(0).unsqueeze(0)  # [1, 1, L, L]
-                if use_cache:
-                    cache[key] = base
-                return base.expand(batch_size, -1, -1, -1).clone()
-        else:
-            if self._backend in ("dinfer", "soft_moe"):
-                mask = torch.ones(
-                    (batch_size, 1, seq_len, seq_len),
-                    dtype=torch.bool,
-                    device=device,
-                )
-                if use_cache:
-                    cache[key] = mask
-                return mask.clone()
-            else:
-                mask = torch.zeros(
-                    (batch_size, 1, seq_len, seq_len),
-                    dtype=self.dtype,
-                    device=device,
-                )
-                if use_cache:
-                    cache[key] = mask
-                return mask.clone()
+                if self._backend in ("dinfer", "soft_moe"):
+                    base = torch.ones((seq_len, seq_len), dtype=torch.bool, device=device)
+                else:
+                    base = torch.zeros((seq_len, seq_len), dtype=self.dtype, device=device)
+            cache[key] = base
+        return base.unsqueeze(0).unsqueeze(0).expand(batch_size, 1, -1, -1)
 
     def _make_query_attention_mask(
         self,
@@ -867,71 +838,48 @@ class LLaDABaseModel(nn.Module):
         device: torch.device,
         block_length: int = 0,
     ) -> torch.Tensor:
-        """Build attention mask for a query span against a cached full prefix."""
+        """Build attention mask for a query span against a cached full prefix.
+
+        Cached on the same key set as ``_make_attention_mask`` plus the query
+        span.  The cached 2D base is broadcast (stride-0 view) on each call;
+        the kernels never see a stale or shared writable buffer.
+        """
         if not (0 <= query_start < query_end <= full_seq_len):
             raise ValueError(
                 f"Invalid query range [{query_start}, {query_end}) for full_seq_len={full_seq_len}."
             )
 
-        tp_size = int(self.cfg.get("hardware", {}).get("tp_size", 1) or 1)
-        use_cache = not (
-            self._backend in ("dinfer", "soft_moe")
-            and tp_size > 1
-        )
-
-        cache = getattr(self, "_query_attention_mask_cache", None)
-        if cache is None:
-            cache = {}
-            self._query_attention_mask_cache = cache
+        q_len = query_end - query_start
+        cache = self.__dict__.setdefault("_aoae_query_mask_2d_cache", {})
         key = (
             str(self._backend),
-            batch_size,
-            full_seq_len,
+            int(full_seq_len),
             int(query_start),
             int(query_end),
             int(block_length),
             device.type,
-            device.index,
+            device.index if device.index is not None else -1,
         )
-        if use_cache:
-            cached = cache.get(key)
-            if cached is not None:
-                return cached.expand(batch_size, -1, -1, -1).clone()
-
-        q_len = query_end - query_start
-        if block_length > 0:
-            query_pos = torch.arange(query_start, query_end, device=device)
-            block_ends = (query_pos // block_length + 1) * block_length
-            cols = torch.arange(full_seq_len, device=device).unsqueeze(0)
-            ends = block_ends.unsqueeze(1)
-            if self._backend in ("dinfer", "soft_moe"):
-                base = (cols < ends).unsqueeze(0).unsqueeze(0)  # [1, 1, q, L]
-                if use_cache:
-                    cache[key] = base
-                return base.expand(batch_size, -1, -1, -1).clone()
-            base = torch.where(cols < ends, 0.0, float("-inf")).to(dtype=self.dtype)
-            base = base.unsqueeze(0).unsqueeze(0)  # [1, 1, q, L]
-            if use_cache:
-                cache[key] = base
-            return base.expand(batch_size, -1, -1, -1).clone()
-
-        if self._backend in ("dinfer", "soft_moe"):
-            mask = torch.ones(
-                (batch_size, 1, q_len, full_seq_len),
-                dtype=torch.bool,
-                device=device,
-            )
-            if use_cache:
-                cache[key] = mask
-            return mask.clone()
-        mask = torch.zeros(
-            (batch_size, 1, q_len, full_seq_len),
-            dtype=self.dtype,
-            device=device,
-        )
-        if use_cache:
-            cache[key] = mask
-        return mask.clone()
+        base = cache.get(key)
+        if base is None:
+            if block_length > 0:
+                query_pos = torch.arange(query_start, query_end, device=device)
+                block_ends = (query_pos // block_length + 1) * block_length
+                cols = torch.arange(full_seq_len, device=device).unsqueeze(0)
+                ends = block_ends.unsqueeze(1)
+                if self._backend in ("dinfer", "soft_moe"):
+                    base = (cols < ends).contiguous()
+                else:
+                    base = torch.where(cols < ends, 0.0, float("-inf")).to(
+                        dtype=self.dtype,
+                    ).contiguous()
+            else:
+                if self._backend in ("dinfer", "soft_moe"):
+                    base = torch.ones((q_len, full_seq_len), dtype=torch.bool, device=device)
+                else:
+                    base = torch.zeros((q_len, full_seq_len), dtype=self.dtype, device=device)
+            cache[key] = base
+        return base.unsqueeze(0).unsqueeze(0).expand(batch_size, 1, -1, -1)
 
     def _forward_dinfer_outputs(self, **kwargs):
         """Direct dInfer forward preserving the active runtime context."""
@@ -1118,7 +1066,6 @@ class LLaDABaseModel(nn.Module):
             raise NotImplementedError("forward_with_cache is only supported for dInfer-backed models.")
         if input_ids.device != self.device:
             input_ids = input_ids.to(self.device)
-        input_ids = input_ids.contiguous()
         batch_size, seq_len = input_ids.shape
         attention_mask = self._make_attention_mask(
             batch_size, seq_len, input_ids.device, block_length=self._block_length,
@@ -1152,14 +1099,13 @@ class LLaDABaseModel(nn.Module):
             past_key_values.consolidate()
         if full_input_ids.device != self.device:
             full_input_ids = full_input_ids.to(self.device)
-        full_input_ids = full_input_ids.contiguous()
         self._aoae_last_cache_replace_fell_back = False
         self._aoae_last_full_recompute_logits = None
 
         start = int(replace_slice.start)
         end = int(replace_slice.stop)
         batch_size, full_seq_len = full_input_ids.shape
-        query_ids = full_input_ids[:, start:end].contiguous()
+        query_ids = full_input_ids[:, start:end]
         attention_mask = self._make_query_attention_mask(
             batch_size,
             full_seq_len,

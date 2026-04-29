@@ -25,119 +25,6 @@ import numpy as np
 # Ops used by the unquantized fused-MoE code paths exercised in this repo.
 _MOE_REQUIRED_OPS = ("moe_align_block_size", "moe_sum")
 
-# ---------------------------------------------------------------------------
-# Triton moe_align_block_size — inlined from dInfer/tools/fuse_moe.py.
-# Only depends on torch + triton; no vLLM side-effects at import time.
-# Based on: https://github.com/sgl-project/sglang/commit/ba5112ff691d791a9e38c6c71f59324a5fcb49d0
-# ---------------------------------------------------------------------------
-_triton_moe_align_fn = None  # cached after first successful build
-
-
-def _build_triton_moe_align() -> Optional[object]:
-    """Build and return the Triton moe_align_block_size_triton function.
-
-    Returns None if triton is not importable.  Result is cached in
-    _triton_moe_align_fn so JIT compilation only happens once.
-    """
-    global _triton_moe_align_fn
-    if _triton_moe_align_fn is not None:
-        return _triton_moe_align_fn
-    try:
-        import triton
-        import triton.language as tl
-    except ImportError:
-        return None
-
-    def _ceil_div(a, b):
-        return (a + b - 1) // b
-
-    @triton.jit
-    def _stage1(topk_ids_ptr, tokens_cnts_ptr, num_experts: tl.constexpr,
-                numel: tl.constexpr, tokens_per_thread: tl.constexpr):
-        pid = tl.program_id(0)
-        start_idx = pid * tokens_per_thread
-        off_c = (pid + 1) * num_experts
-        for i in range(tokens_per_thread):
-            if start_idx + i < numel:
-                idx = tl.load(topk_ids_ptr + start_idx + i)
-                cnt = tl.load(tokens_cnts_ptr + off_c + idx)
-                tl.store(tokens_cnts_ptr + off_c + idx, cnt + 1)
-
-    @triton.jit
-    def _stage2(tokens_cnts_ptr, num_experts: tl.constexpr):
-        pid = tl.program_id(0)
-        last = 0
-        for i in range(1, num_experts + 1):
-            cnt = tl.load(tokens_cnts_ptr + i * num_experts + pid)
-            last = last + cnt
-            tl.store(tokens_cnts_ptr + i * num_experts + pid, last)
-
-    @triton.jit
-    def _stage3(total_ptr, tokens_cnts_ptr, cumsum_ptr,
-                num_experts: tl.constexpr, block_size: tl.constexpr):
-        last = 0
-        off_cnt = num_experts * num_experts
-        for i in range(1, num_experts + 1):
-            cnt = tl.load(tokens_cnts_ptr + off_cnt + i - 1)
-            last = last + tl.cdiv(cnt, block_size) * block_size
-            tl.store(cumsum_ptr + i, last)
-        tl.store(total_ptr, last)
-
-    @triton.jit
-    def _stage4(topk_ids_ptr, sorted_ids_ptr, expert_ids_ptr,
-                tokens_cnts_ptr, cumsum_ptr,
-                num_experts: tl.constexpr, block_size: tl.constexpr,
-                numel: tl.constexpr, tokens_per_thread: tl.constexpr):
-        pid = tl.program_id(0)
-        start_idx = tl.load(cumsum_ptr + pid)
-        end_idx = tl.load(cumsum_ptr + pid + 1)
-        for i in range(start_idx, end_idx, block_size):
-            tl.store(expert_ids_ptr + i // block_size, pid)
-        start_idx = pid * tokens_per_thread
-        off_t = pid * num_experts
-        for i in range(start_idx,
-                       tl.minimum(start_idx + tokens_per_thread, numel)):
-            eid = tl.load(topk_ids_ptr + i)
-            cnt = tl.load(tokens_cnts_ptr + off_t + eid)
-            tl.store(sorted_ids_ptr + cnt + tl.load(cumsum_ptr + eid), i)
-            tl.store(tokens_cnts_ptr + off_t + eid, cnt + 1)
-
-    def _moe_align_block_size_triton(
-        topk_ids: torch.Tensor,
-        num_experts: int,
-        block_size: int,
-        sorted_token_ids: torch.Tensor,
-        expert_ids: torch.Tensor,
-        num_tokens_post_pad: torch.Tensor,
-    ) -> None:
-        numel = topk_ids.numel()
-        # Pre-fill padding sentinels before Triton writes the live positions.
-        # sorted_token_ids padding positions must hold `numel` (the sentinel
-        # that tells the fused-MoE kernel to skip that slot).
-        # expert_ids padding positions beyond num_tokens_post_pad//block_size
-        # are never read by the fused-MoE Triton kernel, but vLLM's Python
-        # wrapper applies expert_map[expert_ids] to the FULL tensor before
-        # the kernel runs — uninitialized values here cause IndexKernel OOB.
-        sorted_token_ids.fill_(numel)
-        expert_ids.zero_()
-        grid = (num_experts,)
-        tokens_cnts = torch.zeros(
-            (num_experts + 1, num_experts), dtype=torch.int32,
-            device=topk_ids.device)
-        cumsum = torch.zeros(
-            (num_experts + 1,), dtype=torch.int32, device=topk_ids.device)
-        tpt = _ceil_div(numel, num_experts)
-        _stage1[grid](topk_ids, tokens_cnts, num_experts, numel, tpt)
-        _stage2[grid](tokens_cnts, num_experts)
-        _stage3[(1,)](num_tokens_post_pad, tokens_cnts, cumsum,
-                      num_experts, block_size)
-        _stage4[grid](topk_ids, sorted_token_ids, expert_ids,
-                      tokens_cnts, cumsum, num_experts, block_size,
-                      numel, tpt)
-
-    _triton_moe_align_fn = _moe_align_block_size_triton
-    return _triton_moe_align_fn
-
 
 def _pkg_version(name: str) -> Optional[str]:
     try:
@@ -404,18 +291,9 @@ def ensure_vllm_moe_runtime(
         elif not getattr(vllm_ops, "_aoae_moe_align_external_fallback", False):
             try:
                 # Prefer a Triton implementation over the Python fallback.
-                # Try in order: (1) inlined Triton kernels (no vLLM deps),
-                # (2) vLLM's own Triton module, (3) dInfer fuse_moe.py.
-                triton_fn = _build_triton_moe_align()
-                if triton_fn is None:
-                    triton_fn = _load_vllm_triton_moe_align()
-                if triton_fn is None:
-                    fuse_moe_mod = _load_external_dinfer_fuse_moe()
-                    if fuse_moe_mod is not None:
-                        triton_fn = getattr(fuse_moe_mod, "moe_align_block_size_triton", None)
-                if triton_fn is None:
-                    raise RuntimeError("no Triton moe_align_block_size implementation importable")
-                vllm_ops.moe_align_block_size = triton_fn
+                if _load_vllm_triton_moe_align() is None and _load_external_dinfer_fuse_moe() is None:
+                    raise RuntimeError("no Triton implementation importable")
+                vllm_ops.moe_align_block_size = _external_triton_moe_align_block_size
                 vllm_ops._aoae_moe_align_external_fallback = True
                 report["patched_fast_fallback_ops"].append("moe_align_block_size")
                 patched = True
@@ -424,12 +302,7 @@ def ensure_vllm_moe_runtime(
                         "[Runtime] WARNING: torch.ops._moe_C.moe_align_block_size missing; "
                         "using Triton fallback."
                     )
-            except Exception as _triton_exc:
-                if verbose:
-                    print(
-                        f"[Runtime] WARNING: Triton moe_align_block_size fallback failed "
-                        f"({_triton_exc!r}); will try Python fallback."
-                    )
+            except Exception:
                 patched = False
         if not patched:
             if getattr(vllm_ops, "_aoae_moe_align_fallback", False):

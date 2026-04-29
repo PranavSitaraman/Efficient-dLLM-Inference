@@ -48,8 +48,6 @@ def compute_reuse_signal(
     auxiliary_logits: torch.Tensor,
     cfg: dict,
     state: Optional[Dict[str, torch.Tensor]] = None,
-    *,
-    return_diagnostics: bool = True,
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], Dict[str, float]]:
     """
     Compute per-position safe-to-reuse signal.
@@ -69,17 +67,15 @@ def compute_reuse_signal(
         pri_tok = primary_logits.argmax(dim=-1)
         aux_tok = auxiliary_logits.argmax(dim=-1)
         match = (pri_tok == aux_tok)
-        diagnostics = {}
-        if return_diagnostics:
-            match_rate = float(match.float().mean().item())
-            diagnostics = {
-                "mean_match": match_rate,
-                "mean_safe_reuse": match_rate,
-                "mean_js_divergence": 0.0,
-                "mean_min_conf": 0.0,
-                "mean_min_margin": 0.0,
-                "mean_streak": 0.0,
-            }
+        match_rate = float(match.float().mean().item())
+        diagnostics = {
+            "mean_match": match_rate,
+            "mean_safe_reuse": match_rate,
+            "mean_js_divergence": 0.0,
+            "mean_min_conf": 0.0,
+            "mean_min_margin": 0.0,
+            "mean_streak": 0.0,
+        }
         new_state = state if state is not None else {}
         return match.float(), new_state, diagnostics
 
@@ -121,14 +117,13 @@ def compute_reuse_signal(
             "min_margin, js_divergence, temporal_confidence."
         )
 
-    diagnostics = {}
-    if return_diagnostics:
-        diagnostics = {
-            "mean_match": float(match.float().mean().item()),
-            "mean_safe_reuse": float(safe.float().mean().item()),
-            "mean_js_divergence": float(js.mean().item()),
-            "mean_min_conf": float(torch.minimum(pri_conf, aux_conf).mean().item()),
-            "mean_min_margin": float(torch.minimum(pri_margin, aux_margin).mean().item()),
-            "mean_streak": float(match_streak.float().mean().item()),
-        }
+    diagnostics = {
+        "mean_match": float(match.float().mean().item()),
+        "mean_safe_reuse": float(safe.float().mean().item()),
+        "mean_js_divergence": float(js.mean().item()),
+        "mean_min_conf": float(torch.minimum(pri_conf, aux_conf).mean().item()),
+        "mean_min_margin": float(torch.minimum(pri_margin, aux_margin).mean().item()),
+        "mean_streak": float(match_streak.float().mean().item()),
+    }
     return safe.float(), {"match_streak": match_streak}, diagnostics
+

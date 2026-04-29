@@ -73,3 +73,4 @@ def test_paper_config_enables_full_aoae_stack():
     assert cfg["inference"]["verifier"]["recompute_after_reject"] is True
     assert cfg["inference"]["drafter"]["confidence_threshold"] == 0.7
     assert cfg["inference"]["drafter"]["aux_compute_ratio"] == 0.35
+    assert cfg["hardware"]["tp_size"] == 1
