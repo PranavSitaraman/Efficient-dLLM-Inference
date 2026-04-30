@@ -333,6 +333,28 @@ evaluation:
           "inference.block_speculative.verifier_mode": "primary"
           "inference.block_speculative.rejection_action": "correct_confident"
           "inference.disable_remask": false
+      # AOAE-LLaDA-SQ any-order: same self-speculative idea as aoae_llada_sq
+      # but on the any-order (full-sequence) schedule.  lossless_verification
+      # routes every primary_forward through auxiliary_forward, so both
+      # drafter and verifier use hard routing on the same MoE — zero routing
+      # toggle cost between calls.  Drafter applies the s-mode threshold
+      # (confidence_threshold=0.5).  The any-order verifier validates by
+      # argmax_match (q-mode-style conservative acceptance); it does not
+      # expose the q-mode T2T edit rule, which is a known mapping gap vs the
+      # block-local aoae_llada_sq variant.
+      - name: "aoae_llada_sq_anyorder"
+        policy_temperature: 1.0
+        overrides:
+          "base_model.lossless_verification": true
+          "inference.speculative_schedule": "aoae"
+          "inference.drafter.confidence_threshold": 0.5
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 8
+          "inference.verifier_schedule.max_draft_microsteps": 3
+          "inference.verifier.acceptance_mode": "argmax_match"
+          "inference.primary_agree_threshold": 0.92
+          "inference.max_unmask_fraction_per_step": 0.125
+          "inference.disable_remask": false
       # - name: "speed_ceiling"
       #   policy_temperature: 1.5
       #   overrides:
