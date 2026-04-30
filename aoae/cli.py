@@ -320,6 +320,7 @@ def add_eval_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--run_name", type=str, default=None, help="Override logging.run_name.")
     parser.add_argument("--output_dir", type=str, default=None, help="Override logging.output_dir.")
     parser.add_argument("--lossless_verification", action="store_true", help="Set base_model.lossless_verification=true: primary_forward uses hard routing (same as aux), so every draft is accepted. Sanity-check that the speculative path recovers baseline accuracy.")
+    parser.add_argument("--generation_mode_filter", type=str, default=None, choices=["all", "any_order", "block"], help="Override evaluation.generation_mode_filter: 'any_order' runs only any-order baselines+sweep points, 'block' runs only block-diffusion ones, 'all' runs everything.")
 
 
 def apply_eval_overrides(cfg: dict, args: argparse.Namespace) -> dict:
@@ -373,6 +374,8 @@ def apply_eval_overrides(cfg: dict, args: argparse.Namespace) -> dict:
         lc["output_dir"] = args.output_dir
     if getattr(args, "lossless_verification", False):
         bc["lossless_verification"] = True
+    if getattr(args, "generation_mode_filter", None) is not None:
+        cfg.setdefault("evaluation", {})["generation_mode_filter"] = args.generation_mode_filter
 
     return cfg
 

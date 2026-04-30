@@ -324,11 +324,24 @@ def run_block_frontier_speculative_inference(
             "requires base_model.lossless_verification=true."
         )
     aux_compute_ratio = float(ic.get("drafter", {}).get("aux_compute_ratio", 0.35))
-    primary_compute_ratio = float(
-        block_cfg.get(
-            "verifier_compute_ratio",
-            1.0 if cfg.get("base_model", {}).get("lossless_verification", False) else 2.0,
+    verifier_routing = str(block_cfg.get("verifier_routing", "primary")).strip().lower()
+    if verifier_routing not in {"primary", "auxiliary"}:
+        raise ValueError(
+            f"Unsupported inference.block_speculative.verifier_routing={verifier_routing!r}; "
+            "expected 'primary' or 'auxiliary'."
         )
+    # When the verifier uses the same hard routing as the drafter, the per-call
+    # cost is identical to the drafter and there is no routing toggle between
+    # consecutive forwards (set_hard_routing short-circuits when already hard).
+    if verifier_routing == "auxiliary":
+        default_verifier_ratio = aux_compute_ratio
+    else:
+        default_verifier_ratio = 1.0 if cfg.get("base_model", {}).get("lossless_verification", False) else 2.0
+    primary_compute_ratio = float(
+        block_cfg.get("verifier_compute_ratio", default_verifier_ratio)
+    )
+    verifier_logits_fn = (
+        _auxiliary_block_logits if verifier_routing == "auxiliary" else _primary_block_logits
     )
 
     B, P = prompt_ids.shape
@@ -451,7 +464,7 @@ def run_block_frontier_speculative_inference(
             # One verifier pass validates every drafted token in the block and
             # may also advance remaining masks under the normal quality rule.
             prefix_ids = y[:, :blk_end]
-            pri_logits = _primary_block_logits(dual_model, prefix_ids, blk_slice)
+            pri_logits = verifier_logits_fn(dual_model, prefix_ids, blk_slice)
             primary_steps += 1
             self_accept_streak = 0
             verified_positions += B * blk_width
@@ -510,7 +523,7 @@ def run_block_frontier_speculative_inference(
                 pri_logits = _auxiliary_block_logits(dual_model, prefix_ids, blk_slice)
                 aux_steps += 1
             else:
-                pri_logits = _primary_block_logits(dual_model, prefix_ids, blk_slice)
+                pri_logits = verifier_logits_fn(dual_model, prefix_ids, blk_slice)
                 primary_steps += 1
                 verified_positions += B * blk_width
                 full_equiv_positions += B * blk_width
@@ -547,6 +560,7 @@ def run_block_frontier_speculative_inference(
         "self_accept_events": self_accept_events,
         "verifier_skips": verifier_skips,
         "verifier_mode": verifier_mode,
+        "verifier_routing": verifier_routing,
         "mean_frontier_size": float(sum(frontier_sizes) / max(len(frontier_sizes), 1)),
         "mean_agreement": float(sum(verifier_rates) / max(len(verifier_rates), 1)),
         "agreement_observations": total_frontier,

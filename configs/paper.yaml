@@ -195,9 +195,16 @@ evaluation:
   debug_logging: false      # set true to print first 3 decoded samples per method
   save_predictions: true    # save eval_predictions.json for post-hoc analysis
   max_saved_predictions: 50
+  # "all" runs every method below; set to "any_order" or "block" to run only
+  # methods belonging to that generation paradigm (for per-track figures).
+  generation_mode_filter: "all"
   baseline_methods:
+    # block-diffusion track
     - "llada21_speed_mode"
     - "llada21_quality_mode"
+    # any-order track
+    - "llada21_speed_anyorder"
+    - "llada21_quality_anyorder"
     - "fast_dllm"
   # Production AOAE Pareto frontier: operating points that span the
   # speed/quality plane.
@@ -303,6 +310,29 @@ evaluation:
           "inference.disable_remask": true
           "inference.drafter.fast_path": true
           "inference.positional_cache.enabled": false
+      # AOAE-LLaDA-SQ: same LLaDA 2.1 model, hard routing for both passes.
+      # Drafter applies the s-mode rule (tau=0.5, no T2T edits); verifier
+      # applies the q-mode rule (tau=0.7, edit=0.5).  Because both forwards
+      # use auxiliary_forward, set_hard_routing short-circuits between calls
+      # and there is no MoE-routing toggle cost.  Thresholds match the
+      # llada21_speed_mode / llada21_quality_mode baselines exactly.
+      - name: "aoae_llada_sq"
+        policy_temperature: 1.0
+        overrides:
+          "inference.speculative_schedule": "aoae_block"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 24
+          "inference.verifier_schedule.max_draft_microsteps": 3
+          "inference.block_speculative.verifier_routing": "auxiliary"
+          "inference.block_speculative.draft_threshold": 0.5
+          "inference.block_speculative.draft_editing_threshold": 0.0
+          "inference.block_speculative.enable_draft_editing": false
+          "inference.block_speculative.verifier_threshold": 0.7
+          "inference.block_speculative.verifier_editing_threshold": 0.5
+          "inference.block_speculative.max_verifier_steps_per_block": 16
+          "inference.block_speculative.verifier_mode": "primary"
+          "inference.block_speculative.rejection_action": "correct_confident"
+          "inference.disable_remask": false
       # - name: "speed_ceiling"
       #   policy_temperature: 1.5
       #   overrides:

@@ -133,6 +133,7 @@ class EvalResult:
     frontier_reject_rate: float = 0.0
     drafter_cache_resets: float = 0.0
     effective_flops: float = 0.0
+    generation_mode: str = ""  # "any_order" | "block" | ""
 
 
 _DEFAULT_BASELINE_METHODS = [
@@ -183,6 +184,23 @@ _BASELINE_TITLES = {
     "fast_dllm": "Baseline: Fast-dLLM (Wu et al. 2025)",
     "llada21_speed_mode": "Baseline: LLaDA2.1 Speed Mode (threshold=0.5, edit=0.0, block diffusion)",
     "llada21_quality_mode": "Baseline: LLaDA2.1 Quality Mode (threshold=0.7, edit=0.5, block diffusion)",
+    "llada21_speed_anyorder": "Baseline: LLaDA2.1 Speed Mode (threshold=0.5, edit=0.0, any-order)",
+    "llada21_quality_anyorder": "Baseline: LLaDA2.1 Quality Mode (threshold=0.7, edit=0.5, any-order)",
+}
+
+# Maps baseline method names to their generation paradigm for filtering.
+_BASELINE_GENERATION_MODES: Dict[str, str] = {
+    "uniform": "any_order",
+    "confidence": "any_order",
+    "confidence_s_mode": "any_order",
+    "confidence_q_mode": "any_order",
+    "fast_dllm": "any_order",
+    "llada21_speed_anyorder": "any_order",
+    "llada21_quality_anyorder": "any_order",
+    "block_smode": "block",
+    "block_smode_mbe": "block",
+    "llada21_speed_mode": "block",
+    "llada21_quality_mode": "block",
 }
 
 
@@ -197,9 +215,9 @@ def _get_prediction_save_limit(cfg: Dict[str, Any]) -> int:
 
 
 def _llada21_mode_for_method(method: str) -> Optional[str]:
-    if method == "llada21_speed_mode":
+    if method in ("llada21_speed_mode", "llada21_speed_anyorder"):
         return "speed"
-    if method == "llada21_quality_mode":
+    if method in ("llada21_quality_mode", "llada21_quality_anyorder"):
         return "quality"
     return None
 
@@ -305,8 +323,13 @@ def _save_prediction_artifact(
 def _get_baseline_methods(cfg: Dict[str, Any]) -> List[str]:
     methods = cfg.get("evaluation", {}).get("baseline_methods")
     if methods is None:
-        return list(_DEFAULT_BASELINE_METHODS)
-    return [str(method) for method in methods]
+        methods = list(_DEFAULT_BASELINE_METHODS)
+    else:
+        methods = [str(m) for m in methods]
+    mode_filter = cfg.get("evaluation", {}).get("generation_mode_filter", "all")
+    if mode_filter == "all":
+        return methods
+    return [m for m in methods if _BASELINE_GENERATION_MODES.get(m, "any_order") == mode_filter]
 
 
 def _run_selected_baselines(
@@ -453,7 +476,23 @@ def _normalize_speculative_eval_point(
                 )
         overrides[target] = value
 
-    return {"name": name, "policy_temperature": policy_temperature, "overrides": overrides}
+    # Derive generation_mode: explicit field wins, otherwise infer from schedule override.
+    explicit_mode = raw_point.get("generation_mode") if isinstance(raw_point, dict) else None
+    if explicit_mode:
+        point_generation_mode = str(explicit_mode)
+    else:
+        sched = overrides.get(
+            "inference.speculative_schedule",
+            cfg.get("inference", {}).get("speculative_schedule", "aoae"),
+        )
+        point_generation_mode = "any_order" if str(sched).strip().lower() == "aoae" else "block"
+
+    return {
+        "name": name,
+        "policy_temperature": policy_temperature,
+        "overrides": overrides,
+        "generation_mode": point_generation_mode,
+    }
 
 
 def _build_speculative_eval_points(
@@ -468,10 +507,14 @@ def _build_speculative_eval_points(
         points = sweep_cfg.get("points", [])
         if not points:
             raise ValueError("evaluation.speculative_sweep.enabled=true but no points were provided.")
-        return [
+        normalized = [
             _normalize_speculative_eval_point(cfg, point, idx)
             for idx, point in enumerate(points)
         ]
+        mode_filter = cfg.get("evaluation", {}).get("generation_mode_filter", "all")
+        if mode_filter != "all":
+            normalized = [p for p in normalized if p.get("generation_mode", "any_order") == mode_filter]
+        return normalized
 
     return _temperature_only_speculative_points(_DEFAULT_SPECULATIVE_POLICY_TEMPERATURES)
 
@@ -844,6 +887,20 @@ def evaluate_baseline(
                     base_model, prompt_ids, cfg, mode="quality",
                     stats=decode_stats,
                 )
+            elif method == "llada21_speed_anyorder":
+                s = resolve_llada21_official_settings(cfg, mode="speed")
+                output_ids = confidence_threshold_decode(
+                    base_model, prompt_ids, cfg,
+                    tau_mask=s["threshold"], tau_edit=s["editing_threshold"],
+                    enable_t2t=True, stats=decode_stats,
+                )
+            elif method == "llada21_quality_anyorder":
+                s = resolve_llada21_official_settings(cfg, mode="quality")
+                output_ids = confidence_threshold_decode(
+                    base_model, prompt_ids, cfg,
+                    tau_mask=s["threshold"], tau_edit=s["editing_threshold"],
+                    enable_t2t=True, stats=decode_stats,
+                )
             elif method == "block_smode":
                 output_ids = block_smode_decode(
                     base_model, prompt_ids, cfg,
@@ -951,6 +1008,7 @@ def evaluate_baseline(
         scoring_rule=scoring_rule,
         truncation_count=total_truncated,
         truncation_rate=total_truncated / max(total, 1),
+        generation_mode=_BASELINE_GENERATION_MODES.get(method, "any_order"),
     )
 
 
@@ -973,6 +1031,7 @@ def evaluate_speculative(
     device = dual_model.device
     T = cfg["inference"]["steps"]
     schedule = str(cfg.get("inference", {}).get("speculative_schedule", "aoae")).strip().lower()
+    generation_mode = "any_order" if schedule == "aoae" else "block"
 
     correct = 0
     total = 0
@@ -1395,6 +1454,7 @@ def evaluate_speculative(
         frontier_reject_rate=frontier_reject_rate,
         drafter_cache_resets=drafter_cache_resets,
         effective_flops=effective_flops,
+        generation_mode=generation_mode,
     )
 
 
@@ -1588,22 +1648,19 @@ def _save_kv_dynamics_artifacts(records: List[Dict[str, Any]], output_dir: str) 
         print(f"Attention deviation plot saved to {attn_plot}")
 
 
-def _save_eval_plots(all_results: List[EvalResult], output_dir: str) -> None:
-    try:
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except Exception as e:
-        print(f"Eval plotting skipped (matplotlib unavailable): {e}")
-        return
+_PLOT_MODE_META = {
+    "any_order": ("Eval: Accuracy vs Throughput (Any-Order)", "eval_tps_vs_accuracy_any_order.png"),
+    "block":     ("Eval: Accuracy vs Throughput (Block Diffusion)", "eval_tps_vs_accuracy_block.png"),
+    "all":       ("Eval: Accuracy vs Throughput", "eval_tps_vs_accuracy.png"),
+}
 
-    if not all_results:
-        return
 
+def _plot_tps_accuracy(results: List[EvalResult], title: str, path: str, plt) -> None:
+    if not results:
+        return
     fig, ax = plt.subplots(1, 1, figsize=(7, 5))
-    for r in all_results:
-        label = r.method
-        ax.scatter(r.avg_tokens_per_sec, r.accuracy, s=80, alpha=0.8, label=label)
+    for r in results:
+        ax.scatter(r.avg_tokens_per_sec, r.accuracy, s=80, alpha=0.8, label=r.method)
         point_label = _note_value(r.config_note, "point")
         if point_label:
             ax.annotate(
@@ -1615,25 +1672,38 @@ def _save_eval_plots(all_results: List[EvalResult], output_dir: str) -> None:
             )
     ax.set_xlabel("Tokens / sec")
     ax.set_ylabel("Accuracy")
-    ax.set_title("Eval: Accuracy vs Throughput")
-    # Deduplicate legend entries
+    ax.set_title(title)
     handles, labels = ax.get_legend_handles_labels()
-    seen = set()
-    dedup_h = []
-    dedup_l = []
+    seen: set = set()
+    dedup_h, dedup_l = [], []
     for h, l in zip(handles, labels):
-        if l in seen:
-            continue
-        seen.add(l)
-        dedup_h.append(h)
-        dedup_l.append(l)
+        if l not in seen:
+            seen.add(l)
+            dedup_h.append(h)
+            dedup_l.append(l)
     ax.legend(dedup_h, dedup_l, fontsize=8)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    path = os.path.join(output_dir, "eval_tps_vs_accuracy.png")
     fig.savefig(path, dpi=150)
     plt.close(fig)
     print(f"Eval plot saved to {path}")
+
+
+def _save_eval_plots(all_results: List[EvalResult], output_dir: str, cfg: Optional[Dict[str, Any]] = None) -> None:
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        print(f"Eval plotting skipped (matplotlib unavailable): {e}")
+        return
+
+    if not all_results:
+        return
+
+    mode_filter = (cfg or {}).get("evaluation", {}).get("generation_mode_filter", "all")
+    title, filename = _PLOT_MODE_META.get(mode_filter, _PLOT_MODE_META["all"])
+    _plot_tps_accuracy(all_results, title, os.path.join(output_dir, filename), plt)
 
 def _build_run_metadata(
     cfg: dict,
@@ -2055,7 +2125,7 @@ def main(
             print(f"Manifest updated at {manifest_path}")
 
             _save_kv_dynamics_artifacts(kv_dynamics_records, cfg["logging"]["output_dir"])
-            _save_eval_plots(all_results, cfg["logging"]["output_dir"])
+            _save_eval_plots(all_results, cfg["logging"]["output_dir"], cfg)
 
         if is_global_rank_zero():
             print("\n" + "=" * 220)
