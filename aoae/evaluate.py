@@ -14,6 +14,7 @@ import copy
 import yaml
 import torch
 import numpy as np
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from tqdm import tqdm
 from dataclasses import dataclass, asdict
@@ -58,6 +59,27 @@ from .experiment_utils import set_nested
 
 
 _MAX_SAVED_PREDICTIONS = 50
+
+
+@contextmanager
+def _override_block_length(cfg: Dict[str, Any], block_length: int):
+    """Temporarily set ``cfg["inference"]["block_length"]``; restore on exit.
+
+    Used by the LLaDA2.1 any-order baselines so that ``block_smode_decode``
+    runs with one block covering the whole response (response is fully
+    bidirectional within itself; prompt stays in its own causal block).
+    """
+    ic = cfg.setdefault("inference", {})
+    had_key = "block_length" in ic
+    saved = ic.get("block_length")
+    ic["block_length"] = int(block_length)
+    try:
+        yield
+    finally:
+        if had_key:
+            ic["block_length"] = saved
+        else:
+            ic.pop("block_length", None)
 
 
 def _resolve_valid_auto_policy_checkpoint(
@@ -889,18 +911,32 @@ def evaluate_baseline(
                 )
             elif method == "llada21_speed_anyorder":
                 s = resolve_llada21_official_settings(cfg, mode="speed")
-                output_ids = confidence_threshold_decode(
-                    base_model, prompt_ids, cfg,
-                    tau_mask=s["threshold"], tau_edit=s["editing_threshold"],
-                    enable_t2t=True, stats=decode_stats,
-                )
+                # Any-order via block diffusion with one block over the
+                # entire response: forward_block_causal sees block_length =
+                # L_gen, so the response is fully bidirectional within
+                # itself. Prompt stays in its own (causal) block.
+                with _override_block_length(cfg, s["gen_length"]):
+                    output_ids = block_smode_decode(
+                        base_model, prompt_ids, cfg,
+                        tau_mask=s["threshold"], tau_edit=s["editing_threshold"],
+                        max_steps_per_block=s["max_post_steps"],
+                        enable_mbe=False,
+                        gen_length=s["gen_length"],
+                        eos_early_stop=s["eos_early_stop"],
+                        stats=decode_stats,
+                    )
             elif method == "llada21_quality_anyorder":
                 s = resolve_llada21_official_settings(cfg, mode="quality")
-                output_ids = confidence_threshold_decode(
-                    base_model, prompt_ids, cfg,
-                    tau_mask=s["threshold"], tau_edit=s["editing_threshold"],
-                    enable_t2t=True, stats=decode_stats,
-                )
+                with _override_block_length(cfg, s["gen_length"]):
+                    output_ids = block_smode_decode(
+                        base_model, prompt_ids, cfg,
+                        tau_mask=s["threshold"], tau_edit=s["editing_threshold"],
+                        max_steps_per_block=s["max_post_steps"],
+                        enable_mbe=False,
+                        gen_length=s["gen_length"],
+                        eos_early_stop=s["eos_early_stop"],
+                        stats=decode_stats,
+                    )
             elif method == "block_smode":
                 output_ids = block_smode_decode(
                     base_model, prompt_ids, cfg,
