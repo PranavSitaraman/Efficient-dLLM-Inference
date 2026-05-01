@@ -18,7 +18,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 
 def _safe_policy_temperature(temperature: float) -> float:
@@ -136,6 +136,119 @@ def apply_unmask_budget(
     keep.scatter_(-1, top_idx, 1.0)
     keep = keep * candidate_mask.float()
     return {**actions, "u_t": keep}
+
+
+# ----------------------------------------------------------------------------
+# Block-wise policy wrapper (Option A — see design note below).
+# ----------------------------------------------------------------------------
+# Why this exists: LLaDA 2.1's attention is locked to block-causal-32, so the
+# model itself cannot condition on tokens beyond the active block.  The full-
+# seq AOAEPolicy still attends globally, which is wider than the model's own
+# receptive field and bigger than necessary for in-block decisions.
+# `call_policy_block` reuses the same AOAEPolicy weights but slices all per-
+# position inputs to the active block window before the forward pass, then
+# scatters the per-position outputs back into full-seq tensors so callers'
+# downstream phase-1/2/3 logic is unchanged.
+#
+# OPTION B (deferred): a dedicated `BlockAOAEPolicy` class that takes the
+# block window plus a small global summary token (committed-prefix mean H,
+# blk_idx / n_blocks, prev-block accept-rate).  Trained from scratch.  Move
+# to Option B if Option A's fine-tune plateaus on cache_F1 or shows poor
+# cross-block coordination (e.g. prior-block cache eviction decisions).  A
+# cheap intermediate step is to stay in Option A and append those summary
+# scalars as extra per-position features (~5 LOC), before paying for the
+# full architectural rewrite.
+def call_policy_block(
+    policy,
+    H_t: torch.Tensor,
+    mask_indicator: torch.BoolTensor,
+    step_frac: float,
+    block_window: Tuple[int, int],
+    **kwargs,
+) -> Dict[str, torch.Tensor]:
+    """Run AOAEPolicy on a [b_start, b_end) slice of the response sequence.
+
+    All per-position kwargs (confidence, quality_scores, agreement,
+    age_feature, last_action_feature) whose shape matches H_t along dim 1 are
+    sliced to the block.  Per-position outputs are scattered back into a full
+    [B, L] tensor with neutral fill (logits=-1e9, probs=0) outside the block,
+    so downstream samplers, log_prob, and phase logic see the same shape as
+    the full-seq path.
+
+    Args:
+        block_window: (b_start, b_end) — slice in the *response* coordinate
+            system (i.e. relative to H_t, not to the prompt+response sequence).
+            b_end is exclusive; if b_end <= b_start, the full-seq policy is
+            invoked unchanged (no-op fallback).
+    """
+    b_s, b_e = int(block_window[0]), int(block_window[1])
+    B, L = H_t.shape[:2]
+    if b_e <= b_s or (b_s == 0 and b_e == L):
+        return call_policy(policy, H_t, mask_indicator, step_frac, **kwargs)
+    if b_s < 0 or b_e > L:
+        raise ValueError(f"block_window {block_window!r} out of range for L={L}")
+
+    H_blk = H_t[:, b_s:b_e, :].contiguous()
+    mask_blk = mask_indicator[:, b_s:b_e].contiguous()
+
+    sliced_kwargs: Dict[str, object] = {}
+    for k, v in kwargs.items():
+        if torch.is_tensor(v) and v.dim() >= 2 and v.shape[0] == B and v.shape[1] == L:
+            sliced_kwargs[k] = v[:, b_s:b_e].contiguous()
+        else:
+            sliced_kwargs[k] = v
+
+    out_blk = call_policy(policy, H_blk, mask_blk, step_frac, **sliced_kwargs)
+
+    full: Dict[str, torch.Tensor] = {}
+    blk_w = b_e - b_s
+    for k, v in out_blk.items():
+        if not torch.is_tensor(v):
+            full[k] = v
+            continue
+        # Per-position outputs have shape [B, blk_w] (or [B, blk_w, ...]).
+        # Pooled outputs (e.g. boundary heads) have shape [B, num_bins] where
+        # num_bins != blk_w in general — pass those through unchanged.
+        if v.dim() < 2 or v.shape[0] != B or v.shape[1] != blk_w:
+            full[k] = v
+            continue
+        if k.endswith("_logits"):
+            init = torch.full(
+                (B, L) + tuple(v.shape[2:]), -1e9, device=v.device, dtype=v.dtype
+            )
+        else:
+            init = torch.zeros(
+                (B, L) + tuple(v.shape[2:]), device=v.device, dtype=v.dtype
+            )
+        init[:, b_s:b_e] = v
+        full[k] = init
+    return full
+
+
+def active_block_window(
+    mask_indicator: torch.BoolTensor,
+    block_length: int,
+    *,
+    context_left: int = 0,
+) -> Tuple[int, int]:
+    """Return the (start, end) of the leftmost block that still has masks.
+
+    Used by the unstructured speculative loop, which doesn't iterate blocks
+    explicitly.  Falls back to (0, block_length) if no masks remain (the loop
+    will exit on the next iteration anyway).  `context_left` widens the
+    window to the left to bleed in already-committed prefix context — useful
+    when the policy wants a few committed tokens for boundary stability.
+    """
+    L = int(mask_indicator.shape[-1])
+    bl = max(1, int(block_length))
+    if not mask_indicator.any():
+        return 0, min(bl, L)
+    any_mask_per_pos = mask_indicator.any(dim=0)  # [L]
+    first_masked = int(torch.argmax(any_mask_per_pos.to(torch.int32)).item())
+    blk_idx = first_masked // bl
+    b_s = max(0, blk_idx * bl - max(0, int(context_left)))
+    b_e = min(L, (blk_idx + 1) * bl)
+    return b_s, b_e
 
 
 class AOAEPolicy(nn.Module):

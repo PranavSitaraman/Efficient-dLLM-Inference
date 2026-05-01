@@ -301,6 +301,7 @@ def add_eval_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--positional_cache_horizon", type=int, default=None, help="Override inference.positional_cache.horizon.")
     parser.add_argument("--positional_cache_refresh_budget", type=int, default=None, help="Override inference.positional_cache.refresh_budget.")
     parser.add_argument("--policy_temperatures", type=str, default=None, help="Comma-separated tau_pi values for speculative runs (e.g. 0.5,1.0,1.5).")
+    parser.add_argument("--sweep_points", type=str, default=None, help="Comma-separated speculative_sweep point names to run; others are skipped. Applied after generation_mode_filter.")
     parser.add_argument("--skip_baselines", action="store_true", help="Skip baseline decoding methods and only evaluate the target policy/method.")
     parser.add_argument("--task_type", type=str, default=None, choices=["math", "code"], help="Override evaluation.task_type.")
     parser.add_argument("--code_timeout_sec", type=float, default=None, help="Override evaluation.code.timeout_sec for task_type=code.")
@@ -400,6 +401,10 @@ def run_eval_command(args: argparse.Namespace):
     if args.policy_temperatures is not None:
         policy_temperatures = parse_float_list(args.policy_temperatures, label="policy temperature")
 
+    sweep_points = None
+    if args.sweep_points is not None:
+        sweep_points = [p.strip() for p in args.sweep_points.split(",") if p.strip()]
+
     from .evaluate import main as eval_main
 
     return eval_main(
@@ -410,6 +415,7 @@ def run_eval_command(args: argparse.Namespace):
         config_path=args.config,
         skip_baselines=args.skip_baselines,
         speculative_policy_temperatures=policy_temperatures,
+        sweep_point_filter=sweep_points,
     )
 
 

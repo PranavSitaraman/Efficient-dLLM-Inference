@@ -277,7 +277,7 @@ def run_block_frontier_speculative_inference(
     cfg: dict,
     policy_temperature: float = 1.0,
 ) -> Tuple[torch.Tensor, dict]:
-    """Block-local draft-frontier speculative decoding.
+    """Block-local draft-frontier speculative decoding (heuristic baseline).
 
     This is the MDLM analogue of autoregressive speculative decoding: the
     hard-routed drafter advances the current LLaDA block for several cheap
@@ -286,6 +286,14 @@ def run_block_frontier_speculative_inference(
     applies the normal LLaDA quality threshold update.  Unlike the generic
     AOAE loop, this runner never scores future response blocks, so wall-clock
     work tracks the official block-diffusion baseline.
+
+    NOTE: this runner is a **policy-free** block-speculative baseline.  It
+    intentionally ignores `policy`, `soft_mask_module`, and `prism_adapter`
+    so it can serve as the apples-to-apples comparison against the trained
+    block-wise AOAE head.  To run the trained block-wise policy at eval, use
+    `inference.speculative_schedule="aoae"` with `policy.block_wise.enabled=
+    true` — that path goes through `speculative_inference()` which now crops
+    the policy to the active block (see aoae/models/policy.py for details).
     """
     del policy, soft_mask_module, prism_adapter, policy_temperature
 

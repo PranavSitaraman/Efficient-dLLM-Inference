@@ -35,7 +35,11 @@ from .checkpoints import (
     read_grpo_training_metadata,
 )
 from .inference import aoae_inference, AOAETrajectory
-from .speculative_inference import speculative_inference, SpeculativeTrajectory
+from .speculative_inference import (
+    aoae_block_inference,
+    speculative_inference,
+    SpeculativeTrajectory,
+)
 from .tasks import (
     build_prompt,
     check_math_correctness,  # re-exported for legacy tests/scripts
@@ -311,6 +315,47 @@ def compute_reward(
             unresolved_penalty = unresolved_penalty_weight * unresolved_fraction
             reward = reward - unresolved_penalty
 
+    # --- Per-block speed bonus (block-wise AOAE head, Option A) ---
+    #
+    # Encourages the policy to commit each block in fewer steps than the
+    # max_verifier_steps_per_block cap.  Without this term, the block-cropped
+    # policy gets only the trajectory-level speed signal and may learn to be
+    # locally conservative at the expense of the wall-time win that motivated
+    # block-wise scheduling in the first place.
+    #
+    # Formula (per block b):
+    #     advance_b = max(0, 1 - steps_b / max_steps)
+    # bonus = w * mean_b(advance_b)
+    # Broadcast to [B] (block_windows are shared across the rollout batch).
+    bw_cfg = (gc.get("block_wise_reward", {}) or {})
+    block_advance_w = float(bw_cfg.get("advance_weight", 0.0)) if bw_cfg.get("enabled", False) else 0.0
+    block_advance_bonus = torch.zeros(B, device=device)
+    block_advance_component = torch.zeros(B, device=device)
+    if block_advance_w > 0.0:
+        windows = list(getattr(trajectory, "block_windows", []) or [])
+        if windows:
+            steps_per_block: Dict[Tuple[int, int], int] = {}
+            for w in windows:
+                key = (int(w[0]), int(w[1]))
+                steps_per_block[key] = steps_per_block.get(key, 0) + 1
+            max_steps_per_block = int(
+                bw_cfg.get(
+                    "max_steps_per_block",
+                    (cfg.get("inference", {})
+                        .get("block_speculative", {}) or {})
+                        .get("max_verifier_steps_per_block", 16),
+                )
+            )
+            max_steps_per_block = max(1, max_steps_per_block)
+            advance = [
+                max(0.0, 1.0 - float(s) / float(max_steps_per_block))
+                for s in steps_per_block.values()
+            ]
+            mean_advance = sum(advance) / max(len(advance), 1)
+            block_advance_component = torch.full((B,), float(mean_advance), device=device)
+            block_advance_bonus = block_advance_w * block_advance_component
+            reward = reward + block_advance_bonus
+
     # --- Cache quality F1 reward ---
     #
     # Replaces the old drift_penalty (precision-only) with a two-sided F1 that
@@ -385,6 +430,8 @@ def compute_reward(
         "access_f1":            access_f1_component,
         "access_reward":        access_reward,
         "mean_spec_cached":     mean_spec_cached,   # transient draft frontier
+        "block_advance":        block_advance_component,
+        "block_advance_bonus":  block_advance_bonus,
     }
 
     return reward, components
@@ -673,16 +720,34 @@ def collect_rollout_group(
     repeated_references = [reference_answers[0] for _ in range(G)]
 
     if use_speculative:
-        output_ids, trajectory = speculative_inference(
-            dual_model=dual_model,
-            policy=policy,
-            soft_mask_module=soft_mask_module,
-            prism_adapter=prism_adapter,
-            prompt_ids=repeated_prompt_ids,
-            cfg=rollout_cfg,
-            record_trajectory=True,
-            policy_temperature=gc["policy_temperature"],
-        )
+        # When policy.block_wise.enabled, run the block-structured AOAE
+        # speculative loop (paper-faithful, no KV cache) so train/eval are
+        # consistent and the policy gets gradient signal from block-local
+        # decisions.  Reuses speculative_inference's full-seq loop otherwise.
+        _bw_cfg = (rollout_cfg.get("policy", {}) or {}).get("block_wise", {}) or {}
+        _use_block_policy = bool(_bw_cfg.get("enabled", False))
+        if _use_block_policy:
+            output_ids, trajectory = aoae_block_inference(
+                dual_model=dual_model,
+                policy=policy,
+                soft_mask_module=soft_mask_module,
+                prism_adapter=prism_adapter,
+                prompt_ids=repeated_prompt_ids,
+                cfg=rollout_cfg,
+                record_trajectory=True,
+                policy_temperature=gc["policy_temperature"],
+            )
+        else:
+            output_ids, trajectory = speculative_inference(
+                dual_model=dual_model,
+                policy=policy,
+                soft_mask_module=soft_mask_module,
+                prism_adapter=prism_adapter,
+                prompt_ids=repeated_prompt_ids,
+                cfg=rollout_cfg,
+                record_trajectory=True,
+                policy_temperature=gc["policy_temperature"],
+            )
     else:
         output_ids, trajectory = aoae_inference(
             base_model=base_model,
@@ -1003,6 +1068,31 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                 f"Checkpoint not found: {resume_from}. "
                 f"Use --resume auto to auto-detect, or pass a valid path."
             )
+        else:
+            # Warm-start path: load policy weights only (no optimizer / step
+            # counters), used when bumping GRPO_TRAIN_CONTRACT_VERSION (e.g.
+            # full-seq → block-wise AOAE head).  See aoae/checkpoints.py for
+            # the contract version note.
+            warm_start_path = gc.get("warm_start_from")
+            if warm_start_path:
+                warm_start_strict = bool(gc.get("warm_start_strict", False))
+                if not os.path.isfile(warm_start_path):
+                    if warm_start_strict:
+                        raise FileNotFoundError(
+                            f"warm_start_from not found: {warm_start_path}"
+                        )
+                    elif is_main:
+                        print(f"[Warm-start] not found, training from scratch: {warm_start_path}")
+                else:
+                    if is_main:
+                        print(f"[Warm-start] loading policy weights from {warm_start_path}")
+                    ckpt = torch.load(warm_start_path, map_location=device)
+                    pol_inner = policy.module if hasattr(policy, 'module') else policy
+                    load_state_dict_flexible(pol_inner, ckpt["policy"], "policy(warm)")
+                    if "soft_mask" in ckpt:
+                        sm_inner = soft_mask.module if hasattr(soft_mask, 'module') else soft_mask
+                        load_state_dict_flexible(sm_inner, ckpt["soft_mask"], "soft_mask(warm)")
+                    del ckpt
 
         should_optimize = global_step < gc["max_steps"]
         if is_main and not should_optimize:

@@ -11,7 +11,13 @@ from typing import Dict, Optional
 import torch
 
 
-GRPO_TRAIN_CONTRACT_VERSION = 5
+GRPO_TRAIN_CONTRACT_VERSION = 6
+# v6 (block-wise AOAE head, Option A): rollouts may run with
+# policy.block_wise.enabled=true, which crops the policy backbone to a 32-
+# token block window and adds trajectory.block_windows.  Reward gains an
+# optional block_advance_bonus.  Old v5 checkpoints are full-seq-only and
+# their action log-probs are not directly comparable to block-cropped
+# rollouts, so they must be warm-started rather than resumed verbatim.
 
 
 def load_state_dict_flexible(

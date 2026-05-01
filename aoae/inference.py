@@ -21,7 +21,12 @@ import json
 from .cache import DKVCacheManager
 from .experiment_utils import parse_head_set
 from .models.composed_prediction import compose_prediction
-from .models.policy import apply_unmask_budget, call_policy
+from .models.policy import (
+    active_block_window,
+    apply_unmask_budget,
+    call_policy,
+    call_policy_block,
+)
 from .models.soft_mask import call_soft_mask
 from .positional_cache import (
     init_positional_state,
@@ -336,15 +341,34 @@ def aoae_inference(
             age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
 
         # --- Policy forward (with PRISM quality scores) ---
-        policy_out = call_policy(
-            policy,
-            H_t, mask_ind, step_frac,
-            temperature=policy_temperature,
-            confidence=confidence,
-            quality_scores=q_scores,
-            age_feature=age_feat,
-            last_action_feature=last_action_feat,
-        )
+        # Block-wise policy (Option A) — see aoae/models/policy.py for design.
+        _blockwise_cfg = (cfg.get("policy", {}) or {}).get("block_wise", {}) or {}
+        if bool(_blockwise_cfg.get("enabled", False)):
+            _blk_window = active_block_window(
+                mask_ind,
+                max(1, int(ic.get("block_length", 32))),
+                context_left=max(0, int(_blockwise_cfg.get("context_left", 0))),
+            )
+            policy_out = call_policy_block(
+                policy,
+                H_t, mask_ind, step_frac,
+                _blk_window,
+                temperature=policy_temperature,
+                confidence=confidence,
+                quality_scores=q_scores,
+                age_feature=age_feat,
+                last_action_feature=last_action_feat,
+            )
+        else:
+            policy_out = call_policy(
+                policy,
+                H_t, mask_ind, step_frac,
+                temperature=policy_temperature,
+                confidence=confidence,
+                quality_scores=q_scores,
+                age_feature=age_feat,
+                last_action_feature=last_action_feat,
+            )
         pol_inner = policy.module if hasattr(policy, "module") else policy
 
         # --- Sample actions ---

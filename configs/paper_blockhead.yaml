@@ -1,11 +1,18 @@
-# Canonical speculative AOAE config.
+# Block-wise AOAE head — Option A (input-cropping).
 #
-# The paper path is lossy self-speculation: a hard-routed auxiliary takes cheap
-# draft microsteps while the normal verifier validates an accumulated frontier.
-# K_spec is transient verification debt; K_stable is a separate learned
-# persistent stability cache. This config keeps
-# KV-dynamics diagnostics off by default so reproduction measures the intended
-# speed/quality trade-off rather than the analysis overhead.
+# Diff vs configs/paper.yaml:
+#   - policy.block_wise.enabled: true   (crops policy backbone to active block)
+#   - grpo.block_wise_reward.enabled: true
+#   - grpo.block_wise_reward.advance_weight: 0.05
+#   - grpo.warm_start_from: outputs/paper/policy_best.pt  (warm-start full-seq head)
+#   - grpo.warm_start_strict: false   (contract version was bumped, expected)
+#
+# Approach: same AOAEPolicy weights and architecture; H_t / mask / agreement /
+# age / last-action are sliced to the leftmost still-masked block window
+# (block_length=32) before the policy forward pass.  See aoae/models/policy.py
+# (call_policy_block) for the design note and the deferred Option B alternative
+# (BlockAOAEPolicy with global summary token).  If this fine-tune plateaus on
+# cache_F1 or shows poor cross-block coordination, escalate to Option B.
 
 base_model:
   name_or_path: "inclusionAI/LLaDA2.1-mini"
@@ -40,6 +47,12 @@ policy:
   boundary_head:
     enabled: false
     num_bins: 8
+  block_wise:
+    # Option A — input-cropping wrapper around AOAEPolicy.
+    # Set context_left>0 to bleed in committed-prefix tokens for boundary
+    # stability (e.g. context_left=4 widens to [blk_start-4, blk_end)).
+    enabled: true
+    context_left: 0
 
 prism:
   hidden_dim: 256
@@ -71,6 +84,16 @@ grpo:
   thrash_age_decay: 0.1            # exp(-decay*age) weight for thrash penalty; 0=uniform
   access_reward_weight: 0.0        # q_t is trained through log-prob/commit gating; no dense q reward by default
   cache_quality_weight: 0.02       # dense κ_t signal; kept small so correctness dominates
+  block_wise_reward:
+    enabled: true
+    advance_weight: 0.05            # weight on per-block speed bonus
+    # Optional override; defaults to inference.block_speculative.max_verifier_steps_per_block
+    max_steps_per_block: 8
+  # Warm-start the full-seq AOAEPolicy weights into the block-wise fine-tune.
+  # Contract version bumped (5 -> 6) so we explicitly opt into ignoring the
+  # version mismatch on load.
+  warm_start_from: "outputs/paper/policy_best.pt"
+  warm_start_strict: false
   stability_lambda: 10.0           # soft stability exponent λ (maps drift∈[0,0.2] → contrast)
   unresolved_penalty_weight: 0.25  # penalty for lingering [M] tokens at end of rollout
   # AOAE's shaped reward includes compute and unresolved-mask penalties, so
@@ -94,6 +117,13 @@ grpo:
   rollout_gen_length: 128          # training-time decode budget; eval uses inference.gen_length
 
 inference:
+  # Block-structured AOAE: route eval through aoae_block_inference (block-by-
+  # block, prefix_ids truncated, NO KV cache, paper-faithful).  When
+  # policy.block_wise.enabled and a trained policy is present, evaluate.py
+  # picks the new runner; otherwise it falls through to the heuristic block-
+  # frontier baseline.  Training rollouts use the same path via train_grpo.py.
+  speculative_schedule: "aoae_block"
+  block_length: 32
   steps: 256
   gen_length: 512
   temperature: 0.0

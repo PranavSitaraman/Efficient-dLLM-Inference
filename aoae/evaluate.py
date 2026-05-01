@@ -47,7 +47,10 @@ from .dinfer_integration import (
     run_block_frontier_speculative_inference,
     run_blockwise_speculative_inference,
 )
-from .speculative_inference import speculative_inference as _aoae_speculative_inference
+from .speculative_inference import (
+    aoae_block_inference as _aoae_block_inference,
+    speculative_inference as _aoae_speculative_inference,
+)
 from .runtime_checks import collect_runtime_info, set_global_seed, is_global_rank_zero
 from .evaluators import build_evaluator, describe_evaluator
 from .tasks import (
@@ -520,6 +523,7 @@ def _normalize_speculative_eval_point(
 def _build_speculative_eval_points(
     cfg: Dict[str, Any],
     explicit_policy_temperatures: Optional[List[float]],
+    sweep_point_filter: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     if explicit_policy_temperatures is not None:
         return _temperature_only_speculative_points([float(t) for t in explicit_policy_temperatures])
@@ -536,6 +540,17 @@ def _build_speculative_eval_points(
         mode_filter = cfg.get("evaluation", {}).get("generation_mode_filter", "all")
         if mode_filter != "all":
             normalized = [p for p in normalized if p.get("generation_mode", "any_order") == mode_filter]
+        if sweep_point_filter:
+            requested = set(sweep_point_filter)
+            kept = [p for p in normalized if p.get("name") in requested]
+            missing = requested - {p.get("name") for p in kept}
+            if missing:
+                raise ValueError(
+                    f"--sweep_points requested unknown point(s): {sorted(missing)}. "
+                    f"Available after generation_mode_filter: "
+                    f"{[p.get('name') for p in normalized]}"
+                )
+            normalized = kept
         return normalized
 
     return _temperature_only_speculative_points(_DEFAULT_SPECULATIVE_POLICY_TEMPERATURES)
@@ -1184,16 +1199,43 @@ def evaluate_speculative(
                 )
                 _spec_trajectory = None
             elif schedule in {"aoae_block", "draft_frontier_block", "block_frontier"}:
-                output_ids, stats = run_block_frontier_speculative_inference(
-                    dual_model=dual_model,
-                    policy=policy,
-                    soft_mask_module=soft_mask,
-                    prism_adapter=prism,
-                    prompt_ids=prompt_ids,
-                    cfg=cfg,
-                    policy_temperature=policy_temperature,
+                # When policy.block_wise.enabled and a trained policy is
+                # provided, route to the new block-structured AOAE runner
+                # (aoae_block_inference): block-by-block, prefix_ids
+                # truncated, NO KV cache (paper-faithful), policy decisions
+                # replace threshold heuristics.  Otherwise fall through to
+                # the heuristic block-frontier baseline (no policy).
+                _bw_cfg = (cfg.get("policy", {}) or {}).get("block_wise", {}) or {}
+                _blockwise_enabled = bool(_bw_cfg.get("enabled", False))
+                _use_block_policy = (
+                    _blockwise_enabled
+                    and policy is not None
+                    and not isinstance(policy, DefaultPolicy)
                 )
-                _spec_trajectory = None
+                if _use_block_policy:
+                    output_ids, _spec_trajectory = _aoae_block_inference(
+                        dual_model=dual_model,
+                        policy=policy,
+                        soft_mask_module=soft_mask,
+                        prism_adapter=prism,
+                        prompt_ids=prompt_ids,
+                        cfg=cfg,
+                        record_trajectory=False,
+                        policy_temperature=policy_temperature,
+                        collect_stats=True,
+                    )
+                    stats = {}  # populated by trajectory hooks below if needed
+                else:
+                    output_ids, stats = run_block_frontier_speculative_inference(
+                        dual_model=dual_model,
+                        policy=policy,
+                        soft_mask_module=soft_mask,
+                        prism_adapter=prism,
+                        prompt_ids=prompt_ids,
+                        cfg=cfg,
+                        policy_temperature=policy_temperature,
+                    )
+                    _spec_trajectory = None
             else:
                 # "aoae" schedule: use speculative_inference() — the same path
                 # used during GRPO training, ensuring eval/train consistency and
@@ -1877,6 +1919,7 @@ def main(
     config_path: Optional[str] = None,
     skip_baselines: bool = False,
     speculative_policy_temperatures: Optional[List[float]] = None,
+    sweep_point_filter: Optional[List[str]] = None,
     preloaded_dual_model=None,
     preloaded_eval_ds=None,
     preloaded_base_model=None,
@@ -1912,7 +1955,9 @@ def main(
         eval_ds = _load_eval_dataset(dc)
     if max_samples is None:
         max_samples = dc.get("eval_max_samples")
-    speculative_eval_points = _build_speculative_eval_points(cfg, speculative_policy_temperatures)
+    speculative_eval_points = _build_speculative_eval_points(
+        cfg, speculative_policy_temperatures, sweep_point_filter=sweep_point_filter,
+    )
     prediction_limit = _get_prediction_save_limit(cfg)
     checkpoint_path = _resolve_valid_auto_policy_checkpoint(checkpoint_path, cfg)
 
