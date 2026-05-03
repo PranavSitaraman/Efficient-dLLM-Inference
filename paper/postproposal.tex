@@ -222,7 +222,7 @@ $\cK_{\text{stable}}$ is trained and reported; the paper reproduction does not c
 A \emph{lossless-verification} sanity-check operating point routes the verifier through the same hard top-$k$ as the drafter; in that mode every draft is structurally accepted, the policy reduces to choosing $\cK_{\text{stable}}$ and the access set $\cQ_t$, and the speculative path is guaranteed to recover baseline-quality argmax decisions.
 Hyperparameters: $K{=}5$, $G{=}8$, $\alpha{=}1.0$, $\beta{=}0.1$, $\epsilon{=}0.2$, $c_{\text{aux}}{=}0.35$, $w_{F1}{=}0.02$, $w_q{=}0$; GRPO trains $\kappa, q$ only.
 
-\paragraph{Data and baselines.}  Train: OpenMathInstruct-2 (5K prompts, 3 epochs, 1000 steps).  Eval: GSM8K~\cite{cobbe2021gsm8k} and MATH~\cite{hendrycks2021math}.  Baselines: LLaDA~2.1 speed mode (threshold 0.5, block diffusion), quality mode (threshold 0.7), and Fast-dLLM~\cite{wu2025fastdllm}.
+\paragraph{Data and baselines.}  Train: OpenMathInstruct-2 (5K prompts, 3 epochs, 100 steps).  Eval: GSM8K~\cite{cobbe2021gsm8k} and MATH~\cite{hendrycks2021math}.  Baselines: LLaDA~2.1 speed mode (threshold 0.5, block diffusion), quality mode (threshold 0.7), and Fast-dLLM~\cite{wu2025fastdllm}.
 
 \paragraph{Metrics.}  Accuracy (flexible extraction), throughput (tokens/sec), effective FLOPs, verifier call rate, frontier acceptance/rejection, drafter cache resets, $\cK_{\text{stable}}$ occupancy, and access F1.
 

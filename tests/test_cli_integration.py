@@ -434,6 +434,8 @@ def test_cli_pipeline_delegates_to_canonical_subcommands(monkeypatch, tmp_path):
             max_samples=7,
             mode="speculative",
             policy_temperatures="0.8,1.0",
+            generation_mode_filter="any_order",
+            sweep_points="quality_max",
             skip_preflight=False,
             skip_prism=False,
             skip_grpo=False,
@@ -458,6 +460,10 @@ def test_cli_pipeline_delegates_to_canonical_subcommands(monkeypatch, tmp_path):
         "7",
         "--policy_temperatures",
         "0.8,1.0",
+        "--generation_mode_filter",
+        "any_order",
+        "--sweep_points",
+        "quality_max",
         "--skip_baselines",
     )
 

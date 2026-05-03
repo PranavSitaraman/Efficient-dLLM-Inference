@@ -1,4 +1,5 @@
 from pathlib import Path
+import copy
 
 import yaml
 
@@ -39,11 +40,18 @@ def test_paper_config_enables_full_aoae_stack():
     assert cfg["data"]["use_chat_template"] == "auto"
     assert cfg["data"]["math_prompt_style"] == "auto"
     assert cfg["data"]["max_answer_len"] == 256
+    # The canonical paper config now enumerates both block-mode and any-order
+    # LLaDA2.1 baselines so the eval table includes a fair comparison against
+    # the official block decoder *and* the any-order single-block variant the
+    # paper analyses for AOAE.  Fast-dLLM remains the parallel-decode anchor.
     assert cfg["evaluation"]["baseline_methods"] == [
         "llada21_speed_mode",
         "llada21_quality_mode",
+        "llada21_speed_anyorder",
+        "llada21_quality_anyorder",
         "fast_dllm",
     ]
+    assert cfg["evaluation"]["generation_mode_filter"] == "block"
     assert cfg["evaluation"]["save_predictions"] is True
     assert cfg["grpo"]["thrash_normalization"] == "response_length"
     assert cfg["grpo"]["cache_speed_source"] == "none"
@@ -81,11 +89,66 @@ def test_paper_config_enables_full_aoae_stack():
         for point in sweep_points
     )
     assert any(
+        point["overrides"].get("inference.speculative_schedule") == "aoae_block_policy"
+        and point.get("generation_mode") == "any_order"
+        for point in sweep_points
+    )
+    assert any(
         point["overrides"].get("inference.block_speculative.verifier_mode") == "self_accept_lossless"
         for point in sweep_points
     )
     for point in sweep_points:
         overrides = point.get("overrides", {})
         if overrides.get("inference.speculative_schedule") == "aoae_block":
-            assert overrides.get("inference.block_speculative.rejection_action") == "replace"
+            # The block schedule supports two rejection actions.  ``replace``
+            # substitutes the verifier's argmax for rejected drafts while
+            # ``correct_confident`` only replaces drafts the verifier is
+            # confident about and remasks the rest; both are valid operating
+            # points that the canonical sweep exercises across the Pareto.
+            assert overrides.get("inference.block_speculative.rejection_action") in (
+                "replace",
+                "correct_confident",
+            )
     assert cfg["hardware"]["tp_size"] == 1
+
+
+def test_paper_config_keeps_block_and_any_order_eval_tracks_separate():
+    from aoae.evaluate import _build_speculative_eval_points, _get_baseline_methods
+
+    cfg = _load_yaml("configs/paper.yaml")
+
+    assert _get_baseline_methods(cfg) == [
+        "llada21_speed_mode",
+        "llada21_quality_mode",
+    ]
+    block_points = _build_speculative_eval_points(cfg, explicit_policy_temperatures=None)
+    block_names = [point["name"] for point in block_points]
+    assert block_names == [
+        "speed_balanced",
+        "speed_max",
+        "speed_extreme",
+        "aoae_llada_sq",
+        "aoae_llada_sq_softver",
+    ]
+    assert all(
+        point["overrides"].get("inference.speculative_schedule") != "aoae_block_policy"
+        for point in block_points
+    )
+
+    any_order_cfg = copy.deepcopy(cfg)
+    any_order_cfg["evaluation"]["generation_mode_filter"] = "any_order"
+    assert _get_baseline_methods(any_order_cfg) == [
+        "llada21_speed_anyorder",
+        "llada21_quality_anyorder",
+        "fast_dllm",
+    ]
+    any_order_points = _build_speculative_eval_points(
+        any_order_cfg,
+        explicit_policy_temperatures=None,
+    )
+    any_order_names = [point["name"] for point in any_order_points]
+    assert any_order_names == [
+        "quality_max",
+        "quality_balanced",
+        "aoae_llada_sq_anyorder",
+    ]

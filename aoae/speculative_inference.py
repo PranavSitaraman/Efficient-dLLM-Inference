@@ -1764,5 +1764,57 @@ def aoae_block_inference(
 
     if trajectory is not None:
         trajectory.final_tokens = y[:, resp_slice].detach()
+        # ---- Compute-unit accounting (mirrors speculative_inference) ----
+        # The full-quality baseline cost is one verifier pass per planned
+        # diffusion microstep, so we use the schedule cap ``n_blocks ×
+        # max_blk_steps`` as the denominator; ``aoae_block_inference`` is
+        # always invoked with that cap as its iteration ceiling.  Aux drafts
+        # cost ``aux_compute_ratio`` units each, verifier passes cost 1
+        # (this path does not implement K_stable backend skipping).
+        aux_compute_ratio = float(
+            cfg.get("inference", {}).get("drafter", {}).get("aux_compute_ratio", 0.35)
+        )
+        baseline_units = float(max(n_blocks * max(1, max_blk_steps), 1))
+        aux_units_t = torch.full(
+            (B,), float(aux_steps) * aux_compute_ratio,
+            device=device, dtype=torch.float32,
+        )
+        verifier_units_t = torch.full(
+            (B,), float(primary_steps),
+            device=device, dtype=torch.float32,
+        )
+        baseline_units_t = torch.full(
+            (B,), baseline_units, device=device, dtype=torch.float32,
+        )
+        trajectory.aux_compute_units = aux_units_t.detach()
+        trajectory.verifier_compute_units = verifier_units_t.detach()
+        trajectory.baseline_compute_units = baseline_units_t.detach()
+        trajectory.effective_flops = (
+            (aux_units_t + verifier_units_t) / baseline_units_t.clamp(min=1.0)
+        ).detach()
+        trajectory.primary_steps = int(primary_steps)
+        trajectory.aux_only_steps = int(aux_steps)
+        trajectory.draft_accepts = int(draft_accepts)
+        trajectory.draft_rejects = int(draft_rejects)
+        _frontier_total = float(draft_accepts + draft_rejects)
+        trajectory.frontier_accept_rate = float(
+            draft_accepts / max(_frontier_total, 1.0)
+        )
+        trajectory.frontier_reject_rate = float(
+            draft_rejects / max(_frontier_total, 1.0)
+        )
+        # Block path does not (yet) integrate with cache_mgr accumulators,
+        # so report zero K_stable / K_spec occupancy and leave the access /
+        # KV-dynamics fields at their dataclass defaults.
+        trajectory.total_stable_commits = 0
+        trajectory.total_stable_invalidations = 0
+        trajectory.total_cache_hits = 0
+        trajectory.total_cache_misses = 0
+        trajectory.agreement_observations = int(draft_accepts + draft_rejects)
+        trajectory.mean_agreement_rate = trajectory.frontier_accept_rate
+        if trajectory.completion_step is None:
+            trajectory.completion_step = torch.full(
+                (B,), float(total_microsteps), device=device,
+            )
 
     return y, trajectory

@@ -85,7 +85,7 @@ def create_prism_training_data(
     tokenizer,
     dataset,
     mask_token_id: int,
-    max_samples: int = 1000,
+    max_samples: int = 100,
     mask_ratio_range: Tuple[float, float] = (0.2, 0.8),
     max_length: int = 512,
 ) -> List[Dict]:
