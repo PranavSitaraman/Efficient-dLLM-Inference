@@ -17,6 +17,20 @@ module load python/3.12.5-fasrc01 cuda/11.8.0-fasrc01 cudnn/8.9.2.26_cuda11-fasr
 eval "$(conda shell.bash hook)"
 conda activate rtx
 
+# PATH fix: ~/.local/bin/torchrun (Py3.12) shadows the rtx env's torchrun
+# (Py3.10) on this cluster. Force conda env bin to the front so torch versions
+# match. Without this the launcher fails to import torch (libcusparseLt.so.0).
+export PATH="$CONDA_PREFIX/bin:$PATH"
+
+# WandB defaults (override in shell as needed). The API key is intentionally
+# NOT defaulted here — set it in your environment before launching:
+#   export WANDB_API_KEY="<your-key>"
+#   bash reproduce.sh --slurm --workflow grpo --sitanc
+# To run without wandb, set logging.use_wandb=false in the config; the
+# WANDB_* env vars then become no-ops.
+export WANDB_ENTITY="${WANDB_ENTITY:-codeblock}"
+export WANDB_PROJECT="${WANDB_PROJECT:-spec-dlm-grpo}"
+
 export HF_HUB_DISABLE_XET=1
 export FLASHINFER_DISABLE_VERSION_CHECK=1
 export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
@@ -42,6 +56,22 @@ print(int(cfg.get("hardware", {}).get("tp_size", 1) or 1))
 PY
 )"
 export GPUS_PER_NODE="${GPUS_PER_NODE:-$DEFAULT_GPUS}"
+
+# Hard-fail if logging.use_wandb=true but WANDB_API_KEY is unset.
+USE_WANDB="$(python3 - <<PY
+import yaml
+cfg = yaml.safe_load(open("$CONFIG"))
+v = cfg.get("logging", {}).get("use_wandb", False)
+print(str(v).strip().lower())
+PY
+)"
+if [[ "$USE_WANDB" == "true" && -z "${WANDB_API_KEY:-}" ]]; then
+    echo "ERROR: ${CONFIG} has logging.use_wandb=true but WANDB_API_KEY is unset." >&2
+    echo "Either:" >&2
+    echo "  (a) export WANDB_API_KEY=<your-key> before launching, or" >&2
+    echo "  (b) set logging.use_wandb: false in ${CONFIG}." >&2
+    exit 2
+fi
 
 mkdir -p logs outputs
 

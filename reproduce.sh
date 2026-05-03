@@ -28,6 +28,12 @@ conda activate rtx
 #   bash reproduce.sh --slurm --workflow grpo                          # kempner_h100 account (default)
 #   bash reproduce.sh --slurm --workflow grpo --sitanc                 # sitanc_lab / seas_gpu partition
 #   bash reproduce.sh --slurm --workflow grpo --checkpoint auto        # resume existing ckpt
+#
+# v7 GRPO (drafter-u + verifier-r heads, hardver target, multi-GPU EP/TP-shared):
+# This is the canonical command for the current run.  The config is committed
+# in configs/paper.yaml; slurm/train.sh applies the PATH+WandB env fixes.
+#   bash reproduce.sh --slurm --workflow grpo --sitanc                 # 2× A100, ~5h
+# See SYNC_5.3.md for the full design context.
 
 WORKFLOW="pipeline"
 USE_SLURM=false
