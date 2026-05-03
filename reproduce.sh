@@ -20,6 +20,7 @@ conda activate rtx
 # Usage:
 #   bash reproduce.sh
 #   bash reproduce.sh --workflow paper --max_samples 50
+#   bash reproduce.sh -- --generation_mode_filter any_order
 #   bash reproduce.sh --slurm --workflow poc1 --max_samples 50
 #   bash reproduce.sh --workflow routing -- --tau_r_values 0.01,0.05,0.1
 #

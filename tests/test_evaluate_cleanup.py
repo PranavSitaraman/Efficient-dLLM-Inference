@@ -183,6 +183,147 @@ def test_speculative_eval_points_come_from_config_sweep(tmp_path):
     assert point_cfg["inference"]["primary_agree_threshold"] == 0.98
 
 
+def test_block_policy_sweep_points_are_explicitly_isolated_by_generation_filter(tmp_path):
+    import aoae.evaluate as mod
+
+    cfg = _base_cfg(tmp_path)
+    cfg["grpo"] = {"policy_temperature": 1.0}
+    cfg["evaluation"]["generation_mode_filter"] = "block"
+    cfg["evaluation"]["speculative_sweep"] = {
+        "enabled": True,
+        "points": [
+            {
+                "name": "disabled_bad_blockhead",
+                "enabled": False,
+                "generation_mode": "block",
+                "policy_temperature": 1.0,
+                "overrides": {"inference.speculative_schedule": "aoae_block_policy"},
+            },
+            {
+                "name": "stable_block_frontier",
+                "policy_temperature": 1.0,
+                "overrides": {"inference.speculative_schedule": "aoae_block"},
+            },
+            {
+                "name": "experimental_block_policy",
+                "generation_mode": "any_order",
+                "policy_temperature": 1.0,
+                "overrides": {"inference.speculative_schedule": "aoae_block_policy"},
+            },
+            {
+                "name": "implicit_experimental_block_policy",
+                "policy_temperature": 1.0,
+                "overrides": {"inference.speculative_schedule": "aoae_block_policy"},
+            },
+        ],
+    }
+
+    block_points = mod._build_speculative_eval_points(cfg, explicit_policy_temperatures=None)
+    assert [p["name"] for p in block_points] == ["stable_block_frontier"]
+    assert block_points[0]["overrides"]["inference.speculative_schedule"] == "aoae_block"
+
+    cfg["evaluation"]["generation_mode_filter"] = "any_order"
+    any_order_points = mod._build_speculative_eval_points(cfg, explicit_policy_temperatures=None)
+    assert [p["name"] for p in any_order_points] == [
+        "experimental_block_policy",
+        "implicit_experimental_block_policy",
+    ]
+    assert any_order_points[0]["generation_mode"] == "any_order"
+    assert any_order_points[1]["generation_mode"] == "any_order"
+
+    point_cfg = mod._apply_speculative_eval_point(cfg, any_order_points[0])
+    assert point_cfg["_active_speculative_eval_generation_mode"] == "any_order"
+    assert point_cfg["inference"]["speculative_schedule"] == "aoae_block_policy"
+
+
+def test_aoae_block_schedule_uses_heuristic_runner_even_with_block_policy_enabled(monkeypatch):
+    import aoae.evaluate as mod
+    from aoae.evaluators import EvalDecision
+
+    calls = {"heuristic": 0}
+
+    class FakeDual:
+        device = torch.device("cpu")
+
+        def auxiliary_forward(self, input_ids):
+            return torch.zeros(input_ids.shape[0], input_ids.shape[1], 4)
+
+        def primary_forward(self, input_ids):
+            return torch.zeros(input_ids.shape[0], input_ids.shape[1], 4)
+
+    class FakeTokenizer:
+        def encode(self, *args, **kwargs):
+            return torch.tensor([[7]], dtype=torch.long)
+
+    class FakeEvaluator:
+        evaluator_name = "fake"
+
+        def evaluate(self, generated, reference, sample=None):
+            return EvalDecision(True, "ok", generated, reference)
+
+    def fake_heuristic_runner(**kwargs):
+        calls["heuristic"] += 1
+        prompt_ids = kwargs["prompt_ids"]
+        return (
+            torch.cat([prompt_ids, torch.tensor([[2]], dtype=torch.long)], dim=1),
+            {
+                "effective_flops": 0.25,
+                "agreement_observations": 1,
+                "safe_reuse_observations": 1,
+            },
+        )
+
+    monkeypatch.setattr(mod, "build_prompt", lambda tokenizer, question, cfg: ("prompt", False))
+    monkeypatch.setattr(mod, "build_evaluator", lambda cfg: FakeEvaluator())
+    monkeypatch.setattr(
+        mod,
+        "_summarize_generation",
+        lambda *args, **kwargs: {
+            "generated_tokens": 1,
+            "mask_tokens_remaining": 0,
+            "truncated_generation": False,
+            "generated_text": "42",
+            "generation_cap": 1,
+            "has_eos": False,
+        },
+    )
+    monkeypatch.setattr(mod, "run_block_frontier_speculative_inference", fake_heuristic_runner)
+    monkeypatch.setattr(
+        mod,
+        "_aoae_block_inference",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("trained block path hijacked aoae_block")),
+    )
+
+    cfg = {
+        "base_model": {"mask_token_id": 0, "routing_temperature": 0.1},
+        "data": {"max_prompt_len": 4},
+        "policy": {"block_wise": {"enabled": True}},
+        "inference": {
+            "steps": 4,
+            "gen_length": 1,
+            "speculative_schedule": "aoae_block",
+            "reuse_signal": {"method": "argmax_match"},
+            "positional_cache": {"enabled": False},
+        },
+        "evaluation": {"task_type": "math"},
+    }
+
+    result = mod.evaluate_speculative(
+        dual_model=FakeDual(),
+        policy=object(),
+        soft_mask=None,
+        prism=None,
+        dataset=[{"question": "q", "answer": "#### 42"}],
+        tokenizer=FakeTokenizer(),
+        cfg=cfg,
+        max_samples=1,
+    )
+
+    assert calls["heuristic"] == 1
+    assert result.accuracy == 1.0
+    assert result.generation_mode == "block"
+
+
 def test_lossless_verification_override_flows_through_per_point(tmp_path):
     # The Pareto frontier mixes soft and lossless operating points; the
     # per-point lossless override must mutate the dual model wrapper's
@@ -376,3 +517,185 @@ def test_runtime_managed_base_model_to_delegates_for_initial_device_move(monkeyp
 
     assert returned is base_model
     assert called["value"] is True
+
+
+def test_semi_any_order_block_length_returns_moderate_default_and_honors_override():
+    # The LLaDA2.1 *semi-any-order* baseline uses a moderate block size:
+    # wider than the canonical block-mode default (32) so the response gets
+    # multi-token bidirectional context, narrower than the full sequence so
+    # the mask stays inside LLaDA2.1's training distribution.
+    from aoae.evaluate import _semi_any_order_block_length
+
+    # Default — 128 is the documented semi-any-order block size.
+    assert _semi_any_order_block_length({}) == 128
+    assert _semi_any_order_block_length({"data": {}}) == 128
+    # Configurable via data.any_order_block_length (e.g., 64 for tighter
+    # alignment with the 32-token block-trained distribution).
+    assert _semi_any_order_block_length({"data": {"any_order_block_length": 64}}) == 64
+    assert _semi_any_order_block_length({"data": {"any_order_block_length": 256}}) == 256
+    # Returns at least 1 even with absurd input (the helper must always feed
+    # ``block_smode_decode`` a usable block_length).
+    assert _semi_any_order_block_length({"data": {"any_order_block_length": 0}}) >= 1
+    assert _semi_any_order_block_length({"data": {"any_order_block_length": None}}) >= 1
+
+
+def test_block_smode_decode_suppress_eos_keeps_position_zero_visible():
+    # Regression: LLaDA2.1 any-order mode places EOS at response[0] under
+    # full bidirectional attention, which then truncates the visible output
+    # to length zero in the eval summariser.  ``suppress_eos=True`` masks
+    # EOS out of the per-step logits before the M2T threshold check, so the
+    # first response position never gets unmasked to EOS.
+    import torch
+    from aoae.inference import block_smode_decode
+
+    EOS_ID = 2
+    MASK_ID = 0
+    NON_EOS_ID = 1
+
+    class EOSPreferringModel:
+        vocab_size = 4
+
+        def __init__(self, eos_logit: float, non_eos_logit: float):
+            self._eos_logit = eos_logit
+            self._non_eos_logit = non_eos_logit
+            self.tokenizer = type("T", (), {"eos_token_id": EOS_ID})()
+
+        def forward(self, input_ids):
+            B, L = input_ids.shape
+            logits = torch.full((B, L, self.vocab_size), -10.0)
+            logits[..., EOS_ID] = self._eos_logit
+            logits[..., NON_EOS_ID] = self._non_eos_logit
+            return logits
+
+    cfg = {
+        "inference": {
+            "gen_length": 3,
+            "block_length": 16,  # > P + L_gen so single block + full attention
+            "temperature": 0.0,
+        },
+        "base_model": {"mask_token_id": MASK_ID},
+    }
+    prompt = torch.tensor([[10, 20]], dtype=torch.long)
+
+    # Without suppression: model picks EOS, response[0] becomes EOS, the
+    # visible-token count would collapse to zero in the eval summariser.
+    out_no_suppress = block_smode_decode(
+        EOSPreferringModel(eos_logit=10.0, non_eos_logit=2.0),
+        prompt, cfg,
+        tau_mask=0.5, tau_edit=0.5, max_steps_per_block=4, enable_mbe=False,
+        gen_length=3,
+    )
+    response_no_suppress = out_no_suppress[0, prompt.shape[1]:]
+    assert int(response_no_suppress[0].item()) == EOS_ID
+
+    # With suppression: EOS is masked out of the per-step logits and the
+    # next-best token wins instead.  response[0] is therefore never EOS.
+    out_suppress = block_smode_decode(
+        EOSPreferringModel(eos_logit=10.0, non_eos_logit=2.0),
+        prompt, cfg,
+        tau_mask=0.5, tau_edit=0.5, max_steps_per_block=4, enable_mbe=False,
+        gen_length=3,
+        suppress_eos=True,
+    )
+    response_suppress = out_suppress[0, prompt.shape[1]:]
+    assert int(response_suppress[0].item()) != EOS_ID
+    assert int(response_suppress[0].item()) == NON_EOS_ID
+
+
+def test_aoae_block_inference_populates_trajectory_effective_flops():
+    # ``evaluate_speculative`` raises when a trajectory is missing
+    # ``effective_flops``.  This regression test asserts the block-mode
+    # speculative path always reports the cost-unit fields the eval harness
+    # consumes (effective_flops, primary_steps, aux_only_steps).
+    import torch
+    import types
+    from aoae.speculative_inference import aoae_block_inference
+
+    cfg = {
+        "base_model": {"mask_token_id": 0},
+        "cache": {"enabled": True, "stable_kv_cache": False, "prefix_kv_cache": False},
+        "grpo": {"thrash_age_decay": 0.0},
+        "inference": {
+            "steps": 4,
+            "gen_length": 4,
+            "temperature": 0.0,
+            "fallback_unmask": False,
+            "disable_remask": False,
+            "compose_gamma": 0.0,
+            "primary_agree_threshold": 0.0,
+            "block_length": 2,
+            "verifier_schedule": {
+                "mode": "candidate_budget",
+                "draft_token_budget": 4,
+                "min_draft_microsteps": 1,
+                "max_draft_microsteps": 1,
+                "force_first_last": True,
+            },
+            "verifier": {"acceptance_mode": "argmax_match"},
+            "drafter": {"confidence_threshold": 0.1, "aux_compute_ratio": 0.35},
+            "positional_cache": {"enabled": False},
+            "reuse_signal": {"method": "argmax_match"},
+        },
+        "analysis": {"track_kv_dynamics": False},
+    }
+
+    class StubDual:
+        @staticmethod
+        def _logits(B, L):
+            x = torch.zeros(B, L, 3)
+            x[..., 1] = 8.0
+            return x
+
+        def auxiliary_forward_resp(self, prefix_ids, blk_slice):
+            return self._logits(prefix_ids.shape[0], blk_slice.stop - blk_slice.start)
+
+        def primary_forward_resp(self, prefix_ids, blk_slice):
+            return self._logits(prefix_ids.shape[0], blk_slice.stop - blk_slice.start)
+
+    class StubPolicy:
+        def __call__(self, *args, **kwargs):
+            mask_ind = args[1]
+            zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+            return {
+                "unmask_probs": zeros,
+                "remask_probs": zeros,
+                "cache_probs": zeros,
+                "access_probs": zeros,
+                "access_logits": zeros,
+            }
+
+        def sample_actions(self, policy_out, mask_ind):
+            del policy_out
+            zeros = torch.zeros_like(mask_ind, dtype=torch.float32)
+            return {"u_t": zeros, "r_t": zeros, "kappa_t": zeros, "q_t": zeros}
+
+    class StubSoftMask:
+        def __call__(self, resp_logits, mask_ind, step_frac, return_weighted=False):
+            del step_frac
+            hidden = torch.zeros(resp_logits.shape[0], resp_logits.shape[1], 1)
+            confidence = torch.ones_like(mask_ind, dtype=torch.float32)
+            entropy = torch.zeros_like(confidence)
+            weighted = torch.zeros_like(hidden)
+            if return_weighted:
+                return hidden, confidence, entropy, weighted
+            return hidden, confidence, entropy
+
+    _, traj = aoae_block_inference(
+        dual_model=StubDual(),
+        policy=StubPolicy(),
+        soft_mask_module=StubSoftMask(),
+        prism_adapter=None,
+        prompt_ids=torch.tensor([[1]], dtype=torch.long),
+        cfg=cfg,
+        collect_stats=True,
+    )
+
+    assert traj is not None
+    assert traj.effective_flops is not None
+    assert float(traj.effective_flops.mean().item()) >= 0.0
+    assert traj.aux_compute_units is not None
+    assert traj.verifier_compute_units is not None
+    assert traj.baseline_compute_units is not None
+    # The eval harness reads these directly into the per-row stats blob.
+    assert isinstance(traj.primary_steps, int)
+    assert isinstance(traj.aux_only_steps, int)

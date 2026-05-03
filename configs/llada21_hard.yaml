@@ -28,7 +28,7 @@ policy:
 prism:
   hidden_dim: 256
   threshold: 0.5
-  train_samples: 1000
+  train_samples: 100
   epochs: 3
   lr: 1.0e-3
   batch_size: 4
@@ -45,7 +45,7 @@ grpo:
   lr: 3.0e-4
   weight_decay: 0.01
   epochs: 5
-  max_steps: 1000
+  max_steps: 100
   batch_size: 4
   grad_accum_steps: 4
   warmup_steps: 200
@@ -106,7 +106,7 @@ analysis:
 data:
   train_dataset: "nvidia/OpenMathInstruct-2"
   train_split: "train"
-  train_max_samples: 1000
+  train_max_samples: 100
   eval_dataset: "openai/gsm8k"
   eval_split: "test"
   use_chat_template: "auto"

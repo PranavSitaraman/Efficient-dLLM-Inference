@@ -47,7 +47,10 @@ from .dinfer_integration import (
     run_block_frontier_speculative_inference,
     run_blockwise_speculative_inference,
 )
-from .speculative_inference import speculative_inference as _aoae_speculative_inference
+from .speculative_inference import (
+    aoae_block_inference as _aoae_block_inference,
+    speculative_inference as _aoae_speculative_inference,
+)
 from .runtime_checks import collect_runtime_info, set_global_seed, is_global_rank_zero
 from .evaluators import build_evaluator, describe_evaluator
 from .tasks import (
@@ -59,6 +62,99 @@ from .experiment_utils import set_nested
 
 
 _MAX_SAVED_PREDICTIONS = 50
+
+
+def _semi_any_order_block_length(cfg: Dict[str, Any]) -> int:
+    """Block length for the LLaDA2.1 *semi-any-order* baselines.
+
+    LLaDA2.1 was trained with global block-causal attention at
+    ``block_length=32``.  Setting ``block_length`` to the full prompt+response
+    sequence collapses the mask to full bidirectional attention but is
+    out-of-distribution: under that regime the model commits to EOS at
+    response[0] and the visible-token count collapses to zero.  AOAE itself
+    is only "semi-any-order" because the underlying LLaDA forward pass is
+    block-trained anyway, so the fair LLaDA-side baseline uses a moderate
+    block size that gives the response multi-token bidirectional windows
+    while staying inside the training distribution.
+
+    Configurable via ``data.any_order_block_length``; default 128 (4
+    response-side blocks of 128 tokens each at L_gen=512, vs. 16 blocks of 32
+    tokens in the canonical block-mode baseline).
+    """
+    raw = cfg.get("data", {}).get("any_order_block_length", 128) or 128
+    return max(1, int(raw))
+
+
+def _stats_from_speculative_trajectory(traj: Any, T: int) -> Dict[str, Any]:
+    """Translate a SpeculativeTrajectory into the eval ``stats`` dict.
+
+    Both the canonical aoae path and the block-mode aoae_block path return
+    a ``SpeculativeTrajectory``; the eval harness consumes them via a flat
+    stats dict keyed by ``effective_flops`` and per-step counts.  Centralising
+    the translation here keeps the contract identical across schedules and
+    guarantees ``effective_flops`` is always populated whenever the
+    trajectory carries it.
+    """
+    stats: Dict[str, Any] = {}
+    if traj is None:
+        return stats
+    stats["primary_steps"] = int(getattr(traj, "primary_steps", 0) or T)
+    stats["aux_only_steps"] = int(getattr(traj, "aux_only_steps", 0))
+    total_steps = stats["primary_steps"] + stats["aux_only_steps"]
+    stats["primary_skip_ratio"] = stats["aux_only_steps"] / max(total_steps, 1)
+    stats["verifier_call_rate"] = stats["primary_steps"] / max(total_steps, 1)
+    stats["draft_microsteps"] = stats["aux_only_steps"]
+    stats["total_commits"] = int(getattr(traj, "total_stable_commits", 0))
+    stats["total_invalidations"] = int(getattr(traj, "total_stable_invalidations", 0))
+    stats["stable_cache_fraction"] = _mean_fraction_series(
+        getattr(traj, "stable_cached_fractions", [])
+    )
+    stats["spec_cache_fraction"] = _mean_fraction_series(
+        getattr(traj, "spec_cached_fractions", [])
+    )
+    stats["combined_cache_fraction"] = _mean_fraction_series(
+        getattr(traj, "cached_fractions", [])
+    )
+    stats["draft_accepts"] = int(getattr(traj, "draft_accepts", 0))
+    stats["draft_rejects"] = int(getattr(traj, "draft_rejects", 0))
+    stats["frontier_accept_rate"] = float(getattr(traj, "frontier_accept_rate", 0.0))
+    stats["frontier_reject_rate"] = float(getattr(traj, "frontier_reject_rate", 0.0))
+    stats["mean_frontier_size"] = float(getattr(traj, "mean_frontier_size", 0.0))
+    stats["mean_agreement"] = float(getattr(traj, "mean_agreement_rate", 0.0))
+    stats["agreement_observations"] = int(getattr(traj, "agreement_observations", 0))
+    stats["reuse_mean_safe_reuse"] = float(getattr(traj, "mean_agreement_rate", 0.0))
+    stats["safe_reuse_observations"] = int(getattr(traj, "agreement_observations", 0))
+    stats["reuse_mean_js_divergence"] = 0.0
+    stats["drafter_cache_resets"] = int(getattr(traj, "drafter_cache_resets", 0))
+    eff = getattr(traj, "effective_flops", None)
+    if eff is not None:
+        stats["effective_flops"] = float(eff.float().mean().item())
+    aux_units = getattr(traj, "aux_compute_units", None)
+    if aux_units is not None:
+        stats["aux_compute_units"] = float(aux_units.float().mean().item())
+    verifier_units = getattr(traj, "verifier_compute_units", None)
+    if verifier_units is not None:
+        stats["verifier_compute_units"] = float(verifier_units.float().mean().item())
+    baseline_units = getattr(traj, "baseline_compute_units", None)
+    if baseline_units is not None:
+        stats["baseline_compute_units"] = float(baseline_units.float().mean().item())
+    am = getattr(traj, "access_metrics", {}) or {}
+    stats["access_access_rate"] = float(am.get("access_rate", 0.0))
+    stats["access_access_mandatory_rate"] = float(am.get("access_mandatory_rate", 0.0))
+    stats["access_access_optional_rate"] = float(am.get("access_optional_rate", 0.0))
+    stats["access_access_budget_utilization"] = float(am.get("access_budget_utilization", 0.0))
+    stats["access_access_effective_budget"] = float(am.get("access_effective_budget", 0.0))
+    stats["access_next_h_precision"] = float(am.get("access_next_h_precision", 0.0))
+    stats["access_next_h_recall"] = float(am.get("access_next_h_recall", 0.0))
+    stats["access_next_h_f1"] = float(am.get("access_next_h_f1", 0.0))
+    stats["access_next_h_spec_precision"] = float(am.get("access_next_h_spec_precision", 0.0))
+    stats["access_next_h_spec_recall"] = float(am.get("access_next_h_spec_recall", 0.0))
+    stats["access_next_h_spec_f1"] = float(am.get("access_next_h_spec_f1", 0.0))
+    stats["mean_boundary_depth"] = float(getattr(traj, "mean_boundary_depth", 0.0))
+    stats["boundary_distribution"] = str(getattr(traj, "boundary_distribution", "{}"))
+    if getattr(traj, "kv_dynamics_summary", None) is not None:
+        stats["kv_dynamics"] = traj.kv_dynamics_summary
+    return stats
 
 
 @contextmanager
@@ -224,6 +320,21 @@ _BASELINE_GENERATION_MODES: Dict[str, str] = {
     "llada21_speed_mode": "block",
     "llada21_quality_mode": "block",
 }
+
+_HEURISTIC_BLOCK_SCHEDULES = {"aoae_block", "draft_frontier_block", "block_frontier"}
+_TRAINED_BLOCK_POLICY_SCHEDULES = {
+    "aoae_block_policy",
+    "aoae_block_trained",
+    "block_policy",
+    "trained_block_frontier",
+}
+
+
+def _infer_speculative_generation_mode(schedule: str) -> str:
+    schedule = str(schedule).strip().lower()
+    if schedule == "aoae" or schedule in _TRAINED_BLOCK_POLICY_SCHEDULES:
+        return "any_order"
+    return "block"
 
 
 def _get_prediction_save_limit(cfg: Dict[str, Any]) -> int:
@@ -478,7 +589,10 @@ def _normalize_speculative_eval_point(
         for key, value in _iter_dotted_items(raw_overrides):
             overrides[_canonical_speculative_override_key(key)] = value
 
-    metadata_keys = {"name", "label", "description", "note", "policy_temperature", "tau_pi", "overrides"}
+    metadata_keys = {
+        "name", "label", "description", "note", "policy_temperature",
+        "tau_pi", "overrides", "generation_mode", "enabled",
+    }
     config_section_keys = {"base_model", "cache", "inference", "analysis", "data", "evaluation"}
     for key, value in raw_point.items():
         if key in metadata_keys:
@@ -507,7 +621,7 @@ def _normalize_speculative_eval_point(
             "inference.speculative_schedule",
             cfg.get("inference", {}).get("speculative_schedule", "aoae"),
         )
-        point_generation_mode = "any_order" if str(sched).strip().lower() == "aoae" else "block"
+        point_generation_mode = _infer_speculative_generation_mode(str(sched))
 
     return {
         "name": name,
@@ -520,13 +634,18 @@ def _normalize_speculative_eval_point(
 def _build_speculative_eval_points(
     cfg: Dict[str, Any],
     explicit_policy_temperatures: Optional[List[float]],
+    sweep_point_filter: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     if explicit_policy_temperatures is not None:
         return _temperature_only_speculative_points([float(t) for t in explicit_policy_temperatures])
 
     sweep_cfg = cfg.get("evaluation", {}).get("speculative_sweep", {})
     if bool(sweep_cfg.get("enabled", False)):
-        points = sweep_cfg.get("points", [])
+        points = [
+            point
+            for point in sweep_cfg.get("points", [])
+            if not isinstance(point, dict) or bool(point.get("enabled", True))
+        ]
         if not points:
             raise ValueError("evaluation.speculative_sweep.enabled=true but no points were provided.")
         normalized = [
@@ -536,6 +655,17 @@ def _build_speculative_eval_points(
         mode_filter = cfg.get("evaluation", {}).get("generation_mode_filter", "all")
         if mode_filter != "all":
             normalized = [p for p in normalized if p.get("generation_mode", "any_order") == mode_filter]
+        if sweep_point_filter:
+            requested = set(sweep_point_filter)
+            kept = [p for p in normalized if p.get("name") in requested]
+            missing = requested - {p.get("name") for p in kept}
+            if missing:
+                raise ValueError(
+                    f"--sweep_points requested unknown point(s): {sorted(missing)}. "
+                    f"Available after generation_mode_filter: "
+                    f"{[p.get('name') for p in normalized]}"
+                )
+            normalized = kept
         return normalized
 
     return _temperature_only_speculative_points(_DEFAULT_SPECULATIVE_POLICY_TEMPERATURES)
@@ -546,6 +676,7 @@ def _apply_speculative_eval_point(cfg: Dict[str, Any], point: Dict[str, Any]) ->
     for key, value in point.get("overrides", {}).items():
         set_nested(point_cfg, str(key), value)
     point_cfg["_active_speculative_eval_point"] = str(point.get("name", ""))
+    point_cfg["_active_speculative_eval_generation_mode"] = str(point.get("generation_mode", ""))
     point_cfg["_active_speculative_eval_overrides"] = dict(point.get("overrides", {}))
     return point_cfg
 
@@ -581,7 +712,7 @@ def _summarize_speculative_point(point: Dict[str, Any], cfg: Dict[str, Any]) -> 
     block_cfg = inf_cfg.get("block_speculative", {}) or {}
     routing = "lossless" if base_cfg.get("lossless_verification", False) else "soft"
     block_note = ""
-    if schedule in {"aoae_block", "draft_frontier_block", "block_frontier"}:
+    if schedule in _HEURISTIC_BLOCK_SCHEDULES | _TRAINED_BLOCK_POLICY_SCHEDULES:
         block_note = (
             f" draft_thr={block_cfg.get('draft_threshold', '')}, "
             f"verify_thr={block_cfg.get('verifier_threshold', '')}, "
@@ -643,7 +774,7 @@ def _speculative_note(
         f"agree_thr={inf_cfg.get('primary_agree_threshold', 0.0)},"
         f"unmask={unmask},reuse={reuse_method},{pc_note},sched={schedule}"
     )
-    if schedule in {"aoae_block", "draft_frontier_block", "block_frontier"}:
+    if schedule in _HEURISTIC_BLOCK_SCHEDULES | _TRAINED_BLOCK_POLICY_SCHEDULES:
         note += (
             f",draft_thr={block_cfg.get('draft_threshold', '')}"
             f",verify_thr={block_cfg.get('verifier_threshold', '')}"
@@ -911,11 +1042,14 @@ def evaluate_baseline(
                 )
             elif method == "llada21_speed_anyorder":
                 s = resolve_llada21_official_settings(cfg, mode="speed")
-                # Any-order via block diffusion with one block over the
-                # entire response: forward_block_causal sees block_length =
-                # L_gen, so the response is fully bidirectional within
-                # itself. Prompt stays in its own (causal) block.
-                with _override_block_length(cfg, s["gen_length"]):
+                # Semi-any-order LLaDA2.1 baseline.  Decodes the response in
+                # response-local blocks of ``data.any_order_block_length``
+                # tokens (default 128) — wider than the canonical block
+                # baseline (32) so the model gets multi-token bidirectional
+                # context but narrower than full bidirectional, which is OOD.
+                # ``suppress_eos=True`` blocks the response[0]→EOS collapse
+                # documented above.
+                with _override_block_length(cfg, _semi_any_order_block_length(cfg)):
                     output_ids = block_smode_decode(
                         base_model, prompt_ids, cfg,
                         tau_mask=s["threshold"], tau_edit=s["editing_threshold"],
@@ -924,10 +1058,11 @@ def evaluate_baseline(
                         gen_length=s["gen_length"],
                         eos_early_stop=s["eos_early_stop"],
                         stats=decode_stats,
+                        suppress_eos=True,
                     )
             elif method == "llada21_quality_anyorder":
                 s = resolve_llada21_official_settings(cfg, mode="quality")
-                with _override_block_length(cfg, s["gen_length"]):
+                with _override_block_length(cfg, _semi_any_order_block_length(cfg)):
                     output_ids = block_smode_decode(
                         base_model, prompt_ids, cfg,
                         tau_mask=s["threshold"], tau_edit=s["editing_threshold"],
@@ -936,6 +1071,7 @@ def evaluate_baseline(
                         gen_length=s["gen_length"],
                         eos_early_stop=s["eos_early_stop"],
                         stats=decode_stats,
+                        suppress_eos=True,
                     )
             elif method == "block_smode":
                 output_ids = block_smode_decode(
@@ -1067,7 +1203,13 @@ def evaluate_speculative(
     device = dual_model.device
     T = cfg["inference"]["steps"]
     schedule = str(cfg.get("inference", {}).get("speculative_schedule", "aoae")).strip().lower()
-    generation_mode = "any_order" if schedule == "aoae" else "block"
+    generation_mode = str(
+        cfg.get(
+            "_active_speculative_eval_generation_mode",
+            _infer_speculative_generation_mode(schedule),
+        )
+        or _infer_speculative_generation_mode(schedule)
+    )
 
     correct = 0
     total = 0
@@ -1183,7 +1325,44 @@ def evaluate_speculative(
                     policy_temperature=policy_temperature,
                 )
                 _spec_trajectory = None
-            elif schedule in {"aoae_block", "draft_frontier_block", "block_frontier"}:
+            elif schedule in _TRAINED_BLOCK_POLICY_SCHEDULES:
+                # Explicit trained block-head experiment:
+                # block-by-block, prefix_ids truncated, NO KV cache
+                # (paper-faithful), policy decisions replace threshold
+                # heuristics.  This schedule is intentionally separate from
+                # ``aoae_block`` so the stable heuristic block-frontier
+                # Pareto points cannot be hijacked just because a block-wise
+                # checkpoint exists.
+                _bw_cfg = (cfg.get("policy", {}) or {}).get("block_wise", {}) or {}
+                _blockwise_enabled = bool(_bw_cfg.get("enabled", False))
+                _use_block_policy = (
+                    _blockwise_enabled
+                    and policy is not None
+                    and not isinstance(policy, DefaultPolicy)
+                )
+                if not _use_block_policy:
+                    raise ValueError(
+                        f"inference.speculative_schedule={schedule!r} requires "
+                        "policy.block_wise.enabled=true and a trained AOAEPolicy checkpoint. "
+                        "Use schedule='aoae_block' for the policy-free block-frontier baseline."
+                    )
+                output_ids, _spec_trajectory = _aoae_block_inference(
+                    dual_model=dual_model,
+                    policy=policy,
+                    soft_mask_module=soft_mask,
+                    prism_adapter=prism,
+                    prompt_ids=prompt_ids,
+                    cfg=cfg,
+                    record_trajectory=False,
+                    policy_temperature=policy_temperature,
+                    collect_stats=True,
+                )
+                stats = _stats_from_speculative_trajectory(_spec_trajectory, T)
+            elif schedule in _HEURISTIC_BLOCK_SCHEDULES:
+                # Stable policy-free block-frontier baseline.  This is the
+                # path used by the previously working AOAE block Pareto
+                # variants; block-wise policy training experiments must opt
+                # into ``aoae_block_policy`` instead.
                 output_ids, stats = run_block_frontier_speculative_inference(
                     dual_model=dual_model,
                     policy=policy,
@@ -1210,67 +1389,10 @@ def evaluate_speculative(
                     track_kv_dynamics=_do_track_kv,
                     collect_stats=True,
                 )
-                # Build a stats-like dict from SpeculativeTrajectory for the
-                # metric accumulators below (mirrors the dinfer stats contract).
-                stats: Dict[str, Any] = {}
-                if _spec_trajectory is not None:
-                    traj = _spec_trajectory
-                    stats["primary_steps"] = int(getattr(traj, "primary_steps", 0) or T)
-                    stats["aux_only_steps"] = int(getattr(traj, "aux_only_steps", 0))
-                    total_steps = stats["primary_steps"] + stats["aux_only_steps"]
-                    stats["primary_skip_ratio"] = stats["aux_only_steps"] / max(total_steps, 1)
-                    stats["verifier_call_rate"] = stats["primary_steps"] / max(total_steps, 1)
-                    stats["draft_microsteps"] = stats["aux_only_steps"]
-                    stats["total_commits"] = int(getattr(traj, "total_stable_commits", 0))
-                    stats["total_invalidations"] = int(getattr(traj, "total_stable_invalidations", 0))
-                    stats["stable_cache_fraction"] = _mean_fraction_series(
-                        getattr(traj, "stable_cached_fractions", [])
-                    )
-                    stats["spec_cache_fraction"] = _mean_fraction_series(
-                        getattr(traj, "spec_cached_fractions", [])
-                    )
-                    stats["combined_cache_fraction"] = _mean_fraction_series(
-                        getattr(traj, "cached_fractions", [])
-                    )
-                    stats["draft_accepts"] = int(getattr(traj, "draft_accepts", 0))
-                    stats["draft_rejects"] = int(getattr(traj, "draft_rejects", 0))
-                    stats["frontier_accept_rate"] = float(getattr(traj, "frontier_accept_rate", 0.0))
-                    stats["frontier_reject_rate"] = float(getattr(traj, "frontier_reject_rate", 0.0))
-                    stats["mean_frontier_size"] = float(getattr(traj, "mean_frontier_size", 0.0))
-                    stats["mean_agreement"] = float(traj.mean_agreement_rate)
-                    stats["agreement_observations"] = int(getattr(traj, "agreement_observations", 0))
-                    stats["reuse_mean_safe_reuse"] = float(traj.mean_agreement_rate)
-                    stats["safe_reuse_observations"] = int(getattr(traj, "agreement_observations", 0))
-                    stats["reuse_mean_js_divergence"] = 0.0
-                    stats["drafter_cache_resets"] = int(getattr(traj, "drafter_cache_resets", 0))
-                    eff = getattr(traj, "effective_flops", None)
-                    if eff is not None:
-                        stats["effective_flops"] = float(eff.float().mean().item())
-                    aux_units = getattr(traj, "aux_compute_units", None)
-                    if aux_units is not None:
-                        stats["aux_compute_units"] = float(aux_units.float().mean().item())
-                    verifier_units = getattr(traj, "verifier_compute_units", None)
-                    if verifier_units is not None:
-                        stats["verifier_compute_units"] = float(verifier_units.float().mean().item())
-                    baseline_units = getattr(traj, "baseline_compute_units", None)
-                    if baseline_units is not None:
-                        stats["baseline_compute_units"] = float(baseline_units.float().mean().item())
-                    am = traj.access_metrics
-                    stats["access_access_rate"] = float(am.get("access_rate", 0.0))
-                    stats["access_access_mandatory_rate"] = float(am.get("access_mandatory_rate", 0.0))
-                    stats["access_access_optional_rate"] = float(am.get("access_optional_rate", 0.0))
-                    stats["access_access_budget_utilization"] = float(am.get("access_budget_utilization", 0.0))
-                    stats["access_access_effective_budget"] = float(am.get("access_effective_budget", 0.0))
-                    stats["access_next_h_precision"] = float(am.get("access_next_h_precision", 0.0))
-                    stats["access_next_h_recall"] = float(am.get("access_next_h_recall", 0.0))
-                    stats["access_next_h_f1"] = float(am.get("access_next_h_f1", 0.0))
-                    stats["access_next_h_spec_precision"] = float(am.get("access_next_h_spec_precision", 0.0))
-                    stats["access_next_h_spec_recall"] = float(am.get("access_next_h_spec_recall", 0.0))
-                    stats["access_next_h_spec_f1"] = float(am.get("access_next_h_spec_f1", 0.0))
-                    stats["mean_boundary_depth"] = float(getattr(traj, "mean_boundary_depth", 0.0))
-                    stats["boundary_distribution"] = str(getattr(traj, "boundary_distribution", "{}"))
-                    if traj.kv_dynamics_summary is not None:
-                        stats["kv_dynamics"] = traj.kv_dynamics_summary
+                # Translate via the shared helper used by the block-mode
+                # path so both schedules satisfy the eval-side
+                # ``effective_flops`` contract through a single code path.
+                stats = _stats_from_speculative_trajectory(_spec_trajectory, T)
         if torch.cuda.is_available():
             torch.cuda.synchronize()
         t1 = time.perf_counter()
@@ -1877,6 +1999,7 @@ def main(
     config_path: Optional[str] = None,
     skip_baselines: bool = False,
     speculative_policy_temperatures: Optional[List[float]] = None,
+    sweep_point_filter: Optional[List[str]] = None,
     preloaded_dual_model=None,
     preloaded_eval_ds=None,
     preloaded_base_model=None,
@@ -1912,7 +2035,9 @@ def main(
         eval_ds = _load_eval_dataset(dc)
     if max_samples is None:
         max_samples = dc.get("eval_max_samples")
-    speculative_eval_points = _build_speculative_eval_points(cfg, speculative_policy_temperatures)
+    speculative_eval_points = _build_speculative_eval_points(
+        cfg, speculative_policy_temperatures, sweep_point_filter=sweep_point_filter,
+    )
     prediction_limit = _get_prediction_save_limit(cfg)
     checkpoint_path = _resolve_valid_auto_policy_checkpoint(checkpoint_path, cfg)
 

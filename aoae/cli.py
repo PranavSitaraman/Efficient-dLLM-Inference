@@ -301,6 +301,7 @@ def add_eval_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--positional_cache_horizon", type=int, default=None, help="Override inference.positional_cache.horizon.")
     parser.add_argument("--positional_cache_refresh_budget", type=int, default=None, help="Override inference.positional_cache.refresh_budget.")
     parser.add_argument("--policy_temperatures", type=str, default=None, help="Comma-separated tau_pi values for speculative runs (e.g. 0.5,1.0,1.5).")
+    parser.add_argument("--sweep_points", type=str, default=None, help="Comma-separated speculative_sweep point names to run; others are skipped. Applied after generation_mode_filter.")
     parser.add_argument("--skip_baselines", action="store_true", help="Skip baseline decoding methods and only evaluate the target policy/method.")
     parser.add_argument("--task_type", type=str, default=None, choices=["math", "code"], help="Override evaluation.task_type.")
     parser.add_argument("--code_timeout_sec", type=float, default=None, help="Override evaluation.code.timeout_sec for task_type=code.")
@@ -400,6 +401,10 @@ def run_eval_command(args: argparse.Namespace):
     if args.policy_temperatures is not None:
         policy_temperatures = parse_float_list(args.policy_temperatures, label="policy temperature")
 
+    sweep_points = None
+    if args.sweep_points is not None:
+        sweep_points = [p.strip() for p in args.sweep_points.split(",") if p.strip()]
+
     from .evaluate import main as eval_main
 
     return eval_main(
@@ -410,6 +415,7 @@ def run_eval_command(args: argparse.Namespace):
         config_path=args.config,
         skip_baselines=args.skip_baselines,
         speculative_policy_temperatures=policy_temperatures,
+        sweep_point_filter=sweep_points,
     )
 
 
@@ -548,6 +554,7 @@ def run_pipeline_command(args: argparse.Namespace):
         positional_cache_horizon=None,
         positional_cache_refresh_budget=None,
         policy_temperatures=args.policy_temperatures,
+        sweep_points=getattr(args, "sweep_points", None),
         skip_baselines=args.skip_baselines,
         task_type=None,
         code_timeout_sec=None,
@@ -566,6 +573,7 @@ def run_pipeline_command(args: argparse.Namespace):
         soft_topk=None,
         run_name=None,
         output_dir=None,
+        generation_mode_filter=getattr(args, "generation_mode_filter", None),
     )
     nested_eval = [
         "eval",
@@ -580,6 +588,10 @@ def run_pipeline_command(args: argparse.Namespace):
         nested_eval.extend(["--max_samples", str(args.max_samples)])
     if args.policy_temperatures is not None:
         nested_eval.extend(["--policy_temperatures", args.policy_temperatures])
+    if getattr(args, "generation_mode_filter", None) is not None:
+        nested_eval.extend(["--generation_mode_filter", args.generation_mode_filter])
+    if getattr(args, "sweep_points", None) is not None:
+        nested_eval.extend(["--sweep_points", args.sweep_points])
     if args.skip_baselines:
         nested_eval.append("--skip_baselines")
     return _run_nested_cli(nested_eval)
@@ -618,6 +630,8 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--max_samples", type=int, default=None, help="Optional evaluation cap.")
     pipeline_parser.add_argument("--mode", type=str, default=None, choices=["standard", "speculative"], help="Evaluation mode for the final stage. Defaults to 'speculative' for dual backends and 'standard' otherwise.")
     pipeline_parser.add_argument("--policy_temperatures", type=str, default=None, help="Comma-separated tau_pi values for speculative evaluation.")
+    pipeline_parser.add_argument("--sweep_points", type=str, default=None, help="Comma-separated speculative_sweep point names for the final eval stage. Applied after generation_mode_filter.")
+    pipeline_parser.add_argument("--generation_mode_filter", type=str, default=None, choices=["all", "any_order", "block"], help="Override evaluation.generation_mode_filter for the final eval stage.")
     pipeline_parser.add_argument("--skip_preflight", action="store_true", help="Skip preflight checks.")
     pipeline_parser.add_argument("--skip_prism", action="store_true", help="Skip PRISM training.")
     pipeline_parser.add_argument("--skip_grpo", action="store_true", help="Skip GRPO training.")

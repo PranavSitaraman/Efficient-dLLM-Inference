@@ -21,7 +21,12 @@ import json
 from .cache import DKVCacheManager
 from .experiment_utils import parse_head_set
 from .models.composed_prediction import compose_prediction
-from .models.policy import apply_unmask_budget, call_policy
+from .models.policy import (
+    active_block_window,
+    apply_unmask_budget,
+    call_policy,
+    call_policy_block,
+)
 from .models.soft_mask import call_soft_mask
 from .positional_cache import (
     init_positional_state,
@@ -336,15 +341,34 @@ def aoae_inference(
             age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
 
         # --- Policy forward (with PRISM quality scores) ---
-        policy_out = call_policy(
-            policy,
-            H_t, mask_ind, step_frac,
-            temperature=policy_temperature,
-            confidence=confidence,
-            quality_scores=q_scores,
-            age_feature=age_feat,
-            last_action_feature=last_action_feat,
-        )
+        # Block-wise policy (Option A) — see aoae/models/policy.py for design.
+        _blockwise_cfg = (cfg.get("policy", {}) or {}).get("block_wise", {}) or {}
+        if bool(_blockwise_cfg.get("enabled", False)):
+            _blk_window = active_block_window(
+                mask_ind,
+                max(1, int(ic.get("block_length", 32))),
+                context_left=max(0, int(_blockwise_cfg.get("context_left", 0))),
+            )
+            policy_out = call_policy_block(
+                policy,
+                H_t, mask_ind, step_frac,
+                _blk_window,
+                temperature=policy_temperature,
+                confidence=confidence,
+                quality_scores=q_scores,
+                age_feature=age_feat,
+                last_action_feature=last_action_feat,
+            )
+        else:
+            policy_out = call_policy(
+                policy,
+                H_t, mask_ind, step_frac,
+                temperature=policy_temperature,
+                confidence=confidence,
+                quality_scores=q_scores,
+                age_feature=age_feat,
+                last_action_feature=last_action_feat,
+            )
         pol_inner = policy.module if hasattr(policy, "module") else policy
 
         # --- Sample actions ---
@@ -739,17 +763,13 @@ def block_smode_decode(
     gen_length: Optional[int] = None,
     eos_early_stop: bool = False,
     stats: Optional[Dict[str, Any]] = None,
+    suppress_eos: bool = False,
 ) -> torch.Tensor:
     """
     Block-wise Semi-Autoregressive S-Mode Decoding (LLaDA 2.1 paper §2).
 
     Generates text block-by-block (left-to-right). Within each block,
     parallel threshold decoding unmasks many tokens simultaneously.
-
-    This is the key technique for high TPS:
-      - Only the current block is masked → shorter effective seq for diffusion
-      - Threshold decoding unmasks many tokens per forward pass → fewer steps
-      - Blocks processed sequentially → maintains left-to-right coherence
 
     Args:
         base_model: frozen LLaDA model.
@@ -759,6 +779,14 @@ def block_smode_decode(
         tau_edit: confidence threshold for T2T editing.
         max_steps_per_block: max diffusion steps per block.
         enable_mbe: if True, enable Multiple Block Editing (revisit prev blocks).
+        suppress_eos: if True, mask EOS out of the per-step logits before the
+            M2T threshold check.  Used by the LLaDA2.1 *semi-any-order*
+            baseline: under wider-than-trained block-causal attention the
+            model places EOS at response[0] with high confidence on the
+            very first decode step, which would truncate the visible output
+            to length zero.  Suppression lets the model produce its actual
+            answer; the EOS marker is restored implicitly by the eval
+            summariser when the answer's natural end-of-content tokens win.
 
     Returns:
         output_ids: [B, P + L_gen] generated sequence.
@@ -771,9 +799,10 @@ def block_smode_decode(
     B, P = prompt_ids.shape
     device = prompt_ids.device
     n_blocks = (L_gen + block_len - 1) // block_len
-    eos_token_id = _resolve_eos_token_id(base_model) if eos_early_stop else None
+    eos_token_id = _resolve_eos_token_id(base_model) if (eos_early_stop or suppress_eos) else None
     finished = torch.zeros(B, dtype=torch.bool, device=device)
     iterations = 0
+    _suppress_eos_id = eos_token_id if suppress_eos else None
 
     # Start with prompt + all masks
     y = torch.cat([
@@ -806,6 +835,13 @@ def block_smode_decode(
             else:
                 logits = base_model.forward(prefix_ids)[:, blk_slice, :]
             iterations += 1
+            if _suppress_eos_id is not None and 0 <= int(_suppress_eos_id) < int(logits.shape[-1]):
+                # Forbid EOS as the M2T argmax under semi-any-order: under
+                # wider-than-trained block-causal attention LLaDA2.1 places
+                # EOS at response[0], which would truncate the visible output
+                # to length zero in the eval summariser.
+                logits = logits.clone()
+                logits[..., int(_suppress_eos_id)] = torch.finfo(logits.dtype).min
             max_prob, max_tok = _max_prob_and_argmax(logits)
 
             # M2T: unmask confident positions
@@ -851,6 +887,9 @@ def block_smode_decode(
             else:
                 final_logits = base_model.forward(prefix_ids)[:, blk_slice, :]
             iterations += 1
+            if _suppress_eos_id is not None and 0 <= int(_suppress_eos_id) < int(final_logits.shape[-1]):
+                final_logits = final_logits.clone()
+                final_logits[..., int(_suppress_eos_id)] = torch.finfo(final_logits.dtype).min
             _, final_tok = _max_prob_and_argmax(final_logits)
             completed = y[:, blk_slice].clone()
             completed[remaining_mask] = final_tok[remaining_mask]

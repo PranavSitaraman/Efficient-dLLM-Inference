@@ -23,7 +23,12 @@ from .cache import SpeculativeCacheBookkeeper
 from .experiment_utils import parse_head_set
 from .models.composed_prediction import compose_prediction_dual
 from .models.dual_model import DualModelWrapper, DualModelOutput
-from .models.policy import apply_unmask_budget, call_policy
+from .models.policy import (
+    active_block_window,
+    apply_unmask_budget,
+    call_policy,
+    call_policy_block,
+)
 from .models.soft_mask import call_soft_mask
 from .agreement_signals import compute_reuse_signal
 from .positional_cache import (
@@ -59,6 +64,10 @@ class SpeculativeTrajectory:
     changed_list: List[torch.Tensor] = field(default_factory=list)
     boundary_actions: List[torch.Tensor] = field(default_factory=list)
     step_fracs: List[float] = field(default_factory=list)
+    # Block window per step (start, end) in response coords; populated only
+    # when policy.block_wise.enabled. Used by the per-block GRPO reward to
+    # attribute thrash/cache_F1/access_F1 to the active block.
+    block_windows: List[Tuple[int, int]] = field(default_factory=list)
     final_tokens: Optional[torch.Tensor] = None
     completion_step: Optional[torch.Tensor] = None
     # Aggregate stats
@@ -530,6 +539,14 @@ def speculative_inference(
     gamma = ic.get("compose_gamma", 0.0)
     use_positional_cache = bool(ic.get("positional_cache", {}).get("enabled", False))
     verifier_cfg = ic.get("verifier", {})
+
+    # Block-wise policy (Option A): crop policy inputs to the active block.
+    # See aoae/models/policy.py::call_policy_block for the design note and
+    # the deferred Option B (BlockAOAEPolicy with global summary token).
+    _blockwise_cfg = (cfg.get("policy", {}) or {}).get("block_wise", {}) or {}
+    _blockwise_policy = bool(_blockwise_cfg.get("enabled", False))
+    _block_length = max(1, int(ic.get("block_length", 32)))
+    _block_context_left = max(0, int(_blockwise_cfg.get("context_left", 0)))
 
     B = prompt_ids.shape[0]
     P = prompt_ids.shape[1]
@@ -1098,16 +1115,35 @@ def speculative_inference(
             age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
 
         # --- Policy forward (with agreement signal) ---
-        policy_out = call_policy(
-            policy,
-            H_t, mask_ind, step_frac,
-            temperature=policy_temperature,
-            confidence=confidence,
-            quality_scores=q_scores,
-            agreement=agreement.float(),
-            age_feature=age_feat,
-            last_action_feature=last_action_feat,
-        )
+        if _blockwise_policy:
+            _blk_window = active_block_window(
+                mask_ind,
+                _block_length,
+                context_left=_block_context_left,
+            )
+            policy_out = call_policy_block(
+                policy,
+                H_t, mask_ind, step_frac,
+                _blk_window,
+                temperature=policy_temperature,
+                confidence=confidence,
+                quality_scores=q_scores,
+                agreement=agreement.float(),
+                age_feature=age_feat,
+                last_action_feature=last_action_feat,
+            )
+        else:
+            _blk_window = None
+            policy_out = call_policy(
+                policy,
+                H_t, mask_ind, step_frac,
+                temperature=policy_temperature,
+                confidence=confidence,
+                quality_scores=q_scores,
+                agreement=agreement.float(),
+                age_feature=age_feat,
+                last_action_feature=last_action_feat,
+            )
         pol_inner = policy.module if hasattr(policy, "module") else policy
 
         # --- Sample actions ---
@@ -1178,6 +1214,8 @@ def speculative_inference(
             if "ell_t" in actions:
                 trajectory.boundary_actions.append(actions["ell_t"].detach())
             trajectory.step_fracs.append(step_frac)
+            if _blk_window is not None:
+                trajectory.block_windows.append(_blk_window)
         elif trajectory is not None:
             # Lightweight eval stats: enough for access-pattern summaries
             # without storing logits, H_t, log-probs, or policy outputs.
@@ -1391,5 +1429,392 @@ def speculative_inference(
         if trajectory is None:
             trajectory = SpeculativeTrajectory()
         trajectory.kv_dynamics_summary = _dyn_summary
+
+    return y, trajectory
+
+
+# ============================================================================
+# Block-structured AOAE inference (paper-faithful, no KV cache).
+# ============================================================================
+# Mirrors block_smode_decode's structure (block-by-block left-to-right,
+# prefix_ids = y[:, :blk_end] truncated each microstep, NO KV cache) so it sits
+# at TPS parity with the LLaDA 2.1 baseline.  Differences vs the baseline:
+#   - Within each block, the auxiliary (hard-routed) drafter takes K_draft
+#     cheap microsteps proposing tokens; the primary (soft-routed) verifier
+#     runs periodically per inference.verifier_schedule.
+#   - Per-microstep decisions come from the AOAE policy operating on a cropped
+#     soft-mask H_t for the active block (~32 positions, ~1ms vs ~10ms full).
+#   - On draft microsteps: only u_t (unmask) is applied; r_t/kappa_t are
+#     forced to zero (parallel of speculative_inference's run_primary=False
+#     gating — drafts must not make persistent commitments before verification).
+#   - On verifier microsteps: full AOAE phases — frontier validate/reject,
+#     policy r_t (remask), kappa_t (cache commit), q_t (access).
+#
+# OPTION B note (deferred): the block-cropped policy could additionally
+# receive a small global summary token (committed-prefix mean H, blk_idx /
+# n_blocks, prev-block accept rate).  See aoae/models/policy.py for the
+# design note.
+def aoae_block_inference(
+    dual_model: DualModelWrapper,
+    policy,
+    soft_mask_module,
+    prism_adapter,
+    prompt_ids: torch.LongTensor,
+    cfg: dict,
+    record_trajectory: bool = False,
+    policy_temperature: float = 1.0,
+    collect_stats: bool = False,
+) -> Tuple[torch.Tensor, Optional[SpeculativeTrajectory]]:
+    """Block-structured AOAE speculative inference (no KV cache, paper-faithful)."""
+    from .inference import _max_prob_and_argmax
+
+    ic = cfg["inference"]
+    L_gen = int(ic["gen_length"])
+    block_len = max(1, int(ic.get("block_length", 32)))
+    mask_id = int(cfg["base_model"]["mask_token_id"])
+    use_cache = bool(cfg["cache"]["enabled"])
+    disable_remask = bool(ic.get("disable_remask", False))
+    use_positional_cache = bool(ic.get("positional_cache", {}).get("enabled", False))
+    schedule_cfg = _verifier_schedule(ic)
+    max_draft_microsteps = max(1, int(schedule_cfg.get("max_draft_microsteps", 4)))
+
+    B, P = prompt_ids.shape
+    L_total = P + L_gen
+    device = prompt_ids.device
+
+    y = torch.cat(
+        [
+            prompt_ids,
+            torch.full((B, L_gen), mask_id, dtype=torch.long, device=device),
+        ],
+        dim=1,
+    )
+    resp_slice = slice(P, L_total)
+
+    n_blocks = (L_gen + block_len - 1) // block_len
+
+    _thrash_age_decay = float(cfg.get("grpo", {}).get("thrash_age_decay", 0.0))
+    cache_mgr = (
+        SpeculativeCacheBookkeeper(B, L_gen, device, thrash_age_decay=_thrash_age_decay)
+        if use_cache else None
+    )
+    pos_state = init_positional_state(B, L_gen, device)
+    draft_frontier = DraftFrontier(B, L_gen, device)
+    trajectory = SpeculativeTrajectory() if (record_trajectory or collect_stats) else None
+    pol_inner = policy.module if hasattr(policy, "module") else policy
+
+    # Approximate t/T fraction.  Block_smode_decode does not use a global step
+    # counter; for AOAE the policy's step_frac feature is informative, so we
+    # approximate it by (1 - n_blocks_done / n_blocks) decreasing each block,
+    # plus a within-block term for finer granularity.
+    total_microsteps = 0
+    primary_steps = 0
+    aux_steps = 0
+    draft_accepts = 0
+    draft_rejects = 0
+
+    for blk_idx in range(n_blocks):
+        blk_start = P + blk_idx * block_len
+        blk_end = min(P + (blk_idx + 1) * block_len, P + L_total)
+        # Response-relative window for trajectory.block_windows.
+        resp_b_s = blk_start - P
+        resp_b_e = blk_end - P
+        blk_slice = slice(blk_start, blk_end)
+        blk_w = blk_end - blk_start
+
+        # Most recent verifier output for this block (for stale agreement).
+        last_pri_argmax_blk: Optional[torch.Tensor] = None
+        # Verifier scheduling state.
+        draft_microsteps_since_verify = 0
+        force_next_verifier = False
+        # Per-block step counter for step_frac approximation.
+        blk_step_idx = 0
+        max_blk_steps = max(1, int(schedule_cfg.get("max_draft_microsteps", 4))
+                            * 4)  # generous cap to avoid infinite loop
+        while blk_step_idx < max_blk_steps:
+            blk_tokens = y[:, blk_slice]
+            mask_ind_blk = blk_tokens == mask_id
+            # Done with this block when no masks remain AND no pending frontier.
+            if (not mask_ind_blk.any()) and (not draft_frontier.mask[:, resp_b_s:resp_b_e].any()):
+                break
+
+            run_verifier = _should_run_verifier(
+                schedule=schedule_cfg,
+                step_idx=blk_step_idx,
+                t=max(1, max_blk_steps - blk_step_idx),
+                frontier=draft_frontier,
+                draft_microsteps_since_verify=draft_microsteps_since_verify,
+                force_next=force_next_verifier,
+            )
+            force_next_verifier = False
+
+            prefix_ids = y[:, :blk_end]
+
+            # ---- Auxiliary forward (drafter), cropped to block ----
+            aux_logits_blk = dual_model.auxiliary_forward_resp(prefix_ids, blk_slice)
+            aux_steps += 1
+            aux_conf_blk, aux_tok_blk = _max_prob_and_argmax(aux_logits_blk)
+
+            pri_logits_blk: Optional[torch.Tensor] = None
+            if run_verifier:
+                pri_logits_blk = dual_model.primary_forward_resp(prefix_ids, blk_slice)
+                primary_steps += 1
+
+            # Source logits for soft-mask: prefer fresh primary on verifier
+            # microsteps (matches speculative_inference), else aux on draft
+            # microsteps.  This is the smallest distributional shift relative
+            # to the full-seq policy training.
+            sm_logits_blk = pri_logits_blk if pri_logits_blk is not None else aux_logits_blk
+            H_blk, conf_blk, ent_blk, weighted_blk = call_soft_mask(
+                soft_mask_module, sm_logits_blk, mask_ind_blk,
+                step_frac=(1.0 - blk_idx / max(1, n_blocks)),
+                return_weighted=True,
+            )
+
+            # PRISM scores cropped to block (disabled by default; quality_scores=None).
+            q_scores_blk = None
+            if prism_adapter is not None:
+                # Only built when verifier ran (PRISM consumes hidden states; on
+                # draft microsteps we have aux logits but typically no hidden state).
+                # Keep None on draft microsteps; the policy treats None as zeros.
+                q_scores_blk = None
+
+            # Agreement between drafter argmax and primary argmax for this block.
+            # On verifier microsteps: fresh agreement.  On draft microsteps:
+            # stale agreement vs the most recent verifier argmax (or zeros if
+            # the verifier hasn't run yet for this block).
+            if pri_logits_blk is not None:
+                _, pri_argmax_blk = _max_prob_and_argmax(pri_logits_blk)
+                last_pri_argmax_blk = pri_argmax_blk
+                agreement_blk = (aux_tok_blk == pri_argmax_blk).float()
+            elif last_pri_argmax_blk is not None:
+                agreement_blk = (aux_tok_blk == last_pri_argmax_blk).float()
+            else:
+                agreement_blk = torch.zeros_like(aux_conf_blk)
+
+            # ---- Cropped policy forward (block-local tensors only) ----
+            step_frac = max(0.0, 1.0 - (blk_idx + blk_step_idx / max_blk_steps) / max(1, n_blocks))
+            age_feat_blk = None
+            last_action_feat_blk = None
+            if use_positional_cache:
+                age_feat, last_action_feat = get_policy_positional_features(pos_state, cfg)
+                age_feat_blk = age_feat[:, resp_b_s:resp_b_e].contiguous()
+                last_action_feat_blk = last_action_feat[:, resp_b_s:resp_b_e].contiguous()
+
+            policy_out_blk = call_policy(
+                policy,
+                H_blk, mask_ind_blk, step_frac,
+                temperature=policy_temperature,
+                confidence=conf_blk,
+                quality_scores=q_scores_blk,
+                agreement=agreement_blk,
+                age_feature=age_feat_blk,
+                last_action_feature=last_action_feat_blk,
+            )
+            actions_blk = pol_inner.sample_actions(policy_out_blk, mask_ind_blk)
+            actions_blk = _apply_frozen_action_heads(
+                actions_blk,
+                confidence=conf_blk,
+                mask_ind=mask_ind_blk,
+                cfg=cfg,
+            )
+            actions_blk = apply_unmask_budget(
+                actions_blk, policy_out_blk, mask_ind_blk, cfg,
+            )
+
+            u_t_blk = actions_blk["u_t"]
+            r_t_blk = actions_blk["r_t"]
+            kappa_t_blk = actions_blk["kappa_t"]
+
+            # Draft microsteps must not make persistent commitments.
+            if not run_verifier:
+                r_t_blk = torch.zeros_like(r_t_blk)
+                kappa_t_blk = torch.zeros_like(kappa_t_blk)
+                actions_blk = {**actions_blk, "r_t": r_t_blk, "kappa_t": kappa_t_blk}
+            elif disable_remask:
+                r_t_blk = torch.zeros_like(r_t_blk)
+                actions_blk = {**actions_blk, "r_t": r_t_blk}
+
+            # ---- Phase 1: Remask (verifier microsteps only) ----
+            blk_tokens = blk_tokens.clone()
+            remask_positions_blk = r_t_blk.bool() & ~mask_ind_blk
+            if remask_positions_blk.any():
+                blk_tokens[remask_positions_blk] = mask_id
+
+            # ---- Phase 2: Unmask via aux argmax (draft frontier) or via
+            # verifier argmax (when verifier ran) ----
+            unmask_positions_blk = u_t_blk.bool() & mask_ind_blk
+            if pri_logits_blk is not None:
+                # Verifier microstep: validate the existing frontier first.
+                pri_conf_blk, pri_tok_blk = _max_prob_and_argmax(pri_logits_blk)
+                f_mask_blk = draft_frontier.mask[:, resp_b_s:resp_b_e]
+                f_tok_blk = draft_frontier.token_ids[:, resp_b_s:resp_b_e]
+                if f_mask_blk.any():
+                    accept_blk = f_mask_blk & pri_tok_blk.eq(f_tok_blk.clamp(min=0))
+                    reject_blk = f_mask_blk & ~accept_blk
+                    draft_accepts += int(accept_blk.sum().item())
+                    draft_rejects += int(reject_blk.sum().item())
+                    if reject_blk.any():
+                        # Replace rejected drafts with verifier argmax.
+                        blk_tokens[reject_blk] = pri_tok_blk[reject_blk]
+                    # Clear the block's slice of the frontier.
+                    draft_frontier.mask[:, resp_b_s:resp_b_e] = False
+                    draft_frontier.token_ids[:, resp_b_s:resp_b_e] = -1
+                    draft_frontier.scores[:, resp_b_s:resp_b_e] = 0.0
+                # Apply policy unmask using verifier argmax.
+                if unmask_positions_blk.any():
+                    blk_tokens[unmask_positions_blk] = pri_tok_blk[unmask_positions_blk]
+            else:
+                # Draft microstep: stage drafted tokens in the frontier.
+                if unmask_positions_blk.any():
+                    blk_tokens[unmask_positions_blk] = aux_tok_blk[unmask_positions_blk]
+                    full_mask = torch.zeros_like(draft_frontier.mask)
+                    full_tok = torch.zeros_like(draft_frontier.token_ids)
+                    full_mask[:, resp_b_s:resp_b_e] = unmask_positions_blk
+                    full_tok[:, resp_b_s:resp_b_e] = aux_tok_blk
+                    draft_frontier.add(full_mask, full_tok)
+                draft_microsteps_since_verify += 1
+
+            # ---- Phase 3: Cache commit (verifier microsteps only) ----
+            thrash_blk = None
+            if cache_mgr is not None:
+                # Build full-L tensors for cache_mgr (it tracks K_stable on
+                # the response slice).
+                full_r = torch.zeros((B, L_gen), device=device)
+                full_r[:, resp_b_s:resp_b_e] = r_t_blk
+                thrash_blk = cache_mgr.count_thrash(full_r)
+
+            y[:, blk_slice] = blk_tokens
+
+            if pri_logits_blk is not None:
+                draft_microsteps_since_verify = 0
+
+            # ---- Trajectory recording (scatter back to full-seq for GRPO) ----
+            if record_trajectory and trajectory is not None:
+                full_H = torch.zeros((B, L_gen, H_blk.shape[-1]), device=device, dtype=H_blk.dtype)
+                full_H[:, resp_b_s:resp_b_e, :] = H_blk
+                full_W = torch.zeros((B, L_gen, weighted_blk.shape[-1]), device=device, dtype=weighted_blk.dtype)
+                full_W[:, resp_b_s:resp_b_e, :] = weighted_blk
+                full_E = torch.zeros((B, L_gen), device=device, dtype=ent_blk.dtype)
+                full_E[:, resp_b_s:resp_b_e] = ent_blk
+                full_M = torch.zeros((B, L_gen), device=device, dtype=torch.bool)
+                full_M[:, resp_b_s:resp_b_e] = mask_ind_blk
+                full_A = torch.zeros((B, L_gen), device=device)
+                full_A[:, resp_b_s:resp_b_e] = agreement_blk
+
+                # Scatter actions and policy_out back to full-L.
+                full_actions: Dict[str, torch.Tensor] = {}
+                for k, v in actions_blk.items():
+                    if torch.is_tensor(v) and v.dim() >= 2 and v.shape[1] == blk_w:
+                        full_v = torch.zeros((B, L_gen) + tuple(v.shape[2:]), device=device, dtype=v.dtype)
+                        full_v[:, resp_b_s:resp_b_e] = v
+                        full_actions[k] = full_v
+                    else:
+                        full_actions[k] = v
+                full_policy_out: Dict[str, torch.Tensor] = {}
+                for k, v in policy_out_blk.items():
+                    if torch.is_tensor(v) and v.dim() >= 2 and v.shape[1] == blk_w:
+                        if k.endswith("_logits"):
+                            full_v = torch.full((B, L_gen) + tuple(v.shape[2:]), -1e9,
+                                                device=device, dtype=v.dtype)
+                        else:
+                            full_v = torch.zeros((B, L_gen) + tuple(v.shape[2:]),
+                                                 device=device, dtype=v.dtype)
+                        full_v[:, resp_b_s:resp_b_e] = v
+                        full_policy_out[k] = full_v
+                    else:
+                        full_policy_out[k] = v
+
+                include_heads = parse_head_set(
+                    cfg.get("grpo", {}).get(
+                        "include_heads_in_logprob",
+                        cfg.get("grpo", {}).get("train_heads"),
+                    )
+                )
+                lp = pol_inner.log_prob(policy_out_blk, actions_blk, include_heads=include_heads)
+
+                trajectory.actions.append({k: v.detach() for k, v in full_actions.items()})
+                trajectory.log_probs.append(lp.detach())
+                trajectory.policy_outputs.append({k: v.detach() for k, v in full_policy_out.items()})
+                trajectory.H_t_list.append(full_H.detach())
+                trajectory.weighted_embeds_list.append(full_W.detach())
+                trajectory.entropy_list.append(full_E.detach())
+                trajectory.mask_ind_list.append(full_M.detach())
+                trajectory.quality_scores_list.append(None)
+                trajectory.agreement_list.append(full_A.detach())
+                trajectory.age_feature_list.append(None)
+                trajectory.last_action_feature_list.append(None)
+                trajectory.step_fracs.append(step_frac)
+                trajectory.block_windows.append((resp_b_s, resp_b_e))
+                if thrash_blk is not None:
+                    trajectory.thrash_counts.append(thrash_blk.detach())
+
+            blk_step_idx += 1
+            total_microsteps += 1
+
+        # Final commit: any remaining masks in this block get verifier argmax.
+        remaining = (y[:, blk_slice] == mask_id)
+        if remaining.any():
+            pri_logits_final = dual_model.primary_forward_resp(y[:, :blk_end], blk_slice)
+            primary_steps += 1
+            _, pri_tok_final = _max_prob_and_argmax(pri_logits_final)
+            blk_tokens = y[:, blk_slice].clone()
+            blk_tokens[remaining] = pri_tok_final[remaining]
+            y[:, blk_slice] = blk_tokens
+
+    if trajectory is not None:
+        trajectory.final_tokens = y[:, resp_slice].detach()
+        # ---- Compute-unit accounting (mirrors speculative_inference) ----
+        # The full-quality baseline cost is one verifier pass per planned
+        # diffusion microstep, so we use the schedule cap ``n_blocks ×
+        # max_blk_steps`` as the denominator; ``aoae_block_inference`` is
+        # always invoked with that cap as its iteration ceiling.  Aux drafts
+        # cost ``aux_compute_ratio`` units each, verifier passes cost 1
+        # (this path does not implement K_stable backend skipping).
+        aux_compute_ratio = float(
+            cfg.get("inference", {}).get("drafter", {}).get("aux_compute_ratio", 0.35)
+        )
+        baseline_units = float(max(n_blocks * max(1, max_blk_steps), 1))
+        aux_units_t = torch.full(
+            (B,), float(aux_steps) * aux_compute_ratio,
+            device=device, dtype=torch.float32,
+        )
+        verifier_units_t = torch.full(
+            (B,), float(primary_steps),
+            device=device, dtype=torch.float32,
+        )
+        baseline_units_t = torch.full(
+            (B,), baseline_units, device=device, dtype=torch.float32,
+        )
+        trajectory.aux_compute_units = aux_units_t.detach()
+        trajectory.verifier_compute_units = verifier_units_t.detach()
+        trajectory.baseline_compute_units = baseline_units_t.detach()
+        trajectory.effective_flops = (
+            (aux_units_t + verifier_units_t) / baseline_units_t.clamp(min=1.0)
+        ).detach()
+        trajectory.primary_steps = int(primary_steps)
+        trajectory.aux_only_steps = int(aux_steps)
+        trajectory.draft_accepts = int(draft_accepts)
+        trajectory.draft_rejects = int(draft_rejects)
+        _frontier_total = float(draft_accepts + draft_rejects)
+        trajectory.frontier_accept_rate = float(
+            draft_accepts / max(_frontier_total, 1.0)
+        )
+        trajectory.frontier_reject_rate = float(
+            draft_rejects / max(_frontier_total, 1.0)
+        )
+        # Block path does not (yet) integrate with cache_mgr accumulators,
+        # so report zero K_stable / K_spec occupancy and leave the access /
+        # KV-dynamics fields at their dataclass defaults.
+        trajectory.total_stable_commits = 0
+        trajectory.total_stable_invalidations = 0
+        trajectory.total_cache_hits = 0
+        trajectory.total_cache_misses = 0
+        trajectory.agreement_observations = int(draft_accepts + draft_rejects)
+        trajectory.mean_agreement_rate = trajectory.frontier_accept_rate
+        if trajectory.completion_step is None:
+            trajectory.completion_step = torch.full(
+                (B,), float(total_microsteps), device=device,
+            )
 
     return y, trajectory
