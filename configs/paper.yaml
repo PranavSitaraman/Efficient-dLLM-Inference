@@ -67,47 +67,73 @@ cache:
 
 grpo:
   enabled: true
-  group_size: 8                    # ↑ from 2 — better advantage signal, lower variance
+  group_size: 8
   clip_eps: 0.2
   alpha: 1.0                       # speed reward exponent
-  beta: 0.1                        # thrash penalty weight (multiplied by age-weighted count)
-  thrash_normalization: "response_length"  # convert raw invalidations to per-token rate
-  cache_speed_source: "none"       # do not treat transient K_spec agreement as free cache
-  cache_speed_credit_cap: 0.5
-  thrash_age_decay: 0.1            # exp(-decay*age) weight for thrash penalty; 0=uniform
-  access_reward_weight: 0.0        # q_t is trained through log-prob/commit gating; no dense q reward by default
-  cache_quality_weight: 0.02       # dense κ_t signal; kept small so correctness dominates
+  beta: 0.1                        # thrash penalty weight (inert under κ=0; kept for compat)
+  thrash_normalization: "response_length"
+  cache_speed_source: "none"
+  cache_speed_credit_cap: 0.0      # κ=0 ⇒ no transient/stable cache speed credit
+  thrash_age_decay: 0.1
+  access_reward_weight: 0.0        # q_t not trained
+  cache_quality_weight: 0.0        # κ_t not trained — disable dense F1 signal
   block_wise_reward:
     enabled: false
-    advance_weight: 0.05            # weight on per-block speed bonus
-    # Optional override; defaults to inference.block_speculative.max_verifier_steps_per_block
+    advance_weight: 0.05
     max_steps_per_block: 8
-  # Warm-start the full-seq AOAEPolicy weights into the block-wise fine-tune.
-  # Contract version bumped (5 -> 6) so we explicitly opt into ignoring the
-  # version mismatch on load.
-  warm_start_from: null
+  warm_start_from: null            # v7 contract: head_unmask/head_remask never trained before
   warm_start_strict: false
-  stability_lambda: 10.0           # soft stability exponent λ (maps drift∈[0,0.2] → contrast)
-  unresolved_penalty_weight: 0.25  # penalty for lingering [M] tokens at end of rollout
-  # AOAE's shaped reward includes compute and unresolved-mask penalties, so
-  # valid trained checkpoints can have negative scalar reward. Contract/version
-  # matching, not this threshold, controls whether eval may load a checkpoint.
+  stability_lambda: 10.0
+  unresolved_penalty_weight: 0.25  # terminal penalty on lingering [M] tokens
   min_checkpoint_reward: -1.0
   lr: 3.0e-4
   weight_decay: 0.01
-  epochs: 3                        # ↑ from 2 — more epochs for larger max_steps
-  max_steps: 1000                 # ↑ from 500 — longer run to see convergence
+  epochs: 3
+  max_steps: 500                   # first run; extend on convergence
   batch_size: 1
-  grad_accum_steps: 1              # ↓ from 4 — group_size=8 gives sufficient averaging
-  warmup_steps: 100                # ↑ from 50 — proportional to larger max_steps
+  grad_accum_steps: 1
+  warmup_steps: 50                 # proportional to max_steps
   max_grad_norm: 1.0
   policy_temperature: 1.0
-  normalize_advantage_std: true    # recommended for group_size ≥ 8
-  train_heads: ["cache", "access"] # u/r are deterministic: drafter schedule + verifier rejection
-  include_heads_in_logprob: ["cache", "access"]
+  normalize_advantage_std: true
+
+  # v7: drafter learns u_t (aux microsteps), verifier learns r_t (primary
+  # microsteps); κ/q deferred until stability cache is enabled.  Scope flags
+  # gate which microstep type each trained head fires on (see
+  # _apply_frozen_action_heads in aoae/speculative_inference.py).
+  train_heads: ["unmask", "remask"]
+  include_heads_in_logprob: ["unmask", "remask"]
+  unmask_scope: "drafter"
+  remask_scope: "verifier"
   train_soft_mask: false
-  rollout_steps: 16                # training-time horizon; eval still uses inference.steps
-  rollout_gen_length: 128          # training-time decode budget; eval uses inference.gen_length
+
+  rollout_steps: 16                # T full-quality verifier baseline reference
+  rollout_gen_length: 512          # match eval (quality_balanced uses inference.gen_length=512)
+  # Mirror the quality_balanced_hardver eval point as the training target.
+  # Hardver Pareto-dominated soft verifier on the 50-sample qbal ablation
+  # (see paper/5_3_soft_gating_hurts_verifier-performance.md).
+  # aux_compute_ratio=1.0 is the critical fix: under lossless_verification=true,
+  # primary_forward → auxiliary_forward in DualModelWrapper, so aux and primary
+  # microsteps cost the same.  The default 0.35 is calibrated for the soft
+  # verifier case and would over-credit aux microsteps in the speed reward.
+  rollout_overrides:
+    "base_model.lossless_verification": true
+    "inference.primary_agree_threshold": 0.92
+    # Under hardver, primary_forward == auxiliary_forward, so running aux on
+    # a verifier microstep is a wasted second forward.  Disabling it removes
+    # one source of redundant compute.  Acceptance still uses argmax_match
+    # against the drafter's *frontier* tokens (committed earlier), not a
+    # fresh aux pass, so this is safe.
+    "inference.drafter.run_on_verifier": "never"
+    # Speed reward shape under hardver (TPS-equivalent framing):
+    # Under hardver every forward has equal wall-clock cost, so the only
+    # speed lever the speculative pipeline has is "fewer rejections" (each
+    # rejection triggers recompute_after_reject = an extra primary forward).
+    # Setting aux_compute_ratio=0 makes aux microsteps "free" in the reward
+    # so eff_flops = verifier_units / T ≈ M_verifier × (1 + p_reject) / T,
+    # which is exactly the TPS-relevant cost: minimize verifier calls AND
+    # keep rejection rate low (= maximize committed tokens per forward).
+    "inference.drafter.aux_compute_ratio": 0.0
 
 inference:
   speculative_schedule: "aoae"
@@ -257,6 +283,47 @@ evaluation:
           "inference.primary_agree_threshold": 0.98
           "inference.max_unmask_fraction_per_step": 0.0625
           "inference.disable_remask": false
+      # quality_max ablations: same 2x2 design as quality_balanced — does the
+      # soft-vs-hard verifier or q-vs-s drafter result hold at the more
+      # conservative quality_max operating point?
+      - name: "quality_max_hardver"
+        policy_temperature: 0.7
+        overrides:
+          "base_model.lossless_verification": true
+          "cache.prefix_kv_cache": true
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 4
+          "inference.verifier_schedule.max_draft_microsteps": 1
+          "inference.primary_agree_threshold": 0.98
+          "inference.max_unmask_fraction_per_step": 0.0625
+          "inference.disable_remask": false
+      - name: "quality_max_sq"
+        policy_temperature: 0.7
+        overrides:
+          "base_model.lossless_verification": false
+          "cache.prefix_kv_cache": true
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 8
+          "inference.verifier_schedule.max_draft_microsteps": 2
+          "inference.primary_agree_threshold": 0.98
+          "inference.max_unmask_fraction_per_step": 0.125
+          "inference.disable_remask": false
+          "inference.drafter.confidence_threshold": 0.5
+      - name: "quality_max_sq_hardver"
+        policy_temperature: 0.7
+        overrides:
+          "base_model.lossless_verification": true
+          "cache.prefix_kv_cache": true
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 8
+          "inference.verifier_schedule.max_draft_microsteps": 2
+          "inference.primary_agree_threshold": 0.98
+          "inference.max_unmask_fraction_per_step": 0.125
+          "inference.disable_remask": false
+          "inference.drafter.confidence_threshold": 0.5
       - name: "quality_balanced"
         policy_temperature: 1.0
         overrides:
@@ -268,6 +335,59 @@ evaluation:
           "inference.primary_agree_threshold": 0.92
           "inference.max_unmask_fraction_per_step": 0.125
           "inference.disable_remask": false
+      # Ablation A: same as quality_balanced but verifier uses hard routing
+      # (top-8 native experts) instead of soft routing (top-16). Implemented
+      # via base_model.lossless_verification=true, which short-circuits
+      # primary_forward to auxiliary_forward inside DualModelWrapper. Tests
+      # whether the soft-gated verifier is actually contributing accuracy at
+      # the quality_balanced operating point, or whether the trained AOAE
+      # head is doing the work and the wider experts are just slower.
+      - name: "quality_balanced_hardver"
+        policy_temperature: 1.0
+        overrides:
+          "base_model.lossless_verification": true
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 8
+          "inference.verifier_schedule.max_draft_microsteps": 3
+          "inference.primary_agree_threshold": 0.92
+          "inference.max_unmask_fraction_per_step": 0.125
+          "inference.disable_remask": false
+      # Ablation B: quality_balanced + s/q drafter dynamics. The "s" side is
+      # encoded by lowering drafter.confidence_threshold (0.7 -> 0.5) and
+      # raising the per-step unmask cap and verifier-cycle budget so the
+      # drafter can propose more tokens in parallel between verifier calls.
+      # Verifier still uses soft routing (q-side). u_t is not a trained head
+      # (train_heads=[cache,access]), so this shifts the candidate pool size
+      # without invalidating policy calibration; only kappa_t/q_t see a
+      # different agreement-signal distribution.
+      - name: "quality_balanced_sq"
+        policy_temperature: 1.0
+        overrides:
+          "base_model.lossless_verification": false
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 16
+          "inference.verifier_schedule.max_draft_microsteps": 4
+          "inference.primary_agree_threshold": 0.92
+          "inference.max_unmask_fraction_per_step": 0.25
+          "inference.disable_remask": false
+          "inference.drafter.confidence_threshold": 0.5
+      # Ablation C: combine A and B — aggressive drafter + hard verifier.
+      # Disambiguates whether any TPS win from sq dynamics requires the
+      # soft-gated verifier or holds under the cheaper hard verifier.
+      - name: "quality_balanced_sq_hardver"
+        policy_temperature: 1.0
+        overrides:
+          "base_model.lossless_verification": true
+          "inference.speculative_schedule": "aoae"
+          "inference.verifier_schedule.mode": "candidate_budget"
+          "inference.verifier_schedule.draft_token_budget": 16
+          "inference.verifier_schedule.max_draft_microsteps": 4
+          "inference.primary_agree_threshold": 0.92
+          "inference.max_unmask_fraction_per_step": 0.25
+          "inference.disable_remask": false
+          "inference.drafter.confidence_threshold": 0.5
       # Block-mode counterparts of the quality_* points: same conservative
       # knobs (low temp, small draft budget, slow unmask, remask enabled),
       # but routed through the block frontier scheduler so the policy and
@@ -478,13 +598,13 @@ evaluation:
     memory_limit_mb: 1024
 
 logging:
-  project: "aoae"
-  run_name: "paper_grpo_self_spec"
-  log_every: 10          # ↓ from 50 — more frequent JSONL/WandB data points
-  eval_every: 200        # ↓ from 500 — more frequent eval snapshots
-  save_every: 100        # ↓ from 500 — more frequent checkpoints
-  output_dir: "outputs/paper/"
-  use_wandb: false
+  project: "spec-dlm-grpo"
+  run_name: "grpo_uvscope_qbal_hardver"
+  log_every: 10
+  eval_every: 200
+  save_every: 100
+  output_dir: "outputs/grpo_uvscope/"
+  use_wandb: true
 
 hardware:
   seed: 42

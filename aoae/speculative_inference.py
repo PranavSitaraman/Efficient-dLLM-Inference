@@ -302,34 +302,77 @@ def _should_run_verifier(
     return frontier.max_count_cpu() >= budget
 
 
+def _scope_active(scope: str, run_primary: bool) -> bool:
+    """Return True if a head trained under ``scope`` should be active on this microstep.
+
+    ``scope`` is one of {"drafter", "verifier", "both"}. ``run_primary`` is True
+    on verifier microsteps, False on aux microsteps. ``"drafter"`` activates
+    only on aux microsteps; ``"verifier"`` only on primary microsteps; ``"both"``
+    always active. Used to keep the trained policy responsibilities aligned
+    with the speculative-decoding role split (u_t learned for drafter, r_t for
+    verifier) without changing the loop's microstep cadence.
+    """
+    s = str(scope).strip().lower()
+    if s == "both":
+        return True
+    if s == "drafter":
+        return not run_primary
+    if s == "verifier":
+        return run_primary
+    raise ValueError(f"Unsupported policy scope {scope!r}; expected drafter|verifier|both.")
+
+
 def _apply_frozen_action_heads(
     actions: Dict[str, torch.Tensor],
     *,
     confidence: torch.Tensor,
     mask_ind: torch.Tensor,
     cfg: dict,
+    run_primary: bool,
 ) -> Dict[str, torch.Tensor]:
     """Replace frozen u/r heads with deterministic runtime decisions.
 
-    Canonical GRPO isolates the new cache/access policy by excluding u/r from
-    train_heads. In that setting unmasking follows the drafter confidence
-    schedule and remasking is reserved for the authoritative verifier.
+    Two layers of gating:
+    1. ``train_heads``: which heads are trained at all. Untrained heads are
+       overwritten with deterministic fallbacks (threshold rule for u_t,
+       zeros for r_t / kappa_t / q_t).
+    2. ``unmask_scope`` / ``remask_scope``: which microstep type the trained
+       head is active on. A trained head outside its scope is also overwritten
+       with the deterministic fallback. Defaults: unmask=drafter, remask=verifier.
+
+    This lets us train u_t for the drafter (aux microsteps) and r_t for the
+    verifier (primary microsteps) while leaving the verifier's u_t and the
+    drafter's r_t at their canonical deterministic values.
     """
     gc = cfg.get("grpo", {})
     train_heads = parse_head_set(gc.get("train_heads"))
-    if train_heads is None:
-        return actions
 
     out = dict(actions)
     drafter_cfg = cfg.get("inference", {}).get("drafter", {})
     threshold = float(drafter_cfg.get("confidence_threshold", 0.7))
-    if "unmask" not in train_heads and "u" not in train_heads and "u_t" not in train_heads:
+
+    if train_heads is None:
+        # Eval-time fallthrough: no GRPO config → keep all sampled actions.
+        return out
+
+    u_trained = any(h in train_heads for h in ("unmask", "u", "u_t"))
+    r_trained = any(h in train_heads for h in ("remask", "r", "r_t"))
+    kappa_trained = any(h in train_heads for h in ("cache", "kappa", "kappa_t"))
+    q_trained = any(h in train_heads for h in ("access", "q", "q_t"))
+
+    u_scope = gc.get("unmask_scope", "drafter")
+    r_scope = gc.get("remask_scope", "verifier")
+
+    u_policy_active = u_trained and _scope_active(u_scope, run_primary)
+    r_policy_active = r_trained and _scope_active(r_scope, run_primary)
+
+    if not u_policy_active:
         out["u_t"] = ((confidence >= threshold) & mask_ind.bool()).float()
-    if "remask" not in train_heads and "r" not in train_heads and "r_t" not in train_heads:
+    if not r_policy_active:
         out["r_t"] = torch.zeros_like(out["r_t"])
-    if "cache" not in train_heads and "kappa" not in train_heads and "kappa_t" not in train_heads:
+    if not kappa_trained:
         out["kappa_t"] = torch.zeros_like(out["kappa_t"])
-    if "access" not in train_heads and "q" not in train_heads and "q_t" not in train_heads:
+    if not q_trained:
         out["q_t"] = torch.zeros_like(out["q_t"])
     return out
 
@@ -1153,6 +1196,7 @@ def speculative_inference(
             confidence=confidence,
             mask_ind=mask_ind,
             cfg=cfg,
+            run_primary=run_primary,
         )
         actions = apply_unmask_budget(actions, policy_out, mask_ind, cfg)
         u_t = actions["u_t"]
@@ -1617,6 +1661,7 @@ def aoae_block_inference(
                 confidence=conf_blk,
                 mask_ind=mask_ind_blk,
                 cfg=cfg,
+                run_primary=run_verifier,
             )
             actions_blk = apply_unmask_budget(
                 actions_blk, policy_out_blk, mask_ind_blk, cfg,

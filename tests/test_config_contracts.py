@@ -149,6 +149,12 @@ def test_paper_config_keeps_block_and_any_order_eval_tracks_separate():
     any_order_names = [point["name"] for point in any_order_points]
     assert any_order_names == [
         "quality_max",
+        "quality_max_hardver",
+        "quality_max_sq",
+        "quality_max_sq_hardver",
         "quality_balanced",
+        "quality_balanced_hardver",
+        "quality_balanced_sq",
+        "quality_balanced_sq_hardver",
         "aoae_llada_sq_anyorder",
     ]

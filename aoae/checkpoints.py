@@ -11,7 +11,17 @@ from typing import Dict, Optional
 import torch
 
 
-GRPO_TRAIN_CONTRACT_VERSION = 6
+GRPO_TRAIN_CONTRACT_VERSION = 7
+# v7 (drafter-u / verifier-r training with hardver target): train_heads
+# defaults to ["unmask","remask"] (no longer ["cache","access"]) and the
+# new grpo.unmask_scope / grpo.remask_scope flags gate which microsteps
+# each trained head is active on.  rollout_overrides apply config-level
+# changes (e.g. base_model.lossless_verification=true for the hardver
+# operating point).  Old v6 checkpoints trained on cache+access cannot be
+# resumed: their head_unmask / head_remask are at initialization values
+# and were never gradient-stepped.  Use warm_start_from + warm_start_strict=false
+# if loading the v6 backbone for u/r training.
+#
 # v6 (block-wise AOAE head, Option A): rollouts may run with
 # policy.block_wise.enabled=true, which crops the policy backbone to a 32-
 # token block window and adds trajectory.block_windows.  Reward gains an

@@ -27,6 +27,7 @@ from tqdm import tqdm
 import numpy as np
 from typing import Optional, List, Dict, Tuple, Any, Union
 
+from .experiment_utils import set_nested
 from .checkpoints import (
     GRPO_TRAIN_CONTRACT_VERSION,
     build_grpo_config_fingerprint,
@@ -574,7 +575,15 @@ def normalize_group_advantages(
 
 
 def build_rollout_cfg(cfg: dict) -> dict:
-    """Return the training-time rollout config with optional GRPO overrides."""
+    """Return the training-time rollout config with optional GRPO overrides.
+
+    GRPO-specific overrides applied here:
+      - ``grpo.rollout_steps``           → ``inference.steps``
+      - ``grpo.rollout_gen_length``      → ``inference.gen_length``
+      - ``grpo.rollout_overrides``       → dotted-key overrides on the rollout
+        config (e.g. ``"base_model.lossless_verification": true`` to mirror
+        a specific eval sweep point as the training target).
+    """
     rollout_cfg = copy.deepcopy(cfg)
     inference_cfg = rollout_cfg.setdefault("inference", {})
     grpo_cfg = rollout_cfg.get("grpo", {})
@@ -586,6 +595,10 @@ def build_rollout_cfg(cfg: dict) -> dict:
     rollout_gen_length = grpo_cfg.get("rollout_gen_length")
     if rollout_gen_length is not None:
         inference_cfg["gen_length"] = int(rollout_gen_length)
+
+    overrides = grpo_cfg.get("rollout_overrides", {}) or {}
+    for dotted_key, value in overrides.items():
+        set_nested(rollout_cfg, str(dotted_key), value)
 
     return rollout_cfg
 
@@ -825,9 +838,22 @@ def train(cfg: dict, resume_from: Optional[str] = None):
     world_size = dist_info["world_size"] if is_distributed else 1
     is_main = rank == 0
 
-    torch.manual_seed(cfg["hardware"]["seed"] + rank)
-    random.seed(cfg["hardware"]["seed"] + rank)
-    np.random.seed(cfg["hardware"]["seed"] + rank)
+    # When the underlying LLaDA model is EP/TP-split across ranks (hardware.tp_size > 1
+    # in distributed mode), every forward requires both ranks to participate on the
+    # SAME input. In that case GRPO must run all ranks on the same prompts and with
+    # synchronized sampling RNG so the rollout takes an identical path on every rank
+    # (otherwise EP all-to-all collectives deadlock — observed via NCCL ALLREDUCE
+    # timeout in the multi-GPU smoke test). When tp_size == 1 we keep the original
+    # data-parallel semantics: per-rank prompt shards, per-rank seed for exploration.
+    hw_tp_size = int(cfg.get("hardware", {}).get("tp_size", 1) or 1)
+    sync_ranks = is_distributed and hw_tp_size > 1
+    rank_offset = 0 if sync_ranks else rank
+    torch.manual_seed(cfg["hardware"]["seed"] + rank_offset)
+    random.seed(cfg["hardware"]["seed"] + rank_offset)
+    np.random.seed(cfg["hardware"]["seed"] + rank_offset)
+    if is_main and is_distributed:
+        mode = "EP/TP-shared (synchronized prompts + RNG)" if sync_ranks else "data-parallel (sharded prompts)"
+        print(f"[GRPO] Distributed mode: {mode}  (tp_size={hw_tp_size}, world_size={world_size})")
 
     device = torch.device(f"cuda:{local_rank}" if torch.cuda.is_available() else "cpu")
     if is_main:
@@ -1117,8 +1143,12 @@ def train(cfg: dict, resume_from: Optional[str] = None):
             indices = list(range(len(train_ds)))
             random.shuffle(indices)
 
-            # Shard data across ranks for distributed training
-            if is_distributed:
+            # Shard data across ranks ONLY in pure data-parallel mode. Under EP/TP
+            # (sync_ranks=True) every rank must process the same prompt because the
+            # LLaDA forward is a multi-rank EP collective; sharding would deadlock
+            # the all-to-all. With identical RNG seeds (set above), the shuffled
+            # `indices` order is already identical across ranks under sync_ranks.
+            if is_distributed and not sync_ranks:
                 indices = indices[rank::world_size]
 
             pbar = tqdm(range(0, len(indices), gc["batch_size"]), desc="Training", disable=not is_main)
