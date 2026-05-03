@@ -22,14 +22,12 @@ conda activate rtx
 # match. Without this the launcher fails to import torch (libcusparseLt.so.0).
 export PATH="$CONDA_PREFIX/bin:$PATH"
 
-# WandB defaults (override in shell as needed). The API key is intentionally
-# NOT defaulted here — set it in your environment before launching:
-#   export WANDB_API_KEY="<your-key>"
-#   bash reproduce.sh --slurm --workflow grpo --sitanc
-# To run without wandb, set logging.use_wandb=false in the config; the
-# WANDB_* env vars then become no-ops.
+# WandB defaults (override in shell as needed). To run without wandb,
+# set logging.use_wandb=false in the config; the WANDB_* env vars then
+# become no-ops.
 export WANDB_ENTITY="${WANDB_ENTITY:-codeblock}"
 export WANDB_PROJECT="${WANDB_PROJECT:-spec-dlm-grpo}"
+export WANDB_API_KEY="${WANDB_API_KEY:-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}"
 
 export HF_HUB_DISABLE_XET=1
 export FLASHINFER_DISABLE_VERSION_CHECK=1

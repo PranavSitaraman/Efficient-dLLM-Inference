@@ -395,28 +395,98 @@ def compute_reward(
         access_reward = access_w * access_f1_component
         reward = reward + access_reward
 
+    # --- Speculation-dynamics summaries (per-rollout where meaningful) ---
+    # Aggregates from the SpeculativeTrajectory needed to monitor whether the
+    # drafter accept/reject rate, frontier size, and verifier cadence are
+    # actually moving over training. Trajectory scalars (one value across the
+    # G rollouts in the group) are broadcast to [B] so the existing component
+    # buffer plumbing averages them correctly across training steps.
+    aux_compute_units_t = (
+        getattr(trajectory, "aux_compute_units", torch.zeros(B, device=device))
+        .to(device).float()
+        if getattr(trajectory, "aux_compute_units", None) is not None
+        else torch.zeros(B, device=device)
+    )
+    verifier_compute_units_t = (
+        getattr(trajectory, "verifier_compute_units", torch.zeros(B, device=device))
+        .to(device).float()
+        if getattr(trajectory, "verifier_compute_units", None) is not None
+        else torch.zeros(B, device=device)
+    )
+    baseline_compute_units_t = (
+        getattr(trajectory, "baseline_compute_units", torch.zeros(B, device=device))
+        .to(device).float()
+        if getattr(trajectory, "baseline_compute_units", None) is not None
+        else torch.zeros(B, device=device)
+    )
+
+    # NFE estimate: aux_compute_units == aux_compute_ratio * num_aux_microsteps,
+    # so aux_steps_count == aux_compute_units / aux_compute_ratio. Cheap to
+    # recover and lets WandB plot raw drafter step counts alongside the
+    # compute-weighted FLOPS proxy.
+    _aux_compute_ratio = float(
+        cfg.get("inference", {}).get("drafter", {}).get("aux_compute_ratio", 0.35) or 0.35
+    )
+    if _aux_compute_ratio <= 0:
+        _aux_compute_ratio = 1.0
+    aux_steps_count = aux_compute_units_t / _aux_compute_ratio
+    primary_steps_count = torch.full(
+        (B,),
+        float(getattr(trajectory, "primary_steps", 0) or 0),
+        device=device,
+    )
+    total_nfe = aux_steps_count + primary_steps_count
+
+    # Frontier size per verifier event: list of [B] tensors, one per primary
+    # microstep. mean_frontier_size = average proposals per verifier event;
+    # total_proposed_tokens = sum across the rollout.
+    fs_list = getattr(trajectory, "frontier_sizes", []) or []
+    if fs_list:
+        fs_stack = torch.stack([f.to(device).float() for f in fs_list])  # [n_events, B]
+        mean_frontier_size = fs_stack.mean(dim=0)
+        total_proposed_tokens = fs_stack.sum(dim=0)
+    else:
+        mean_frontier_size = torch.zeros(B, device=device)
+        total_proposed_tokens = torch.zeros(B, device=device)
+
+    # Drafter accept / reject rate across the rollout. These are floats on
+    # the trajectory (single value across G rollouts in the batched forward).
+    frontier_accept_rate_t = torch.full(
+        (B,), float(getattr(trajectory, "frontier_accept_rate", 0.0) or 0.0), device=device
+    )
+    frontier_reject_rate_t = torch.full(
+        (B,), float(getattr(trajectory, "frontier_reject_rate", 0.0) or 0.0), device=device
+    )
+    drafter_cache_resets_t = torch.full(
+        (B,), float(getattr(trajectory, "drafter_cache_resets", 0) or 0), device=device
+    )
+    mean_agreement_rate_t = torch.full(
+        (B,), float(getattr(trajectory, "mean_agreement_rate", 0.0) or 0.0), device=device
+    )
+    completion_step_t = (
+        getattr(trajectory, "completion_step", torch.zeros(B, device=device)).to(device).float()
+        if getattr(trajectory, "completion_step", None) is not None
+        else torch.zeros(B, device=device)
+    )
+
     components: Dict[str, torch.Tensor] = {
         "correctness":         correctness,
         "speed_factor":        speed_factor,
         "effective_flops":     effective_flops,
-        "aux_compute_units":    (
-            getattr(trajectory, "aux_compute_units", torch.zeros(B, device=device))
-            .to(device).float()
-            if getattr(trajectory, "aux_compute_units", None) is not None
-            else torch.zeros(B, device=device)
-        ),
-        "verifier_compute_units": (
-            getattr(trajectory, "verifier_compute_units", torch.zeros(B, device=device))
-            .to(device).float()
-            if getattr(trajectory, "verifier_compute_units", None) is not None
-            else torch.zeros(B, device=device)
-        ),
-        "baseline_compute_units": (
-            getattr(trajectory, "baseline_compute_units", torch.zeros(B, device=device))
-            .to(device).float()
-            if getattr(trajectory, "baseline_compute_units", None) is not None
-            else torch.zeros(B, device=device)
-        ),
+        "aux_compute_units":   aux_compute_units_t,
+        "verifier_compute_units": verifier_compute_units_t,
+        "baseline_compute_units": baseline_compute_units_t,
+        # Speculation dynamics — exposed so wandb can plot them as curves.
+        "aux_steps":            aux_steps_count,
+        "primary_steps":        primary_steps_count,
+        "total_nfe":            total_nfe,
+        "mean_frontier_size":   mean_frontier_size,
+        "total_proposed_tokens": total_proposed_tokens,
+        "frontier_accept_rate": frontier_accept_rate_t,
+        "frontier_reject_rate": frontier_reject_rate_t,
+        "drafter_cache_resets": drafter_cache_resets_t,
+        "mean_agreement_rate":  mean_agreement_rate_t,
+        "completion_step":      completion_step_t,
         "used_steps_frac":     used_steps_frac,
         "mean_cached_fraction": mean_cached,
         "mean_combined_cached_fraction": mean_combined_cached,
@@ -1138,6 +1208,9 @@ def train(cfg: dict, resume_from: Optional[str] = None):
             optimizer_steps_this_epoch = 0
             # Running buffers for reward component logging (reset each log window)
             _component_bufs: Dict[str, List[float]] = collections.defaultdict(list)
+            # Per-head pre-clip gradient norms, captured every optimizer step.
+            # Reset at each log flush (same window as _component_bufs).
+            _grad_bufs: Dict[str, List[float]] = collections.defaultdict(list)
             _last_grpo_loss: float = 0.0
 
             indices = list(range(len(train_ds)))
@@ -1235,6 +1308,21 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             f"{_nan_grad_params[:5]}"
                             + (" ..." if len(_nan_grad_params) > 5 else "")
                         )
+                    # Capture pre-clip per-head gradient norms before clip + step.
+                    # Walks the unwrapped policy so the lookup works under DDP.
+                    _pol_inner_for_grad = (
+                        policy.module if hasattr(policy, "module") else policy
+                    )
+                    for _head_name in ("head_unmask", "head_remask", "head_cache", "head_access"):
+                        _head = getattr(_pol_inner_for_grad, _head_name, None)
+                        if _head is None:
+                            continue
+                        _w = getattr(_head, "weight", None)
+                        if _w is None or _w.grad is None:
+                            _grad_bufs[_head_name].append(0.0)
+                        else:
+                            _grad_bufs[_head_name].append(float(_w.grad.detach().norm().item()))
+
                     nn.utils.clip_grad_norm_(trainable_params, gc["max_grad_norm"])
                     optimizer.step()
                     scheduler.step()
@@ -1253,6 +1341,10 @@ def train(cfg: dict, resume_from: Optional[str] = None):
 
                         def _buf_mean(k: str) -> float:
                             vs = _component_bufs.get(k, [])
+                            return float(np.mean(vs)) if vs else 0.0
+
+                        def _grad_mean(k: str) -> float:
+                            vs = _grad_bufs.get(k, [])
                             return float(np.mean(vs)) if vs else 0.0
 
                         # Compact console line + secondary detail line
@@ -1310,12 +1402,35 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             "cache/mean_combined_fraction": _buf_mean("mean_combined_cached_fraction"),
                             "cache/total_thrash_count": _buf_mean("total_thrash"),
                             "cache/cache_f1": _buf_mean("cache_f1"),
+                            # Speculation dynamics — the curves we actually need to
+                            # see while training u/r heads at the hardver target.
+                            "spec/aux_steps":              _buf_mean("aux_steps"),
+                            "spec/primary_steps":          _buf_mean("primary_steps"),
+                            "spec/total_nfe":              _buf_mean("total_nfe"),
+                            "spec/aux_compute_units":      _buf_mean("aux_compute_units"),
+                            "spec/verifier_compute_units": _buf_mean("verifier_compute_units"),
+                            "spec/mean_frontier_size":     _buf_mean("mean_frontier_size"),
+                            "spec/total_proposed_tokens":  _buf_mean("total_proposed_tokens"),
+                            "spec/frontier_accept_rate":   _buf_mean("frontier_accept_rate"),
+                            "spec/frontier_reject_rate":   _buf_mean("frontier_reject_rate"),
+                            "spec/drafter_cache_resets":   _buf_mean("drafter_cache_resets"),
+                            "spec/mean_agreement_rate":    _buf_mean("mean_agreement_rate"),
+                            "spec/completion_step":        _buf_mean("completion_step"),
+                            # Per-head gradient norms — pre-clip, captured per
+                            # optimizer step in _grad_bufs below. Useful to verify
+                            # the right heads are training and the deferred ones
+                            # (cache, access) stay frozen across the run.
+                            "grad/head_unmask_norm":       _grad_mean("head_unmask"),
+                            "grad/head_remask_norm":       _grad_mean("head_remask"),
+                            "grad/head_cache_norm":        _grad_mean("head_cache"),
+                            "grad/head_access_norm":       _grad_mean("head_access"),
                         }
                         if _logger is not None:
                             _logger.log_step(log_metrics, step=global_step)
 
                         # Reset component accumulators for next window
                         _component_bufs.clear()
+                        _grad_bufs.clear()
 
                     # --- Save checkpoint (rank 0 only) ---
                     if is_main and (global_step == 1 or global_step % lc["save_every"] == 0):

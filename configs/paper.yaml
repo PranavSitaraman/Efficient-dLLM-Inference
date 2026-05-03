@@ -609,5 +609,5 @@ logging:
 hardware:
   seed: 42
   bf16: true
-  tp_size: 1
+  tp_size: 2          # 2-GPU EP/TP-shared GRPO (validated by smoke v3/v4)
   deterministic: false
