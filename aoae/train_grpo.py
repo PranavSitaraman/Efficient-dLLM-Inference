@@ -420,16 +420,15 @@ def compute_reward(
         else torch.zeros(B, device=device)
     )
 
-    # NFE estimate: aux_compute_units == aux_compute_ratio * num_aux_microsteps,
-    # so aux_steps_count == aux_compute_units / aux_compute_ratio. Cheap to
-    # recover and lets WandB plot raw drafter step counts alongside the
-    # compute-weighted FLOPS proxy.
-    _aux_compute_ratio = float(
-        cfg.get("inference", {}).get("drafter", {}).get("aux_compute_ratio", 0.35) or 0.35
+    # NFE: read raw aux/primary microstep counts from the trajectory directly,
+    # independent of aux_compute_ratio. Under hardver we set aux_compute_ratio=0
+    # to make aux microsteps "free" in the speed reward (compute-aware view of
+    # TPS), but the raw NFE diagnostic should still reflect actual forward calls.
+    aux_steps_count = torch.full(
+        (B,),
+        float(getattr(trajectory, "aux_only_steps", 0) or 0),
+        device=device,
     )
-    if _aux_compute_ratio <= 0:
-        _aux_compute_ratio = 1.0
-    aux_steps_count = aux_compute_units_t / _aux_compute_ratio
     primary_steps_count = torch.full(
         (B,),
         float(getattr(trajectory, "primary_steps", 0) or 0),

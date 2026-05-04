@@ -107,7 +107,10 @@ grpo:
   remask_scope: "verifier"
   train_soft_mask: false
 
-  rollout_steps: 16                # T full-quality verifier baseline reference
+  rollout_steps: 256               # match eval inference.steps=256 for RL-env faithfulness;
+                                   # speculative_inference early-stops when all rollouts complete
+                                   # (aoae/speculative_inference.py:855-858) so most rollouts
+                                   # finish in ≪ T microsteps — actual cost ≈ slowest in group.
   rollout_gen_length: 512          # match eval (quality_balanced uses inference.gen_length=512)
   # Mirror the quality_balanced_hardver eval point as the training target.
   # Hardver Pareto-dominated soft verifier on the 50-sample qbal ablation
