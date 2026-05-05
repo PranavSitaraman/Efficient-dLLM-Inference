@@ -154,6 +154,7 @@ def test_paper_config_keeps_block_and_any_order_eval_tracks_separate():
         "quality_max_sq_hardver",
         "quality_balanced",
         "quality_balanced_hardver",
+        "quality_balanced_hardver_prism",
         "quality_balanced_sq",
         "quality_balanced_sq_hardver",
         "aoae_llada_sq_anyorder",

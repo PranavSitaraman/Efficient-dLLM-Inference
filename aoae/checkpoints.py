@@ -11,7 +11,17 @@ from typing import Dict, Optional
 import torch
 
 
-GRPO_TRAIN_CONTRACT_VERSION = 7
+GRPO_TRAIN_CONTRACT_VERSION = 8
+# v8 (V3 with Path C features + Expert Steering, Jazbec et al. 2026):
+# Policy input restructured — no H_t (hidden state), uses (c_t max-conf,
+# m_t, t/T, agreement, q_feat from PRISM). Policy params drop ~57%
+# (461K → ~200K). Expert Steering augments GRPO group from G to G+E with
+# deterministic heuristic rollouts (train_heads=[] for the expert call);
+# loss uses mixture log-prob ratio for is_expert samples.
+# normalize_advantage_std is now False per paper §3.3.
+# Old v7 checkpoints have a different input_proj input dim and CANNOT be
+# resumed — must re-run from init.
+#
 # v7 (drafter-u / verifier-r training with hardver target): train_heads
 # defaults to ["unmask","remask"] (no longer ["cache","access"]) and the
 # new grpo.unmask_scope / grpo.remask_scope flags gate which microsteps

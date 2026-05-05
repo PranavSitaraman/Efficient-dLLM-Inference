@@ -576,7 +576,16 @@ def speculative_inference(
     L_gen = ic["gen_length"]
     mask_id = cfg["base_model"]["mask_token_id"]
     use_cache = cfg["cache"]["enabled"]
-    use_fallback = ic["fallback_unmask"]
+    # V3: per Jazbec et al. 2026 §3.2, the argmax-fallback (force-unmask the
+    # highest-prob masked position when the policy returns u_t = 0
+    # everywhere) is applied at TEST TIME ONLY. Forcing unmasking during
+    # training was found to be prone to reward hacking; instead, rollouts
+    # that fail to fill all positions terminate naturally and are penalised
+    # via the unresolved-fraction term in the reward. We use record_trajectory
+    # as the proxy for "this is a training rollout" — eval calls pass
+    # record_trajectory=False, training rollouts pass True.
+    _config_fallback = bool(ic["fallback_unmask"])
+    use_fallback = _config_fallback and (not record_trajectory)
     disable_remask = ic.get("disable_remask", False)
     base_temp = ic["temperature"]
     gamma = ic.get("compose_gamma", 0.0)

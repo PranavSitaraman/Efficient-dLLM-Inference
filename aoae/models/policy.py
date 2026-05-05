@@ -277,6 +277,17 @@ class AOAEPolicy(nn.Module):
         self.use_agreement_feature = bool(pc.get("use_agreement_feature", True))
         self.use_age_feature = bool(pc.get("use_age_feature", self.use_positional_features))
         self.use_last_action_feature = bool(pc.get("use_last_action_feature", self.use_positional_features))
+        # V3 / Path C feature flags. Defaults preserve V2 behavior so older
+        # configs/checkpoints stay loadable without surprises:
+        #   use_hidden_state=True  → H_t [B, L, D] is included (V2 default)
+        #   use_max_confidence=False → c_t scalar omitted (V2 didn't have it)
+        #   use_quality_score=True (legacy) → q_feat scalar (PRISM, zeros if absent)
+        # In Path C we explicitly set use_hidden_state=false and
+        # use_max_confidence=true in the config to mirror Jazbec et al. 2026
+        # (arXiv:2512.09106 §3.2/§4.4) which found H_t hurts and c_t suffices.
+        self.use_hidden_state = bool(pc.get("use_hidden_state", True))
+        self.use_max_confidence_feature = bool(pc.get("use_max_confidence_feature", False))
+        self.use_quality_score_feature = bool(pc.get("use_quality_score_feature", True))
         self.boundary_cfg = pc.get("boundary_head", {})
         self.boundary_enabled = bool(self.boundary_cfg.get("enabled", False))
         self.boundary_num_bins = max(2, int(self.boundary_cfg.get("num_bins", 8)))
@@ -284,9 +295,28 @@ class AOAEPolicy(nn.Module):
         self.init_remask_bias = float(pc.get("init_remask_bias", -4.0))
         self.init_cache_bias = float(pc.get("init_cache_bias", -2.0))
         self.init_access_bias = float(pc.get("init_access_bias", -2.0))
-        extra_feats = 3 + int(self.use_agreement_feature) + int(self.use_age_feature) + int(self.use_last_action_feature)
-        # --- Input projection: base + optional positional features ---
-        self.input_proj = nn.Linear(input_dim + extra_feats, d)
+        # Input dim accounting:
+        #   H_t                (D)    if use_hidden_state else 0
+        #   m_feat             (1)    always
+        #   t_feat             (1)    always
+        #   q_feat (PRISM)     (1)    if use_quality_score_feature else 0
+        #   c_feat (max conf)  (1)    if use_max_confidence_feature else 0
+        #   a_feat (agreement) (1)    if use_agreement_feature else 0
+        #   age_feat           (1)    if use_age_feature else 0
+        #   last_action_feat   (1)    if use_last_action_feature else 0
+        base_dim = input_dim if self.use_hidden_state else 0
+        extra_feats = 2  # m_feat + t_feat
+        if self.use_quality_score_feature:
+            extra_feats += 1
+        if self.use_max_confidence_feature:
+            extra_feats += 1
+        if self.use_agreement_feature:
+            extra_feats += 1
+        if self.use_age_feature:
+            extra_feats += 1
+        if self.use_last_action_feature:
+            extra_feats += 1
+        self.input_proj = nn.Linear(base_dim + extra_feats, d)
 
         # --- Transformer backbone (bidirectional) ---
         encoder_layer = nn.TransformerEncoderLayer(
@@ -373,27 +403,46 @@ class AOAEPolicy(nn.Module):
         """
         B, L, D = H_t.shape
         device = H_t.device
-        del confidence  # Kept for interface parity with heuristic fallback policies.
         temp = _safe_policy_temperature(temperature)
 
         # --- Build per-position input features ---
+        # Order is canonical and gated by self.use_* flags configured at __init__
+        # so that input_proj's in_features matches.
         m_feat = mask_indicator.float().unsqueeze(-1)              # [B, L, 1]
-        if quality_scores is not None:
-            q_feat = torch.nan_to_num(
-                quality_scores.to(device=device, dtype=torch.float32),
-                nan=0.0,
-                posinf=1.0,
-                neginf=0.0,
-            ).clamp(0.0, 1.0).unsqueeze(-1)                       # [B, L, 1]
-        else:
-            q_feat = torch.zeros(B, L, 1, device=device)          # [B, L, 1]
-        t_feat = torch.full((B, L, 1), step_frac, device=device)  # [B, L, 1]
-        feats = [H_t, m_feat, q_feat, t_feat]
+        t_feat = torch.full((B, L, 1), step_frac, device=device)   # [B, L, 1]
+        feats = []
+        if self.use_hidden_state:
+            feats.append(H_t)                                       # [B, L, D]
+        feats.append(m_feat)
+        feats.append(t_feat)
+        if self.use_quality_score_feature:
+            if quality_scores is not None:
+                q_feat = torch.nan_to_num(
+                    quality_scores.to(device=device, dtype=torch.float32),
+                    nan=0.0,
+                    posinf=1.0,
+                    neginf=0.0,
+                ).clamp(0.0, 1.0).unsqueeze(-1)                    # [B, L, 1]
+            else:
+                q_feat = torch.zeros(B, L, 1, device=device)
+            feats.append(q_feat)
+        if self.use_max_confidence_feature:
+            # Max-softmax confidence per position. Confidence is provided by
+            # call_soft_mask upstream (already in [0, 1]) — no further clamp
+            # needed but defensive nan-scrub keeps things robust.
+            if confidence is not None:
+                c_feat = torch.nan_to_num(
+                    confidence.to(device=device, dtype=torch.float32),
+                    nan=0.0, posinf=1.0, neginf=0.0,
+                ).clamp(0.0, 1.0).unsqueeze(-1)                    # [B, L, 1]
+            else:
+                c_feat = torch.zeros(B, L, 1, device=device)
+            feats.append(c_feat)
         if self.use_agreement_feature:
             if agreement is not None:
                 a_feat = agreement.unsqueeze(-1)                   # [B, L, 1]
             else:
-                a_feat = torch.zeros(B, L, 1, device=device)      # [B, L, 1]
+                a_feat = torch.zeros(B, L, 1, device=device)
             feats.append(a_feat)
         if self.use_age_feature:
             if age_feature is not None:

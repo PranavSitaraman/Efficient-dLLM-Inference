@@ -306,13 +306,42 @@ def compute_reward(
     # --- Reward (base) ---
     reward = correctness * speed_factor - thrash_penalty
 
-    # --- Unresolved-mask penalty ---
+    # --- Unresolved-mask penalty (EOS-aware) ---
+    # Only positions BEFORE first EOS count as "unresolved." Positions past
+    # EOS are semantically irrelevant to answer extraction (gsm8k_llada_flexible
+    # reads up to first EOS), so penalizing them would push the policy to
+    # waste forward passes on garbage trailing content. Without an EOS, the
+    # full response counts. Falls back to the old all-positions behavior
+    # only when the tokenizer doesn't expose eos_token_id.
     unresolved_penalty = torch.zeros(B, device=device)
     if unresolved_penalty_weight > 0.0:
         final_tokens = getattr(trajectory, "final_tokens", None)
         if final_tokens is not None:
             mask_id = int(cfg["base_model"]["mask_token_id"])
-            unresolved_fraction = (final_tokens.to(device) == mask_id).float().mean(dim=-1)
+            final_tokens = final_tokens.to(device)
+            L_gen = final_tokens.shape[-1]
+            eos_id = getattr(tokenizer, "eos_token_id", None)
+            if eos_id is not None:
+                is_eos = (final_tokens == int(eos_id))
+                has_eos = is_eos.any(dim=-1)
+                # First-EOS index per row; argmax on a bool returns first True
+                # if any True is present, else 0 — so we override with L_gen
+                # for rows that have no EOS at all.
+                first_eos = is_eos.float().argmax(dim=-1)
+                effective_length = torch.where(
+                    has_eos,
+                    (first_eos + 1).long(),         # include the EOS itself
+                    torch.full_like(first_eos, L_gen, dtype=torch.long),
+                ).clamp(min=1)
+                positions = torch.arange(L_gen, device=device).unsqueeze(0)
+                in_answer_span = positions < effective_length.unsqueeze(-1)
+                mask_in_answer = (final_tokens == mask_id) & in_answer_span
+                unresolved_fraction = (
+                    mask_in_answer.float().sum(dim=-1)
+                    / effective_length.float()
+                )
+            else:
+                unresolved_fraction = (final_tokens == mask_id).float().mean(dim=-1)
             unresolved_penalty = unresolved_penalty_weight * unresolved_fraction
             reward = reward - unresolved_penalty
 
@@ -511,6 +540,40 @@ def compute_reward(
 # GRPO objective (Eq. grpo from paper)
 # ======================================================================
 
+def _expert_steering_mixture_log_prob(
+    *,
+    new_lp: torch.Tensor,
+    old_lp: torch.Tensor,
+    log_w_policy: float,
+    log_w_expert: float,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Expert-Steering mixture log-prob (Jazbec et al. 2026 Appendix F).
+
+    The mixture policy at train time is:
+        π_φ^ES(u | s) = G/(G+E) · π_φ(u | s)  +  E/(G+E) · 1[u == expert]
+
+    For an EXPERT sample (action equals the heuristic by construction), the
+    Dirac contributes 1, so:
+        log π^ES(expert) = logsumexp([log_π_φ + log(G/(G+E)),  log(E/(G+E))])
+
+    This is bounded below by log(E/(G+E)) ≈ −log(G+E)/E + ε regardless of
+    how small π_φ(expert) becomes — preventing the importance ratio from
+    blowing up when the policy diverges far from the expert.
+
+    For policy samples the Dirac contributes 0 (continuous-action limit
+    over thousands of binary positions per microstep makes exact-match with
+    the expert vector astronomically unlikely), so the mixture term is
+    just log_w_policy added to log_π_φ — a constant that cancels when the
+    same mixture is applied to old and new ratios. The caller therefore
+    only invokes this helper for expert samples.
+    """
+    log_w_p = torch.full_like(new_lp, log_w_policy)
+    log_w_e = torch.full_like(new_lp, log_w_expert)
+    mix_new = torch.logsumexp(torch.stack([new_lp + log_w_p, log_w_e]), dim=0)
+    mix_old = torch.logsumexp(torch.stack([old_lp + log_w_p, log_w_e]), dim=0)
+    return mix_new, mix_old
+
+
 def compute_grpo_loss(
     policy,
     soft_mask_module,
@@ -518,6 +581,8 @@ def compute_grpo_loss(
     advantages: torch.Tensor,
     clip_eps: float,
     include_heads_in_logprob: Optional[set] = None,
+    expert_steering_G: int = 0,
+    expert_steering_E: int = 0,
 ) -> torch.Tensor:
     """
     Compute clipped GRPO surrogate loss.
@@ -539,15 +604,27 @@ def compute_grpo_loss(
     Returns:
         loss: scalar (to be minimized).
     """
-    G = len(trajectories)
+    G_total = len(trajectories)  # G + E under Expert Steering, else G
     total_loss = torch.tensor(0.0, device=advantages.device)
 
-    for g in range(G):
+    # Precompute mixture weights for Expert Steering. log_w_policy = log(G/(G+E)),
+    # log_w_expert = log(E/(G+E)). When ES is disabled or E=0, these are unused
+    # because no trajectory carries is_expert=True.
+    if expert_steering_G > 0 and expert_steering_E > 0:
+        _denom = float(expert_steering_G + expert_steering_E)
+        _log_w_policy = math.log(expert_steering_G / _denom)
+        _log_w_expert = math.log(expert_steering_E / _denom)
+    else:
+        _log_w_policy = 0.0
+        _log_w_expert = -float("inf")
+
+    for g in range(G_total):
         traj = trajectories[g]
         n_steps = len(traj["actions_list"])
         if n_steps == 0:
             continue
 
+        is_expert_sample = bool(traj.get("is_expert", False))
         step_loss = torch.tensor(0.0, device=advantages.device)
 
         sm_inner = soft_mask_module.module if hasattr(soft_mask_module, "module") else soft_mask_module
@@ -595,8 +672,22 @@ def compute_grpo_loss(
                 include_heads=include_heads_in_logprob,
             )  # [1]
 
-            # Importance ratio
-            log_ratio = new_lp - old_lp
+            # Importance ratio. For expert (heuristic) samples we use the
+            # mixture log-prob from Expert Steering (Jazbec App F):
+            #   log π^ES(a) = logsumexp(log π_φ(a) + log(G/(G+E)),  log(E/(G+E)))
+            # which bounds the ratio numerator/denominator by E/(G+E) below.
+            # For policy samples the mixture term cancels in numerator and
+            # denominator, so the standard ratio is used.
+            if is_expert_sample and math.isfinite(_log_w_expert):
+                mix_new_lp, mix_old_lp = _expert_steering_mixture_log_prob(
+                    new_lp=new_lp,
+                    old_lp=old_lp,
+                    log_w_policy=_log_w_policy,
+                    log_w_expert=_log_w_expert,
+                )
+                log_ratio = mix_new_lp - mix_old_lp
+            else:
+                log_ratio = new_lp - old_lp
             if not torch.isfinite(log_ratio).all():
                 # NaN/inf log_ratio means the policy has NaN parameters (from a
                 # previous gradient explosion).  Skip this step's contribution
@@ -618,8 +709,8 @@ def compute_grpo_loss(
         step_loss = step_loss / max(n_steps, 1)
         total_loss = total_loss + step_loss
 
-    # Average over group, negate for minimization
-    return -total_loss / max(G, 1)
+    # Average over the augmented group (G + E under Expert Steering, else G).
+    return -total_loss / max(G_total, 1)
 
 
 def normalize_group_advantages(
@@ -763,6 +854,58 @@ def split_group_trajectory(trajectory: Any, group_size: int) -> List[Dict[str, A
 # Rollout collection
 # ======================================================================
 
+def _run_speculative_group(
+    *,
+    use_speculative,
+    use_block_policy,
+    dual_model,
+    base_model,
+    policy,
+    soft_mask_module,
+    prism_adapter,
+    prompt_ids_repeated,
+    cfg_for_call,
+    policy_temperature,
+):
+    """Internal helper: dispatch to the appropriate inference loop and return
+    (output_ids, trajectory) for a batched group rollout. Pulled out of
+    collect_rollout_group so the same code can be reused for both the policy
+    group (G samples) and the expert group (E samples) under Expert Steering.
+    """
+    if use_speculative:
+        if use_block_policy:
+            return aoae_block_inference(
+                dual_model=dual_model,
+                policy=policy,
+                soft_mask_module=soft_mask_module,
+                prism_adapter=prism_adapter,
+                prompt_ids=prompt_ids_repeated,
+                cfg=cfg_for_call,
+                record_trajectory=True,
+                policy_temperature=policy_temperature,
+            )
+        return speculative_inference(
+            dual_model=dual_model,
+            policy=policy,
+            soft_mask_module=soft_mask_module,
+            prism_adapter=prism_adapter,
+            prompt_ids=prompt_ids_repeated,
+            cfg=cfg_for_call,
+            record_trajectory=True,
+            policy_temperature=policy_temperature,
+        )
+    return aoae_inference(
+        base_model=base_model,
+        policy=policy,
+        soft_mask_module=soft_mask_module,
+        prism_adapter=prism_adapter,
+        prompt_ids=prompt_ids_repeated,
+        cfg=cfg_for_call,
+        record_trajectory=True,
+        policy_temperature=policy_temperature,
+    )
+
+
 @torch.no_grad()
 def collect_rollout_group(
     base_model,
@@ -777,75 +920,65 @@ def collect_rollout_group(
     rollout_cfg: Optional[dict] = None,
 ) -> Tuple[List[Dict], torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
     """
-    Collect G rollout trajectories for a single prompt batch.
+    Collect rollout trajectories for a single prompt.
 
-    Args:
-        base_model: LLaDABaseModel (used when dual_model is None).
-        dual_model: DualModelWrapper (used for speculative mode).
-        (other args as before)
+    With Expert Steering disabled (``grpo.expert_steering.enabled=false``):
+    samples G policy rollouts as before.
+
+    With Expert Steering enabled: samples G policy rollouts + E heuristic
+    expert rollouts. The expert rollouts are produced by re-running the same
+    inference loop with ``cfg.grpo.train_heads=[]``, which forces
+    ``_apply_frozen_action_heads`` to overwrite every action head with its
+    deterministic heuristic fallback (threshold-rule u_t, zero r_t/κ_t/q_t)
+    — equivalent to a pure-heuristic rollout (the variant we evaluate as
+    ``quality_balanced_hardver``). The policy network is still called and its
+    logits are recorded so we can compute log π_φ(expert_actions | state)
+    for the importance ratio.
 
     Returns:
-        trajectories:      list of G trajectory dicts (for GRPO loss).
-        rewards:           [G] per-trajectory total rewards.
-        advantages:        [G] group-mean normalized advantages.
-        reward_components: dict of [G] per-trajectory component tensors.
+        trajectories: list of (G+E) trajectory dicts. Expert ones carry
+                      ``is_expert=True`` so compute_grpo_loss can apply the
+                      mixture log-prob ratio (Jazbec et al. 2026 Appendix F).
+        rewards:      [G+E] per-trajectory total rewards.
+        advantages:   [G+E] group-mean centred advantages (no std norm).
+        reward_components: dict of [G+E] per-trajectory component tensors.
     """
     gc = cfg["grpo"]
     rollout_cfg = rollout_cfg if rollout_cfg is not None else build_rollout_cfg(cfg)
     G = gc["group_size"]
     T = rollout_cfg["inference"]["steps"]
 
+    es_cfg = gc.get("expert_steering", {}) or {}
+    es_enabled = bool(es_cfg.get("enabled", False))
+    E_expert = int(es_cfg.get("expert_count", 1)) if es_enabled else 0
+
     B = prompt_ids.shape[0]
     assert B == 1, "Collect rollouts one prompt at a time, then group."
     use_speculative = (dual_model is not None)
+    _bw_cfg = (rollout_cfg.get("policy", {}) or {}).get("block_wise", {}) or {}
+    _use_block_policy = bool(_bw_cfg.get("enabled", False))
+
+    # ------------------------------------------------------------------
+    # G policy rollouts
+    # ------------------------------------------------------------------
     repeated_prompt_ids = prompt_ids.repeat(G, 1)
-    repeated_references = [reference_answers[0] for _ in range(G)]
-
-    if use_speculative:
-        # When policy.block_wise.enabled, run the block-structured AOAE
-        # speculative loop (paper-faithful, no KV cache) so train/eval are
-        # consistent and the policy gets gradient signal from block-local
-        # decisions.  Reuses speculative_inference's full-seq loop otherwise.
-        _bw_cfg = (rollout_cfg.get("policy", {}) or {}).get("block_wise", {}) or {}
-        _use_block_policy = bool(_bw_cfg.get("enabled", False))
-        if _use_block_policy:
-            output_ids, trajectory = aoae_block_inference(
-                dual_model=dual_model,
-                policy=policy,
-                soft_mask_module=soft_mask_module,
-                prism_adapter=prism_adapter,
-                prompt_ids=repeated_prompt_ids,
-                cfg=rollout_cfg,
-                record_trajectory=True,
-                policy_temperature=gc["policy_temperature"],
-            )
-        else:
-            output_ids, trajectory = speculative_inference(
-                dual_model=dual_model,
-                policy=policy,
-                soft_mask_module=soft_mask_module,
-                prism_adapter=prism_adapter,
-                prompt_ids=repeated_prompt_ids,
-                cfg=rollout_cfg,
-                record_trajectory=True,
-                policy_temperature=gc["policy_temperature"],
-            )
-    else:
-        output_ids, trajectory = aoae_inference(
-            base_model=base_model,
-            policy=policy,
-            soft_mask_module=soft_mask_module,
-            prism_adapter=prism_adapter,
-            prompt_ids=repeated_prompt_ids,
-            cfg=rollout_cfg,
-            record_trajectory=True,
-            policy_temperature=gc["policy_temperature"],
-        )
-
+    output_ids, trajectory = _run_speculative_group(
+        use_speculative=use_speculative,
+        use_block_policy=_use_block_policy,
+        dual_model=dual_model,
+        base_model=base_model,
+        policy=policy,
+        soft_mask_module=soft_mask_module,
+        prism_adapter=prism_adapter,
+        prompt_ids_repeated=repeated_prompt_ids,
+        cfg_for_call=rollout_cfg,
+        policy_temperature=gc["policy_temperature"],
+    )
     gen_tokens = output_ids[:, prompt_ids.shape[1]:]
+    repeated_references_norm = [reference_answers[0] for _ in range(G)]
     rewards_t, reward_components_t = compute_reward(
         gen_tokens,
-        repeated_references,
+        repeated_references_norm,
         tokenizer,
         trajectory,
         rollout_cfg,
@@ -853,11 +986,83 @@ def collect_rollout_group(
     )
     rewards_t = rewards_t.detach().cpu()
     reward_components_t = {k: v.detach().cpu() for k, v in reward_components_t.items()}
-
     trajectories = split_group_trajectory(trajectory, G)
     for g, traj_data in enumerate(trajectories):
         traj_data["reward"] = float(rewards_t[g].item())
+        traj_data["is_expert"] = False
 
+    # ------------------------------------------------------------------
+    # E expert (heuristic) rollouts — Expert Steering augmentation
+    # ------------------------------------------------------------------
+    if es_enabled and E_expert > 0:
+        # Override train_heads=[] for the expert call. This makes
+        # _apply_frozen_action_heads force ALL heads to deterministic
+        # fallbacks: u_t = threshold rule, r_t = 0, κ_t = 0, q_t = 0.
+        # The policy network is still evaluated; its logits are recorded
+        # in the trajectory so the loss can compute log π_φ(expert | state)
+        # under the saved-state-of-the-policy ("old" policy, since this is
+        # a no_grad rollout).
+        rollout_cfg_expert = copy.deepcopy(rollout_cfg)
+        expert_grpo_cfg = rollout_cfg_expert.setdefault("grpo", {})
+        expert_grpo_cfg["train_heads"] = []
+        # include_heads_in_logprob stays as configured — we want log-probs
+        # over u_t and r_t for the importance ratio; just the action source
+        # changes (heuristic vs sampled).
+        prompt_ids_exp = prompt_ids.repeat(E_expert, 1)
+        output_ids_exp, trajectory_exp = _run_speculative_group(
+            use_speculative=use_speculative,
+            use_block_policy=_use_block_policy,
+            dual_model=dual_model,
+            base_model=base_model,
+            policy=policy,
+            soft_mask_module=soft_mask_module,
+            prism_adapter=prism_adapter,
+            prompt_ids_repeated=prompt_ids_exp,
+            cfg_for_call=rollout_cfg_expert,
+            policy_temperature=gc["policy_temperature"],
+        )
+        gen_tokens_exp = output_ids_exp[:, prompt_ids.shape[1]:]
+        repeated_references_exp = [reference_answers[0] for _ in range(E_expert)]
+        rewards_exp_t, reward_components_exp_t = compute_reward(
+            gen_tokens_exp,
+            repeated_references_exp,
+            tokenizer,
+            trajectory_exp,
+            rollout_cfg_expert,
+            T,
+        )
+        rewards_exp_t = rewards_exp_t.detach().cpu()
+        reward_components_exp_t = {
+            k: v.detach().cpu() for k, v in reward_components_exp_t.items()
+        }
+
+        # Concat rewards / components / trajectories
+        rewards_t = torch.cat([rewards_t, rewards_exp_t], dim=0)
+        for k in list(reward_components_t.keys()):
+            if k in reward_components_exp_t:
+                reward_components_t[k] = torch.cat(
+                    [reward_components_t[k], reward_components_exp_t[k]], dim=0
+                )
+            else:
+                # Pad with zeros if expert components missing this key.
+                reward_components_t[k] = torch.cat(
+                    [reward_components_t[k], torch.zeros(E_expert)], dim=0
+                )
+        # Some keys might exist only in expert components; rare but handle.
+        for k, v in reward_components_exp_t.items():
+            if k not in reward_components_t:
+                reward_components_t[k] = torch.cat(
+                    [torch.zeros(G), v], dim=0
+                )
+
+        trajectories_exp = split_group_trajectory(trajectory_exp, E_expert)
+        for e_idx, traj_exp_data in enumerate(trajectories_exp):
+            traj_exp_data["reward"] = float(rewards_exp_t[e_idx].item())
+            traj_exp_data["is_expert"] = True
+        trajectories = trajectories + trajectories_exp
+
+    # Group-mean advantage over G+E samples; std-normalization off per
+    # Jazbec et al. 2026 §3.3 (citing Zhao et al. 2025a as best practice).
     advantages = normalize_group_advantages(
         rewards_t,
         normalize_std=bool(gc.get("normalize_advantage_std", False)),
@@ -1265,11 +1470,21 @@ def train(cfg: dict, resume_from: Optional[str] = None):
 
                     epoch_rewards.append(rewards.mean().item())
 
-                    # Accumulate per-rollout component values for logging
+                    # Accumulate per-rollout component values for logging.
+                    # Group is now potentially G+E under Expert Steering;
+                    # iterate over the actual returned tensor length to also
+                    # account for expert samples in the spec/reward curves.
                     G = gc["group_size"]
                     for comp_key, comp_val in reward_components.items():
-                        for g in range(min(G, comp_val.shape[0])):
+                        for g in range(comp_val.shape[0]):
                             _component_bufs[comp_key].append(float(comp_val[g].item()))
+
+                    # Expert Steering parameters for the loss (Jazbec App F):
+                    # tell compute_grpo_loss the (G, E) split so it can apply
+                    # the mixture log-prob ratio on samples flagged is_expert.
+                    _es_cfg = gc.get("expert_steering", {}) or {}
+                    _es_enabled = bool(_es_cfg.get("enabled", False))
+                    _es_E = int(_es_cfg.get("expert_count", 1)) if _es_enabled else 0
 
                     # Clipped GRPO surrogate with importance sampling
                     # Pass DDP-wrapped modules so .backward() syncs gradients
@@ -1280,6 +1495,8 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         advantages=advantages.to(device),
                         clip_eps=gc["clip_eps"],
                         include_heads_in_logprob=_include_heads_for_logprob(cfg),
+                        expert_steering_G=G if _es_enabled else 0,
+                        expert_steering_E=_es_E,
                     )
                     _last_grpo_loss = float(grpo_loss.item())
                     # Scale loss for gradient accumulation

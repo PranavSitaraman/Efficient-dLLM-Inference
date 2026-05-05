@@ -21,8 +21,11 @@ policy:
   init_cache_bias: -2.0
   init_access_bias: -2.0
   use_positional_features: false
-  use_age_feature: true
-  use_last_action_feature: true
+  use_age_feature: false
+  use_last_action_feature: false
+  use_hidden_state: false
+  use_max_confidence_feature: true
+  use_quality_score_feature: true
   boundary_head:
     enabled: false
     num_bins: 8
@@ -61,16 +64,19 @@ grpo:
   stability_lambda: 10.0
   unresolved_penalty_weight: 0.25
   min_checkpoint_reward: -1.0
-  lr: 0.0003
+  lr: 3.0e-05
   weight_decay: 0.01
   epochs: 1
   max_steps: 10
   batch_size: 1
   grad_accum_steps: 1
   warmup_steps: 0
-  max_grad_norm: 1.0
+  max_grad_norm: 0.5
   policy_temperature: 1.0
-  normalize_advantage_std: true
+  normalize_advantage_std: false
+  expert_steering:
+    enabled: true
+    expert_count: 1
   train_heads:
   - unmask
   - remask
@@ -80,11 +86,12 @@ grpo:
   unmask_scope: drafter
   remask_scope: verifier
   train_soft_mask: false
-  rollout_steps: 4
+  rollout_steps: 8
   rollout_gen_length: 64
   rollout_overrides:
     base_model.lossless_verification: true
-    inference.primary_agree_threshold: 0.92
+    inference.primary_agree_threshold: 0.5
+    inference.verifier.use_prism_score: true
     inference.drafter.run_on_verifier: never
     inference.drafter.aux_compute_ratio: 0.0
   save_every: 5
@@ -283,6 +290,20 @@ evaluation:
         inference.primary_agree_threshold: 0.92
         inference.max_unmask_fraction_per_step: 0.125
         inference.disable_remask: false
+    - name: quality_balanced_hardver_prism
+      policy_temperature: 1.0
+      overrides:
+        base_model.lossless_verification: true
+        inference.speculative_schedule: aoae
+        inference.verifier_schedule.mode: candidate_budget
+        inference.verifier_schedule.draft_token_budget: 8
+        inference.verifier_schedule.max_draft_microsteps: 3
+        inference.primary_agree_threshold: 0.92
+        inference.max_unmask_fraction_per_step: 0.125
+        inference.disable_remask: false
+        inference.verifier.use_prism_score: true
+        inference.verifier.acceptance_mode: prism_gate
+        inference.verifier.prism_accept_threshold: 0.5
     - name: quality_balanced_sq
       policy_temperature: 1.0
       overrides:
@@ -458,11 +479,11 @@ evaluation:
     memory_limit_mb: 1024
 logging:
   project: spec-dlm-grpo
-  run_name: grpo_smoke_uvscope
+  run_name: grpo_smoke_v3
   log_every: 1
   eval_every: 9999
   save_every: 5
-  output_dir: outputs/smoke_uvscope/
+  output_dir: outputs/smoke_v3/
   use_wandb: false
 hardware:
   seed: 42
