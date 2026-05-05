@@ -162,6 +162,8 @@ def test_paper_config_keeps_block_and_any_order_eval_tracks_separate():
 
 
 def test_phase_a_v2_configs_disable_cache_terms_and_train_only_u_r():
+    from aoae.cli import _load_config
+
     config_names = [
         "v2_warmstart_scalar_only.yaml",
         "v2_warmstart_hidden_residual.yaml",
@@ -187,3 +189,8 @@ def test_phase_a_v2_configs_disable_cache_terms_and_train_only_u_r():
     es_cfg = _load_yaml("configs/v2_grpo_hidden_residual_expert_steering.yaml")
     assert es_cfg["grpo"]["expert_steering"]["enabled"] is True
     assert es_cfg["grpo"]["expert_steering"]["experts"] == ["canonical"]
+
+    merged = _load_config(str(ROOT / "configs/v2_warmstart_scalar_only.yaml"))
+    assert merged["base_model"]["backend"] == "dual"
+    assert merged["data"]["train_dataset"]
+    assert merged["logging"]["output_dir"] == "outputs/v4_warmstart_scalar_only/"

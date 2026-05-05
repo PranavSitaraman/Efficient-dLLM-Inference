@@ -55,6 +55,10 @@ class SpeculativeTrajectory:
     entropy_list: List[torch.Tensor] = field(default_factory=list)
     mask_ind_list: List[torch.BoolTensor] = field(default_factory=list)
     confidence_list: List[torch.Tensor] = field(default_factory=list)
+    run_primary_list: List[bool] = field(default_factory=list)
+    frontier_before_list: List[torch.BoolTensor] = field(default_factory=list)
+    frontier_accept_mask_list: List[torch.BoolTensor] = field(default_factory=list)
+    frontier_reject_mask_list: List[torch.BoolTensor] = field(default_factory=list)
     quality_scores_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     agreement_list: List[torch.Tensor] = field(default_factory=list)
     age_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
@@ -1244,6 +1248,8 @@ def speculative_inference(
                     cfg.get("grpo", {}).get("train_heads"),
                 )
             )
+            if bool(cfg.get("phase_a_v2", False)):
+                include_heads = {"remask"} if run_primary else {"unmask"}
             lp = pol_inner.log_prob(policy_out, actions, include_heads=include_heads)
             trajectory.actions.append({k: v.detach() for k, v in actions.items()})
             trajectory.log_probs.append(lp.detach())
@@ -1255,6 +1261,12 @@ def speculative_inference(
             trajectory.entropy_list.append(entropy.detach())
             trajectory.mask_ind_list.append(mask_ind.detach())
             trajectory.confidence_list.append(confidence.detach())
+            trajectory.run_primary_list.append(bool(run_primary))
+            trajectory.frontier_before_list.append(
+                (frontier_before.detach() if run_primary else torch.zeros_like(mask_ind))
+            )
+            trajectory.frontier_accept_mask_list.append(frontier_accept_mask.detach())
+            trajectory.frontier_reject_mask_list.append(frontier_reject_mask.detach())
             trajectory.quality_scores_list.append(
                 q_scores.detach() if q_scores is not None else None
             )

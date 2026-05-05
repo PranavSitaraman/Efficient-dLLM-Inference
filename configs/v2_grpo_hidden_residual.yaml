@@ -1,3 +1,4 @@
+extends: paper_smoke.yaml
 phase_a_v2: true
 stable_cache_enabled: false
 train_heads: ["u", "r"]
@@ -30,7 +31,8 @@ grpo:
   train_heads: ["unmask", "remask"]
   include_heads_in_logprob: ["unmask", "remask"]
   train_soft_mask: false
-  warm_start_from: null
+  warm_start_from: outputs/v4_warmstart_hidden_residual/policy_final.pt
+  warm_start_strict: true
   reward_cache_terms_enabled: false
   alpha: 1.0
   beta: 0.0
@@ -40,3 +42,8 @@ grpo:
   lambda_reset: 0.0
   expert_steering:
     enabled: false
+logging:
+  run_name: v4_grpo_hidden_residual
+  output_dir: outputs/v4_grpo_hidden_residual/
+  log_every: 1
+  save_every: 5

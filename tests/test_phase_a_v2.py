@@ -240,6 +240,43 @@ def test_synthetic_grpo_update_from_warmstart_checkpoint(tmp_path):
     assert torch.isfinite(loss)
 
 
+def test_warmstart_step_labels_map_future_verifier_outcomes():
+    from types import SimpleNamespace
+    from aoae.train_warmstart import _make_step_labels
+
+    traj = SimpleNamespace(
+        mask_ind_list=[
+            torch.tensor([[True, True, False]]),
+            torch.tensor([[False, True, False]]),
+        ],
+        confidence_list=[
+            torch.tensor([[0.9, 0.2, 0.1]]),
+            torch.tensor([[0.9, 0.2, 0.1]]),
+        ],
+        actions=[
+            {"u_t": torch.tensor([[1.0, 1.0, 0.0]])},
+            {"u_t": torch.zeros(1, 3)},
+        ],
+        run_primary_list=[False, True],
+        frontier_accept_mask_list=[
+            torch.zeros(1, 3, dtype=torch.bool),
+            torch.tensor([[True, False, False]]),
+        ],
+        frontier_reject_mask_list=[
+            torch.zeros(1, 3, dtype=torch.bool),
+            torch.tensor([[False, True, False]]),
+        ],
+    )
+
+    u_labels, _, _, _ = _make_step_labels(traj, 0, low_confidence_threshold=0.15)
+    _, r_labels, _, r_train = _make_step_labels(traj, 1, low_confidence_threshold=0.15)
+
+    assert u_labels.labels[0, 0].item() == 1.0
+    assert u_labels.labels[0, 1].item() == 0.0
+    assert r_labels.labels[0, 1].item() == 1.0
+    assert r_train[0, 1].item() is True
+
+
 def test_expert_steering_enabled_adds_expert_count_and_expert_actions_respect_domains():
     from aoae.phase_a_v2 import PhaseAHeuristicExpert
 
@@ -256,4 +293,3 @@ def test_expert_steering_enabled_adds_expert_count_and_expert_actions_respect_do
 
     assert torch.equal(actions["u_t"].bool(), torch.tensor([[True, False, False, False]]))
     assert torch.equal(actions["r_t"].bool(), torch.tensor([[False, True, False, False]]))
-

@@ -23,7 +23,32 @@ from .preflight import run_preflight
 
 def _load_config(path: str) -> dict:
     with open(path) as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    return _resolve_config_extends(cfg, path)
+
+
+def _deep_merge_config(base: dict, override: dict) -> dict:
+    out = dict(base)
+    for key, value in (override or {}).items():
+        if key in out and isinstance(out[key], dict) and isinstance(value, dict):
+            out[key] = _deep_merge_config(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _resolve_config_extends(cfg: dict, path: str) -> dict:
+    if not isinstance(cfg, dict) or "extends" not in cfg:
+        return cfg
+    parent_path = cfg["extends"]
+    if not os.path.isabs(parent_path):
+        parent_path = os.path.join(os.path.dirname(path), parent_path)
+    with open(parent_path) as f:
+        parent = yaml.safe_load(f)
+    parent = _resolve_config_extends(parent, parent_path)
+    child = dict(cfg)
+    child.pop("extends", None)
+    return _deep_merge_config(parent, child)
 
 
 def _apply_runtime_env_defaults(env: Optional[dict] = None) -> dict:
@@ -54,17 +79,19 @@ def _normalize_legacy_cli_argv(argv_list: List[str]) -> List[str]:
 
     Older wrappers used:
       - ``train prism [config]``
+      - ``train warmstart [config]``
       - ``train grpo [config] [resume]``
 
     The canonical interface is now:
       - ``train --config <cfg> --stage prism``
+      - ``train --config <cfg> --stage warmstart``
       - ``train --config <cfg> --stage grpo --resume <resume>``
     """
     if not argv_list or argv_list[0] != "train" or len(argv_list) < 2:
         return argv_list
 
     stage = argv_list[1]
-    if stage not in {"prism", "grpo"}:
+    if stage not in {"prism", "warmstart", "grpo"}:
         return argv_list
 
     remainder = list(argv_list[2:])
@@ -431,6 +458,10 @@ def run_train_command(args: argparse.Namespace):
             from .train_prism import main as train_prism
 
             return train_prism(cfg)
+        if args.stage == "warmstart":
+            from .train_warmstart import main as train_warmstart
+
+            return train_warmstart(cfg)
 
         from .train_grpo import train
 
@@ -606,9 +637,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="AOAE integrated training, evaluation, and testing CLI.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    train_parser = subparsers.add_parser("train", help="Run PRISM or GRPO training.")
+    train_parser = subparsers.add_parser("train", help="Run PRISM, V2 warm-start, or GRPO training.")
     train_parser.add_argument("--config", type=str, default="configs/llada21_hard.yaml", help="Path to YAML config file.")
-    train_parser.add_argument("--stage", type=str, choices=["prism", "grpo"], required=True, help="Training stage to run.")
+    train_parser.add_argument("--stage", type=str, choices=["prism", "warmstart", "grpo"], required=True, help="Training stage to run.")
     train_parser.add_argument("--resume", type=str, default=None, help="Resume GRPO training from checkpoint or use 'auto'.")
     train_parser.set_defaults(func=run_train_command)
 

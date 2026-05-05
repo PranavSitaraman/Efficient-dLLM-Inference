@@ -1,3 +1,4 @@
+extends: paper_smoke.yaml
 phase_a_v2: true
 stable_cache_enabled: false
 train_heads: ["u", "r"]
@@ -37,6 +38,21 @@ grpo:
 warmstart:
   enabled: true
   feature_mode: scalar_only
+  lr: 0.0001
+  weight_decay: 0.01
+  epochs: 1
+  max_steps: 10
+  max_samples: 10
+  max_grad_norm: 1.0
+  low_confidence_threshold: 0.15
   lambda_rank: 0.1
   lambda_rate: 0.01
   lambda_hidden_gate: 0.0
+  rollout_overrides:
+    inference.steps: 8
+    inference.gen_length: 64
+logging:
+  run_name: v4_warmstart_scalar_only
+  output_dir: outputs/v4_warmstart_scalar_only/
+  log_every: 1
+  save_every: 5

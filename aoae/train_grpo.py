@@ -225,7 +225,7 @@ def compute_reward(
     beta = gc["beta"]
     phase_a_v2 = _phase_a_v2_enabled(cfg)
     reward_cache_terms = _reward_cache_terms_enabled(cfg)
-    unresolved_penalty_weight = float(gc.get("unresolved_penalty_weight", 0.0))
+    unresolved_penalty_weight = float(gc.get("lambda_unresolved", gc.get("unresolved_penalty_weight", 0.0)))
     extra_remask_weight = float(gc.get("lambda_extra_remask", gc.get("extra_remask_weight", beta if phase_a_v2 else 0.0)))
     invalid_weight = float(gc.get("lambda_invalid", gc.get("invalid_action_weight", 0.0)))
     reset_weight = float(gc.get("lambda_reset", gc.get("reset_weight", 0.0)))
@@ -539,6 +539,7 @@ def compute_reward(
     components: Dict[str, torch.Tensor] = {
         "correctness":         correctness,
         "speed_factor":        speed_factor,
+        "speed_score":         speed_factor,
         "effective_flops":     effective_flops,
         "aux_compute_units":   aux_compute_units_t,
         "verifier_compute_units": verifier_compute_units_t,
@@ -713,10 +714,15 @@ def compute_grpo_loss(
                 last_action_feature=last_action_feat,
             )
             pol_inner = policy.module if hasattr(policy, 'module') else policy
+            step_include_heads = include_heads_in_logprob
+            run_primary_list = traj.get("run_primary_list") or []
+            if t_idx < len(run_primary_list):
+                run_primary_step = bool(run_primary_list[t_idx])
+                step_include_heads = {"remask"} if run_primary_step else {"unmask"}
             new_lp = pol_inner.log_prob(
                 policy_out,
                 actions,
-                include_heads=include_heads_in_logprob,
+                include_heads=step_include_heads,
             )  # [1]
 
             # Importance ratio. For expert (heuristic) samples we use the
@@ -876,6 +882,16 @@ def split_group_trajectory(trajectory: Any, group_size: int) -> List[Dict[str, A
             "mask_ind_list": [_slice_tensor(mask_ind, g) for mask_ind in trajectory.mask_ind_list],
             "confidence_list": [
                 _slice_tensor(conf, g) for conf in getattr(trajectory, "confidence_list", [])
+            ],
+            "run_primary_list": list(getattr(trajectory, "run_primary_list", [])),
+            "frontier_before_list": [
+                _slice_tensor(mask, g) for mask in getattr(trajectory, "frontier_before_list", [])
+            ],
+            "frontier_accept_mask_list": [
+                _slice_tensor(mask, g) for mask in getattr(trajectory, "frontier_accept_mask_list", [])
+            ],
+            "frontier_reject_mask_list": [
+                _slice_tensor(mask, g) for mask in getattr(trajectory, "frontier_reject_mask_list", [])
             ],
             "quality_scores_list": [
                 _slice_tensor(q_scores, g) for q_scores in trajectory.quality_scores_list
