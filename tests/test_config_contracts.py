@@ -159,3 +159,31 @@ def test_paper_config_keeps_block_and_any_order_eval_tracks_separate():
         "quality_balanced_sq_hardver",
         "aoae_llada_sq_anyorder",
     ]
+
+
+def test_phase_a_v2_configs_disable_cache_terms_and_train_only_u_r():
+    config_names = [
+        "v2_warmstart_scalar_only.yaml",
+        "v2_warmstart_hidden_residual.yaml",
+        "v2_grpo_scalar_only.yaml",
+        "v2_grpo_hidden_residual.yaml",
+        "v2_grpo_hidden_residual_expert_steering.yaml",
+    ]
+
+    for name in config_names:
+        cfg = _load_yaml(f"configs/{name}")
+        assert cfg["phase_a_v2"] is True
+        assert cfg["stable_cache_enabled"] is False
+        assert cfg["train_heads"] == ["u", "r"]
+        assert cfg["warmstart_checkpoint"] is None
+        assert cfg["reward_cache_terms_enabled"] is False
+        assert cfg["cache"]["stable_kv_cache"] is False
+        assert cfg["grpo"]["reward_cache_terms_enabled"] is False
+        assert cfg["grpo"]["train_heads"] == ["unmask", "remask"]
+        assert cfg["grpo"]["include_heads_in_logprob"] == ["unmask", "remask"]
+        assert cfg["phase_a_v2_config"]["target_u_rate"] == 0.10
+        assert cfg["phase_a_v2_config"]["target_r_rate"] == 0.02
+
+    es_cfg = _load_yaml("configs/v2_grpo_hidden_residual_expert_steering.yaml")
+    assert es_cfg["grpo"]["expert_steering"]["enabled"] is True
+    assert es_cfg["grpo"]["expert_steering"]["experts"] == ["canonical"]

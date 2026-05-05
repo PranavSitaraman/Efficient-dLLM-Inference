@@ -60,7 +60,22 @@ _MAX_IMPORTANCE_LOG_RATIO = 20.0
 
 def _include_heads_for_logprob(cfg: dict) -> Optional[set]:
     gc = cfg.get("grpo", {})
+    if cfg.get("phase_a_v2", False) and "include_heads_in_logprob" not in gc:
+        return {"unmask", "remask"}
     return parse_head_set(gc.get("include_heads_in_logprob", gc.get("train_heads")))
+
+
+def _phase_a_v2_enabled(cfg: dict) -> bool:
+    v2_cfg = cfg.get("phase_a_v2_config", {}) or {}
+    v2_cfg_enabled = bool(v2_cfg.get("enabled", False)) if isinstance(v2_cfg, dict) else bool(v2_cfg)
+    return bool(cfg.get("phase_a_v2", False) or v2_cfg_enabled)
+
+
+def _reward_cache_terms_enabled(cfg: dict) -> bool:
+    gc = cfg.get("grpo", {})
+    if "reward_cache_terms_enabled" in gc:
+        return bool(gc.get("reward_cache_terms_enabled"))
+    return not _phase_a_v2_enabled(cfg)
 
 
 # ======================================================================
@@ -208,7 +223,12 @@ def compute_reward(
     gc = cfg["grpo"]
     alpha = gc["alpha"]
     beta = gc["beta"]
+    phase_a_v2 = _phase_a_v2_enabled(cfg)
+    reward_cache_terms = _reward_cache_terms_enabled(cfg)
     unresolved_penalty_weight = float(gc.get("unresolved_penalty_weight", 0.0))
+    extra_remask_weight = float(gc.get("lambda_extra_remask", gc.get("extra_remask_weight", beta if phase_a_v2 else 0.0)))
+    invalid_weight = float(gc.get("lambda_invalid", gc.get("invalid_action_weight", 0.0)))
+    reset_weight = float(gc.get("lambda_reset", gc.get("reset_weight", 0.0)))
     B = generated_tokens.shape[0]
     device = generated_tokens.device
 
@@ -257,7 +277,7 @@ def compute_reward(
     else:
         # Fallback for legacy/single-model trajectories. K_spec is transient and
         # never credited by default; stable cache credit remains source-gated.
-        cache_speed_source = str(gc.get("cache_speed_source", "none")).lower()
+        cache_speed_source = str(gc.get("cache_speed_source", "none")).lower() if reward_cache_terms else "none"
         if cache_speed_source in ("stable", "k_stable", "persistent"):
             mean_cached = mean_stable_cached
         elif cache_speed_source in ("spec", "k_spec", "transient"):
@@ -274,7 +294,7 @@ def compute_reward(
     used_steps_frac = used_steps / float(T)
     speed_factor = (1.0 - effective_flops.clamp(0.0, 1.0)).pow(alpha)         # [B] in [0,1]
 
-    # --- Cache thrashing penalty ---
+    # --- Extra remask / legacy cache-thrashing penalty ---
     total_thrash = torch.zeros(B, device=device)
     for thrash_t in trajectory.thrash_counts:
         total_thrash += thrash_t.to(device)
@@ -301,10 +321,27 @@ def compute_reward(
             (B,), float(response_len), device=device
         )
     thrash_rate = total_thrash / thrash_denominator
-    thrash_penalty = beta * thrash_rate                                        # [B]
+    thrash_penalty = beta * thrash_rate if reward_cache_terms else torch.zeros(B, device=device)
+
+    total_remask = torch.zeros(B, device=device)
+    total_invalid = torch.zeros(B, device=device)
+    total_positions = 0
+    for step_actions in getattr(trajectory, "actions", []) or []:
+        r = step_actions.get("r_t")
+        if r is not None:
+            total_remask = total_remask + r.to(device).float().sum(dim=-1)
+            total_positions += int(r.shape[-1])
+        for key in ("u_invalid", "r_invalid"):
+            inv = step_actions.get(key)
+            if inv is not None:
+                total_invalid = total_invalid + inv.to(device).float().sum(dim=-1)
+    extra_remask_rate = total_remask / float(max(total_positions, 1))
+    invalid_action_rate = total_invalid / float(max(total_positions, 1))
+    extra_remask_penalty = extra_remask_weight * extra_remask_rate
+    invalid_penalty = invalid_weight * invalid_action_rate
 
     # --- Reward (base) ---
-    reward = correctness * speed_factor - thrash_penalty
+    reward = correctness * speed_factor - thrash_penalty - extra_remask_penalty - invalid_penalty
 
     # --- Unresolved-mask penalty (EOS-aware) ---
     # Only positions BEFORE first EOS count as "unresolved." Positions past
@@ -394,7 +431,7 @@ def compute_reward(
     #   precision     = mean_{k ∈ K_t}(stability(k))
     #   recall        = Σ_{k ∈ K_t} stability(k) / Σ_all stability(k)
     #   cache_F1      = 2 * precision * recall / (precision + recall)
-    cache_q_w = float(gc.get("cache_quality_weight", 0.0))
+    cache_q_w = float(gc.get("cache_quality_weight", 0.0)) if reward_cache_terms else 0.0
     cache_f1_reward = torch.zeros(B, device=device)
     mean_cache_f1_component = torch.zeros(B, device=device)
     if cache_q_w > 0.0:
@@ -408,7 +445,7 @@ def compute_reward(
     #
     # Provides a dense gradient for the q_t head (access prediction) that is
     # otherwise too sparse to learn from terminal correctness alone.
-    access_w = float(gc.get("access_reward_weight", 0.0))
+    access_w = float(gc.get("access_reward_weight", 0.0)) if reward_cache_terms else 0.0
     access_reward = torch.zeros(B, device=device)
     access_f1_component = torch.zeros(B, device=device)
     if access_w > 0.0 and hasattr(trajectory, "access_metrics"):
@@ -488,6 +525,8 @@ def compute_reward(
     drafter_cache_resets_t = torch.full(
         (B,), float(getattr(trajectory, "drafter_cache_resets", 0) or 0), device=device
     )
+    reset_penalty = reset_weight * drafter_cache_resets_t
+    reward = reward - reset_penalty
     mean_agreement_rate_t = torch.full(
         (B,), float(getattr(trajectory, "mean_agreement_rate", 0.0) or 0.0), device=device
     )
@@ -524,6 +563,11 @@ def compute_reward(
         "thrash_rate":          thrash_rate,
         "thrash_denominator":   thrash_denominator,
         "unresolved_penalty":   unresolved_penalty,
+        "extra_remask_rate":    extra_remask_rate,
+        "extra_remask_penalty": extra_remask_penalty,
+        "invalid_action_rate":  invalid_action_rate,
+        "invalid_penalty":      invalid_penalty,
+        "reset_penalty":        reset_penalty,
         "cache_f1":             mean_cache_f1_component,
         "cache_f1_reward":      cache_f1_reward,
         "access_f1":            access_f1_component,
@@ -652,6 +696,8 @@ def compute_grpo_loss(
             # policy() goes through DDP forward hook for gradient sync;
             # log_prob is a non-forward method, access via .module if DDP-wrapped
             q_scores = traj.get("quality_scores_list", [None] * n_steps)[t_idx]
+            confidence_list = traj.get("confidence_list", None)
+            confidence = confidence_list[t_idx] if confidence_list else None
             age_list = traj.get("age_feature_list", None)
             age_feat = age_list[t_idx] if age_list else None
             last_action_list = traj.get("last_action_feature_list", None)
@@ -660,6 +706,7 @@ def compute_grpo_loss(
             agreement = agreement_list[t_idx].float() if agreement_list else None
             policy_out = policy(
                 H_t, mask_ind, step_frac,
+                confidence=confidence,
                 quality_scores=q_scores,
                 agreement=agreement,
                 age_feature=age_feat,
@@ -827,6 +874,9 @@ def split_group_trajectory(trajectory: Any, group_size: int) -> List[Dict[str, A
                 _slice_tensor(ent, g) for ent in getattr(trajectory, "entropy_list", [])
             ],
             "mask_ind_list": [_slice_tensor(mask_ind, g) for mask_ind in trajectory.mask_ind_list],
+            "confidence_list": [
+                _slice_tensor(conf, g) for conf in getattr(trajectory, "confidence_list", [])
+            ],
             "quality_scores_list": [
                 _slice_tensor(q_scores, g) for q_scores in trajectory.quality_scores_list
             ],
@@ -950,7 +1000,7 @@ def collect_rollout_group(
 
     es_cfg = gc.get("expert_steering", {}) or {}
     es_enabled = bool(es_cfg.get("enabled", False))
-    E_expert = int(es_cfg.get("expert_count", 1)) if es_enabled else 0
+    E_expert = int(es_cfg.get("num_expert_trajectories", es_cfg.get("expert_count", 1))) if es_enabled else 0
 
     B = prompt_ids.shape[0]
     assert B == 1, "Collect rollouts one prompt at a time, then group."
@@ -1090,6 +1140,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
     from .models.base_model import LLaDABaseModel
     from .models.soft_mask import SoftMaskedState
     from .models.policy import AOAEPolicy
+    from .phase_a_v2 import PhaseAV2Policy
     from .models.prism import PRISMAdapter
     from datasets import load_dataset
 
@@ -1219,7 +1270,8 @@ def train(cfg: dict, resume_from: Optional[str] = None):
         soft_mask = SoftMaskedState(cfg, embed_w).to(device)
         soft_mask.set_mask_embedding(mask_id)
 
-        policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
+        policy_cls = PhaseAV2Policy if _phase_a_v2_enabled(cfg) else AOAEPolicy
+        policy = policy_cls(cfg, input_dim=embed_dim).to(device)
         n_params = sum(p.numel() for p in policy.parameters())
         if is_main:
             print(f"Policy parameters: {n_params:,} ({n_params / 1e6:.2f}M)")
@@ -1484,7 +1536,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                     # the mixture log-prob ratio on samples flagged is_expert.
                     _es_cfg = gc.get("expert_steering", {}) or {}
                     _es_enabled = bool(_es_cfg.get("enabled", False))
-                    _es_E = int(_es_cfg.get("expert_count", 1)) if _es_enabled else 0
+                    _es_E = int(_es_cfg.get("num_expert_trajectories", _es_cfg.get("expert_count", 1))) if _es_enabled else 0
 
                     # Clipped GRPO surrogate with importance sampling
                     # Pass DDP-wrapped modules so .backward() syncs gradients

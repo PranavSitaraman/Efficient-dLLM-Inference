@@ -1,0 +1,186 @@
+(rtx) [pranavsitaraman@holygpu8a13104 Efficient-dLLM-Inference]$ bash reproduce.sh 
+==========================================
+ AOAE Reproduction Wrapper
+ Workflow:   pipeline
+ Config:     configs/paper.yaml
+ Output dir: outputs/paper/
+ SLURM:      false
+==========================================
+
+[Preflight] Checking environment...
+PyTorch 2.9.0+cu128, CUDA: True, GPUs: 2
+Transformers 4.57.1
+[Runtime] WARNING: torch.ops._moe_C.moe_align_block_size missing; using Python fallback.
+[Runtime] WARNING: torch.ops._moe_C.moe_sum missing; using Python fallback.
+{
+  "runtime": {
+    "host": "holygpu8a13104.rc.fas.harvard.edu",
+    "pid": 1943545,
+    "python_version": "3.10.19",
+    "torch_version": "2.9.0+cu128",
+    "cuda_available": true,
+    "cuda_device_count": 2,
+    "cuda_devices": [
+      "NVIDIA H100 80GB HBM3",
+      "NVIDIA H100 80GB HBM3"
+    ],
+    "vllm_version": "0.11.2",
+    "transformers_version": "4.57.1",
+    "git_commit": "ba9f0a838c9bcf3732dacff027f59e416ff1b873"
+  },
+  "config_path": "configs/paper.yaml",
+  "output_dir": "outputs/paper/",
+  "backend": "dual",
+  "moe_report": {
+    "namespace_present": true,
+    "available_ops": [
+      "moe_align_block_size",
+      "moe_sum"
+    ],
+    "missing_required_ops": [],
+    "patched_fallback_ops": [
+      "moe_align_block_size",
+      "moe_sum"
+    ],
+    "patched_fast_fallback_ops": []
+  }
+}
+[Pipeline] Found existing PRISM adapter at outputs/paper/prism_adapter.pt; skipping PRISM training.
+[Pipeline] Found existing final GRPO checkpoint at outputs/paper/policy_final.pt; skipping GRPO training.
+[Launcher] Detected tp_size=2; relaunching under torchrun with MASTER_ADDR=127.0.0.1 MASTER_PORT=29500.
+[W414 10:32:15.994231246 socket.cpp:767] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+/n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/torch/__init__.py:1617: UserWarning: Please use the new API settings to control TF32 behavior, such as torch.backends.cudnn.conv.fp32_precision = 'tf32' or torch.backends.cuda.matmul.fp32_precision = 'ieee'. Old settings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends.cudnn.allow_tf32 = True, allowTF32CuDNN() and allowTF32CuBLAS() will be deprecated after Pytorch 2.9. Please see https://pytorch.org/docs/main/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:80.)
+  _C._set_float32_matmul_precision(precision)
+Loading eval dataset: openai/gsm8k...
+/n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/torch/__init__.py:1617: UserWarning: Please use the new API settings to control TF32 behavior, such as torch.backends.cudnn.conv.fp32_precision = 'tf32' or torch.backends.cuda.matmul.fp32_precision = 'ieee'. Old settings, e.g, torch.backends.cuda.matmul.allow_tf32 = True, torch.backends.cudnn.allow_tf32 = True, allowTF32CuDNN() and allowTF32CuBLAS() will be deprecated after Pytorch 2.9. Please see https://pytorch.org/docs/main/notes/cuda.html#tensorfloat-32-tf32-on-ampere-and-later-devices (Triggered internally at /pytorch/aten/src/ATen/Context.cpp:80.)
+  _C._set_float32_matmul_precision(precision)
+Loading dual model (hard auxiliary + soft primary)...
+[W414 10:32:24.950201991 socket.cpp:767] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+[W414 10:32:24.950617607 socket.cpp:767] [c10d] The client socket cannot be initialized to connect to [localhost]:29500 (errno: 97 - Address family not supported by protocol).
+WARNING 04-14 10:32:24 [vllm.py:1135] Current vLLM config is not set.
+WARNING 04-14 10:32:24 [vllm.py:1135] Current vLLM config is not set.
+INFO 04-14 10:32:24 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 04-14 10:32:24 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+[Gloo] Rank [Gloo] Rank 0 is connected to 11 is connected to  peer ranks. 1Expected number of connected peer ranks is :  peer ranks. 1Expected number of connected peer ranks is : 
+1
+WARNING 04-14 10:32:24 [vllm.py:1135] Current vLLM config is not set.
+WARNING 04-14 10:32:24 [vllm.py:1135] Current vLLM config is not set.
+INFO 04-14 10:32:24 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 04-14 10:32:24 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+[Gloo] Rank 0 is connected to 1 peer ranks. [Gloo] Rank Expected number of connected peer ranks is : 11 is connected to 
+1 peer ranks. Expected number of connected peer ranks is : 1
+WARNING 04-14 10:32:24 [vllm.py:1135] Current vLLM config is not set.
+WARNING 04-14 10:32:24 [vllm.py:1135] Current vLLM config is not set.
+INFO 04-14 10:32:24 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 04-14 10:32:24 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 04-14 10:32:24 [pynccl.py:111] vLLM is using nccl==2.27.5
+WARNING 04-14 10:32:25 [symm_mem.py:107] SymmMemCommunicator: symmetric memory multicast operations are not supported.
+WARNING 04-14 10:32:25 [symm_mem.py:107] SymmMemCommunicator: symmetric memory multicast operations are not supported.
+[Gloo] Rank 0[Gloo] Rank  is connected to 00 is connected to  peer ranks. 0Expected number of connected peer ranks is :  peer ranks. 0Expected number of connected peer ranks is : 
+0
+[Gloo] Rank 0 is connected to 0[Gloo] Rank  peer ranks. Expected number of connected peer ranks is : 00 is connected to 
+0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0[Gloo] Rank  peer ranks. 0Expected number of connected peer ranks is :  is connected to 00
+ peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank [Gloo] Rank 10 is connected to  is connected to 11 peer ranks.  peer ranks. Expected number of connected peer ranks is : Expected number of connected peer ranks is : 11
+
+WARNING 04-14 10:32:25 [vllm.py:1135] Current vLLM config is not set.
+WARNING 04-14 10:32:25 [vllm.py:1135] Current vLLM config is not set.
+INFO 04-14 10:32:25 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 04-14 10:32:25 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 04-14 10:32:25 [parallel_state.py:1394] rank 1 in world size 2 is assigned as DP rank 0, PP rank 0, TP rank 1, EP rank 1
+INFO 04-14 10:32:25 [parallel_state.py:1394] rank 0 in world size 2 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+[Runtime] WARNING: torch.ops._moe_C.moe_align_block_size missing; using Python fallback.
+[Runtime] WARNING: torch.ops._moe_C.moe_sum missing; using Python fallback.
+[Model] Runtime patched fallback ops: ['moe_align_block_size', 'moe_sum']
+INFO 04-14 10:32:25 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 04-14 10:32:25 [scheduler.py:216] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 04-14 10:32:27 [layer.py:342] Enabled separate cuda stream for MoE shared_experts
+INFO 04-14 10:32:27 [layer.py:468] [EP Rank 1/2] Expert parallelism is enabled. Expert placement strategy: linear. Local/global number of experts: 128/256. Experts local to global index map: 0->128, 1->129, 2->130, 3->131, 4->132, 5->133, 6->134, 7->135, 8->136, 9->137, 10->138, 11->139, 12->140, 13->141, 14->142, 15->143, 16->144, 17->145, 18->146, 19->147, 20->148, 21->149, 22->150, 23->151, 24->152, 25->153, 26->154, 27->155, 28->156, 29->157, 30->158, 31->159, 32->160, 33->161, 34->162, 35->163, 36->164, 37->165, 38->166, 39->167, 40->168, 41->169, 42->170, 43->171, 44->172, 45->173, 46->174, 47->175, 48->176, 49->177, 50->178, 51->179, 52->180, 53->181, 54->182, 55->183, 56->184, 57->185, 58->186, 59->187, 60->188, 61->189, 62->190, 63->191, 64->192, 65->193, 66->194, 67->195, 68->196, 69->197, 70->198, 71->199, 72->200, 73->201, 74->202, 75->203, 76->204, 77->205, 78->206, 79->207, 80->208, 81->209, 82->210, 83->211, 84->212, 85->213, 86->214, 87->215, 88->216, 89->217, 90->218, 91->219, 92->220, 93->221, 94->222, 95->223, 96->224, 97->225, 98->226, 99->227, 100->228, 101->229, 102->230, 103->231, 104->232, 105->233, 106->234, 107->235, 108->236, 109->237, 110->238, 111->239, 112->240, 113->241, 114->242, 115->243, 116->244, 117->245, 118->246, 119->247, 120->248, 121->249, 122->250, 123->251, 124->252, 125->253, 126->254, 127->255.
+INFO 04-14 10:32:27 [layer.py:342] Enabled separate cuda stream for MoE shared_experts
+INFO 04-14 10:32:27 [layer.py:468] [EP Rank 0/2] Expert parallelism is enabled. Expert placement strategy: linear. Local/global number of experts: 128/256. Experts local to global index map: 0->0, 1->1, 2->2, 3->3, 4->4, 5->5, 6->6, 7->7, 8->8, 9->9, 10->10, 11->11, 12->12, 13->13, 14->14, 15->15, 16->16, 17->17, 18->18, 19->19, 20->20, 21->21, 22->22, 23->23, 24->24, 25->25, 26->26, 27->27, 28->28, 29->29, 30->30, 31->31, 32->32, 33->33, 34->34, 35->35, 36->36, 37->37, 38->38, 39->39, 40->40, 41->41, 42->42, 43->43, 44->44, 45->45, 46->46, 47->47, 48->48, 49->49, 50->50, 51->51, 52->52, 53->53, 54->54, 55->55, 56->56, 57->57, 58->58, 59->59, 60->60, 61->61, 62->62, 63->63, 64->64, 65->65, 66->66, 67->67, 68->68, 69->69, 70->70, 71->71, 72->72, 73->73, 74->74, 75->75, 76->76, 77->77, 78->78, 79->79, 80->80, 81->81, 82->82, 83->83, 84->84, 85->85, 86->86, 87->87, 88->88, 89->89, 90->90, 91->91, 92->92, 93->93, 94->94, 95->95, 96->96, 97->97, 98->98, 99->99, 100->100, 101->101, 102->102, 103->103, 104->104, 105->105, 106->106, 107->107, 108->108, 109->109, 110->110, 111->111, 112->112, 113->113, 114->114, 115->115, 116->116, 117->117, 118->118, 119->119, 120->120, 121->121, 122->122, 123->123, 124->124, 125->125, 126->126, 127->127.
+INFO 04-14 10:32:27 [unquantized_fused_moe_method.py:90] FlashInfer CUTLASS MoE is available for EP but not enabled, consider setting VLLM_USE_FLASHINFER_MOE_FP16=1 to enable it.
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:00<00:00, 34.64it/s]
+100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 7517/7517 [00:00<00:00, 1427343.16it/s]
+100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:00<00:00, 34.51it/s]
+100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 7517/7517 [00:00<00:00, 1372598.31it/s]
+100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:05<00:00,  3.43it/s]
+unused_keys []
+not_inited_keys ['model.layers.1.mlp.experts.expert_map', 'model.layers.2.mlp.experts.expert_map', 'model.layers.3.mlp.experts.expert_map', 'model.layers.4.mlp.experts.expert_map', 'model.layers.5.mlp.experts.expert_map', 'model.layers.6.mlp.experts.expert_map', 'model.layers.7.mlp.experts.expert_map', 'model.layers.8.mlp.experts.expert_map', 'model.layers.9.mlp.experts.expert_map', 'model.layers.10.mlp.experts.expert_map', 'model.layers.11.mlp.experts.expert_map', 'model.layers.12.mlp.experts.expert_map', 'model.layers.13.mlp.experts.expert_map', 'model.layers.14.mlp.experts.expert_map', 'model.layers.15.mlp.experts.expert_map', 'model.layers.16.mlp.experts.expert_map', 'model.layers.17.mlp.experts.expert_map', 'model.layers.18.mlp.experts.expert_map', 'model.layers.19.mlp.experts.expert_map']
+100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 259/259 [00:00<00:00, 3103784.96it/s]
+100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:05<00:00,  3.43it/s]
+unused_keys []
+not_inited_keys ['model.layers.1.mlp.experts.expert_map', 'model.layers.2.mlp.experts.expert_map', 'model.layers.3.mlp.experts.expert_map', 'model.layers.4.mlp.experts.expert_map', 'model.layers.5.mlp.experts.expert_map', 'model.layers.6.mlp.experts.expert_map', 'model.layers.7.mlp.experts.expert_map', 'model.layers.8.mlp.experts.expert_map', 'model.layers.9.mlp.experts.expert_map', 'model.layers.10.mlp.experts.expert_map', 'model.layers.11.mlp.experts.expert_map', 'model.layers.12.mlp.experts.expert_map', 'model.layers.13.mlp.experts.expert_map', 'model.layers.14.mlp.experts.expert_map', 'model.layers.15.mlp.experts.expert_map', 'model.layers.16.mlp.experts.expert_map', 'model.layers.17.mlp.experts.expert_map', 'model.layers.18.mlp.experts.expert_map', 'model.layers.19.mlp.experts.expert_map']
+100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 259/259 [00:00<00:00, 2976232.15it/s]
+[SoftMoE] Patched 19 MoE gates with tau_r=0.1, soft_topk=16
+[SoftMoE] Patched 19 MoE gates with tau_r=0.1, soft_topk=16
+
+====== Baseline: Block S-Mode (tau=0.7, block=32) ======
+INFO 04-14 10:32:39 [fused_moe.py:875] Using configuration from /n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=128,N=512,device_name=NVIDIA_H100_80GB_HBM3.json for MoE layer.
+INFO 04-14 10:32:39 [fused_moe.py:875] Using configuration from /n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=128,N=512,device_name=NVIDIA_H100_80GB_HBM3.json for MoE layer.
+Baseline (block_smode): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [06:56<00:00,  4.16s/it]
+  Accuracy: 0.1000  TPS: 61.6
+
+====== Baseline: Block S-Mode + MBE ======
+Baseline (block_smode_mbe): 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [07:16<00:00,  4.36s/it]
+  Accuracy: 0.1000  TPS: 58.7
+
+====== Baseline: S-Mode (tau=0.7, speed) ======
+Baseline (confidence_s_mode): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [01:49<00:00,  1.10s/it]
+  Accuracy: 0.0000  TPS: 56.1
+
+====== Baseline: Q-Mode (tau=0.95, quality) ======
+Baseline (confidence_q_mode): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [01:49<00:00,  1.10s/it]
+  Accuracy: 0.0200  TPS: 33.2
+
+====== Baseline: Fast-dLLM (Wu et al. 2025) ======
+Baseline (fast_dllm): 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [01:49<00:00,  1.09s/it]
+  Accuracy: 0.0300  TPS: 70.1
+/n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/torch/nn/modules/transformer.py:392: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+
+Loading trained policy from outputs/paper/policy_best.pt
+  Loaded PRISM adapter from outputs/paper/prism_adapter.pt
+
+====== Speculative AOAE — Trained Policy (tau_r=0.1) ======
+
+--- quality: tau_pi=0.7, primary_every_n=1, agree=0.98, unmask=0.0625, remask=on ---
+Speculative (tau_r=0.1):  93%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████▊              | 93/100 [01:55<00:08,  1.23s/it]/n/holylabs/sham_lab/Users/pranavsitaraman/.conda/envs/rtx/lib/python3.10/site-packages/torch/nn/modules/transformer.py:392: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+Speculative (tau_r=0.1): 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [02:04<00:00,  1.24s/it]
+  Accuracy: 0.0100  TPS: 206.5
+
+--- balanced: tau_pi=1.0, primary_every_n=3, agree=0.92, unmask=0.125, remask=on ---
+Speculative (tau_r=0.1): 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:56<00:00,  1.78it/s]
+  Accuracy: 0.0100  TPS: 457.0
+
+--- fast: tau_pi=1.25, primary_every_n=6, agree=0.85, unmask=0.1875, remask=on ---
+Speculative (tau_r=0.1): 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:39<00:00,  2.55it/s]
+  Accuracy: 0.0000  TPS: 657.8
+
+--- fastest: tau_pi=1.5, primary_every_n=8, agree=0.75, unmask=0.25, remask=off ---
+Speculative (tau_r=0.1): 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:41<00:00,  2.41it/s]
+  Accuracy: 0.0000  TPS: 620.9
+
+Results saved to outputs/paper/eval_results.json
+Metadata saved to outputs/paper/eval_metadata.json
+Manifest updated at results/experiment_manifest.jsonl
+Eval plot saved to outputs/paper/eval_tps_vs_accuracy.png
+
+============================================================================================================================================================================================================================
+Method                      Accuracy        TPS      NFE  CacheHit  StableK    SpecK    Agree   DraftAcc    Reuse   ReuseJS    AccF1   SpecF1 Note                                    
+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+block_smode                   0.1000       61.6       32    0.0000   0.0000   0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 block_smode,remask=on                   
+block_smode_mbe               0.1000       58.7       32    0.0000   0.0000   0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 block_smode_mbe,remask=on               
+confidence_s_mode             0.0000       56.1       32    0.0000   0.0000   0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 confidence_s_mode,remask=on             
+confidence_q_mode             0.0200       33.2       32    0.0000   0.0000   0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 confidence_q_mode,remask=on             
+fast_dllm                     0.0300       70.1       32    0.0000   0.0000   0.0000   0.0000     0.0000   0.0000    0.0000   0.0000   0.0000 fast_dllm,remask=on                     
+Speculative-AOAE              0.0100      206.5       32    1.0000   0.5355   0.9484   0.9196     0.9744   0.9196    0.0000   0.4182   0.0546 point=quality,tau_r=0.1,tau_pi=0.7,primary_n=1,agree_thr=0.98,unmask=0.0625,reuse=argmax_match,pc=on(H=4,B=32),sched=aoae,remask=on
+Speculative-AOAE              0.0100      457.0       15    1.0000   0.5671   0.3742   0.9056     0.9816   0.9056    0.0000   0.4651   0.1340 point=balanced,tau_r=0.1,tau_pi=1.0,primary_n=3,agree_thr=0.92,unmask=0.125,reuse=argmax_match,pc=on(H=4,B=32),sched=aoae,remask=on
+Speculative-AOAE              0.0000      657.8       10    1.0000   0.3754   0.2335   0.8733     0.9873   0.8733    0.0000   0.5135   0.1729 point=fast,tau_r=0.1,tau_pi=1.25,primary_n=6,agree_thr=0.85,unmask=0.1875,reuse=argmax_match,pc=on(H=4,B=32),sched=aoae,remask=on
+Speculative-AOAE              0.0000      620.9       11    1.0000   0.3230   0.1742   0.8686     0.9939   0.8686    0.0000   0.5157   0.1491 point=fastest,tau_r=0.1,tau_pi=1.5,primary_n=8,agree_thr=0.75,unmask=0.25,reuse=argmax_match,pc=on(H=4,B=32),sched=aoae,remask=off
+============================================================================================================================================================================================================================
+
+
+  
+Workflow complete.

@@ -1,0 +1,82 @@
+POC 1 STATUS REPORT: SOFT-ROUTING SPEED-QUALITY TRADE-OFF
+Repository: Efficient-dLLM-Inference
+Audit date: 2026-03-02
+
+Experiment goal (from request)
+- "POC 1 (soft routing trade-off): Does soft-routed LLaDA 2.1 give a
+  speed-quality trade-off? Measure TPS vs downstream performance while
+  sweeping routing temperature, with all else fixed, and optionally with
+  remasking turned off for more comprehensive tracking."
+- Also requested: compare soft vs hard gating across different SOTA
+  diffusion language model settings/configs.
+
+Executive status (how much is done)
+- Setup implementation in code/config/scripts: ~75% done.
+- Result-tracking instrumentation quality: ~35% done.
+- Actual experiment execution artifacts for this POC: ~10% done.
+- Overall POC completion (setup + tracking + produced results): ~40%.
+
+What is already implemented (DONE)
+1) Soft-routing implementation exists.
+   - aoae/models/soft_moe.py patches MoE gates to dense soft routing with tau_r.
+2) Hard/soft dual-gating architecture exists.
+   - aoae/models/dual_model.py toggles a single model between hard auxiliary
+     and soft primary passes.
+3) Routing-temperature sweep configs exist.
+   - configs/dual_mini_tau001.yaml, dual_mini_tau01.yaml, dual_mini_tau05.yaml.
+4) Separate hard and soft mini configs exist.
+   - configs/llada21_mini_hard.yaml and llada21_mini_soft.yaml.
+5) Eval pipeline supports speculative mode and TPS/accuracy output.
+   - run_eval.py -> aoae/evaluate.py (standard + speculative mode).
+6) Cluster automation for sweeps exists.
+   - slurm/eval_sweep.sh and slurm/train_dual.sh.
+7) Multiple model families are scaffolded in configs.
+   - LLaDA-8B, LLaDA2.1-mini, LLaDA2.1-flash.
+
+Requirement-level status for POC 1
+- Sweep routing temperature (tau_r) with fixed setup: PARTIAL
+  Reason: sweep configs exist, but no sweep result files are present.
+- Compare hard vs soft gating at matched settings: PARTIAL
+  Reason: hard/soft configs exist; no saved matched comparison output.
+- Compare across multiple SOTA diffusion models: PARTIAL
+  Reason: model configs exist (8B/mini/flash), but no completed run matrix.
+- Track TPS vs downstream performance: PARTIAL
+  Reason: metrics are computed in eval, but tracking is not comprehensive
+  and only one eval artifact exists.
+
+What has been run so far (evidence found)
+- Only one evaluation artifact exists in the repo:
+  outputs/default_mid/eval_results.json
+- It contains GSM8K results for default_mid (24-step) with:
+  uniform, confidence_s_mode, confidence_q_mode, and AOAE tau_pi sweep.
+- This artifact is useful sanity evidence, but it does NOT answer POC 1
+  (no tau_r sweep outputs, no hard-vs-soft matched comparison output).
+
+Current tracking gaps (TO BE DONE)
+1) No stored tau_r sweep outputs under outputs/dual_mini_tau*/.
+2) No explicit hard-vs-soft comparison table produced from run artifacts.
+3) No remask-off switch in config for controlled ablation.
+   - Policy always has remask head in AOAE path; no simple config flag to
+     disable remask while keeping everything else fixed.
+4) Cache/agreement metrics are not persisted in main eval results.
+   - aoae/evaluate.py defines cache fields but speculative eval currently
+     writes cache_hit_rate=0.0 and cache_commits=0.
+5) No central experiment registry/manifest across configs/runs.
+6) Expected results file is placeholder targets (not actual measured runs).
+
+Recommended completion plan (to close POC 1)
+1) Run matched mini hard vs soft baselines (same data/sampling lengths).
+2) Run tau_r sweep (0.01, 0.1, 0.5) with same fixed settings and save each
+   eval_results.json into dedicated output dirs.
+3) Add a remask ablation flag (e.g., inference.disable_remask=true) and run
+   remask ON/OFF for the same tau_r sweep.
+4) Wire speculative cache/agreement stats into aoae/evaluate.py outputs.
+5) Produce one consolidated comparison table: model/config, gating type,
+   tau_r, remask setting, accuracy, TPS, NFE, cache hit rate, agreement.
+
+Bottom line answer to "how much is done?"
+- The repository has substantial infrastructure for the experiment design,
+  especially configs and inference code for soft/hard gating and tau sweeps.
+- However, experiment tracking is incomplete and produced evidence is sparse.
+- For the specific POC goal (proof via measured trade-off curves), the repo
+  is mostly "ready to run" rather than "already demonstrated".

@@ -54,6 +54,7 @@ class SpeculativeTrajectory:
     weighted_embeds_list: List[torch.Tensor] = field(default_factory=list)
     entropy_list: List[torch.Tensor] = field(default_factory=list)
     mask_ind_list: List[torch.BoolTensor] = field(default_factory=list)
+    confidence_list: List[torch.Tensor] = field(default_factory=list)
     quality_scores_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     agreement_list: List[torch.Tensor] = field(default_factory=list)
     age_feature_list: List[Optional[torch.Tensor]] = field(default_factory=list)
@@ -1253,6 +1254,7 @@ def speculative_inference(
             trajectory.weighted_embeds_list.append(weighted_embeds.detach())
             trajectory.entropy_list.append(entropy.detach())
             trajectory.mask_ind_list.append(mask_ind.detach())
+            trajectory.confidence_list.append(confidence.detach())
             trajectory.quality_scores_list.append(
                 q_scores.detach() if q_scores is not None else None
             )
