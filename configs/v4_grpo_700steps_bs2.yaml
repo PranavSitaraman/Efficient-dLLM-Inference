@@ -59,7 +59,7 @@ grpo:
   weight_decay: 0.01
   epochs: 1
   max_steps: 700
-  batch_size: 4
+  batch_size: 2
   grad_accum_steps: 4
   warmup_steps: 50
   max_grad_norm: 0.5
@@ -83,10 +83,10 @@ data:
   train_max_samples: 5000
 hardware:
   tp_size: 1
-  dp_size: 4
+  dp_size: 2
 logging:
-  run_name: v4_grpo_post_warmstart_700steps
-  output_dir: outputs/v4_grpo_post_warmstart_700steps/
+  run_name: v4_grpo_700steps_dp2
+  output_dir: outputs/v4_grpo_700steps_dp2/
   log_every: 1
   save_every: 50
   use_wandb: true

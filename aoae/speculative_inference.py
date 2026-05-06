@@ -50,6 +50,11 @@ class SpeculativeTrajectory:
     policy_outputs: List[Dict[str, torch.Tensor]] = field(default_factory=list)
     thrash_counts: List[torch.Tensor] = field(default_factory=list)
     H_t_list: List[torch.Tensor] = field(default_factory=list)
+    # V5 hybrid: drafter (aux) last hidden state per step, for u_t conditioning.
+    # None entries on verifier microsteps (aux not separately called there).
+    aux_h_final_list: List[Optional[torch.Tensor]] = field(default_factory=list)
+    # Primary last hidden state per step, for r_t conditioning on verifier steps.
+    pri_h_final_list: List[Optional[torch.Tensor]] = field(default_factory=list)
     # Soft-mask intermediates for differentiable ω re-computation in GRPO loss.
     weighted_embeds_list: List[torch.Tensor] = field(default_factory=list)
     entropy_list: List[torch.Tensor] = field(default_factory=list)
@@ -682,6 +687,23 @@ def speculative_inference(
     _primary_cache_enabled = not (_need_hidden or _need_all_hidden)
     _aux_cache_enabled = use_prefix_kv_cache
 
+    # V5 hybrid: aux hidden for u_t (drafter steps) + primary hidden for r_t
+    # (verifier steps). Neither requires changing _primary_cache_enabled —
+    # aux hidden is free (aux already runs), and primary hidden is obtained by
+    # promoting _need_hidden so _run_primary_full_resp returns it.
+    _pol_inner_check = policy.module if hasattr(policy, "module") else policy
+    _need_aux_hidden = (
+        getattr(_pol_inner_check, "feature_mode", "scalar_only") == "v5_hybrid"
+        and hasattr(dual_model, "auxiliary_forward_with_hidden")
+    )
+    if _need_aux_hidden and not _need_hidden and not _need_all_hidden:
+        # Promote: request primary hidden on verifier steps so r_t gets h_final.
+        # This disables the primary KV-cache fast path on verifier steps, but
+        # that is already the case in training (record_trajectory=True) because
+        # the cache path never ran during warmstart/GRPO rollouts anyway.
+        _need_hidden = True
+        _primary_cache_enabled = False
+
     drafter_cfg = ic.get("drafter", {})
     # Fast drafter path: when frozen u/r heads make the draft action
     # deterministic (u_t = (confidence >= threshold) & mask, r_t=0,
@@ -737,6 +759,18 @@ def speculative_inference(
             return aux_full[:, resp_slice, :]
 
         return dual_model.auxiliary_forward(current_y)[:, resp_slice, :]
+
+    def _run_auxiliary_resp_with_hidden(
+        current_y: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """V5: hard-routed forward returning (logits, h_final) for resp region.
+
+        KV-cache path is not supported here because auxiliary_forward_with_cache
+        does not expose hidden states. Falls back to the uncached route, which is
+        always correct. On most V5 training configs the aux cache is off anyway.
+        """
+        full_logits, full_hidden = dual_model.auxiliary_forward_with_hidden(current_y)
+        return full_logits[:, resp_slice, :], full_hidden[:, resp_slice, :]
 
     def _run_primary_cached_resp(
         current_y: torch.Tensor,
@@ -888,9 +922,15 @@ def speculative_inference(
 
         aux_logits: Optional[torch.Tensor] = None
         composition_agreement = torch.zeros(B, L_gen, dtype=torch.bool, device=device)
+        _step_aux_h_final: Optional[torch.Tensor] = None   # V5: aux hidden on drafter steps
+        _step_pri_h_final: Optional[torch.Tensor] = None   # V5: primary hidden on verifier steps
 
         if not run_primary:
-            aux_logits = _run_auxiliary_resp(y)
+            if _need_aux_hidden:
+                aux_logits, _step_aux_h_final = _run_auxiliary_resp_with_hidden(y)
+                _step_aux_h_final = _step_aux_h_final.detach()
+            else:
+                aux_logits = _run_auxiliary_resp(y)
             resp_logits = aux_logits
             # No verifier observation happened on this cheap draft step, so no
             # position is considered accepted for composition or K_spec.
@@ -987,6 +1027,8 @@ def speculative_inference(
             if _run_aux_on_verifier:
                 aux_logits = _run_auxiliary_resp(y)
             resp_logits, _pri_hidden_for_prism, _pri_hidden_states_for_tracker = _run_primary_cached_resp(y)
+            if _need_aux_hidden and _pri_hidden_for_prism is not None:
+                _step_pri_h_final = _pri_hidden_for_prism.detach()
             primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
             _primary_steps += 1
 
@@ -1200,6 +1242,8 @@ def speculative_inference(
                 agreement=agreement.float(),
                 age_feature=age_feat,
                 last_action_feature=last_action_feat,
+                aux_h_final=_step_aux_h_final,
+                pri_h_final=_step_pri_h_final,
             )
         pol_inner = policy.module if hasattr(policy, "module") else policy
 
@@ -1259,6 +1303,8 @@ def speculative_inference(
                 {k: (v.detach() if torch.is_tensor(v) else v) for k, v in policy_out.items()}
             )
             trajectory.H_t_list.append(H_t.detach())
+            trajectory.aux_h_final_list.append(_step_aux_h_final)   # None on verifier steps
+            trajectory.pri_h_final_list.append(_step_pri_h_final)   # None on drafter steps
             trajectory.weighted_embeds_list.append(weighted_embeds.detach())
             trajectory.entropy_list.append(entropy.detach())
             trajectory.mask_ind_list.append(mask_ind.detach())
