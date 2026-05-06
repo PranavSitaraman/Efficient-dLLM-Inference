@@ -928,7 +928,7 @@ def speculative_inference(
         if not run_primary:
             if _need_aux_hidden:
                 aux_logits, _step_aux_h_final = _run_auxiliary_resp_with_hidden(y)
-                _step_aux_h_final = _step_aux_h_final.detach()
+                _step_aux_h_final = _step_aux_h_final.detach().to(dtype=dual_model._model.model.dtype)
             else:
                 aux_logits = _run_auxiliary_resp(y)
             resp_logits = aux_logits
@@ -1016,6 +1016,8 @@ def speculative_inference(
             resp_logits = dual_out.primary_logits
             aux_logits = dual_out.auxiliary_logits
             _pri_hidden_for_prism = dual_out.primary_hidden
+            if _pri_hidden_for_prism is not None:
+                _pri_hidden_for_prism = _pri_hidden_for_prism.to(dtype=dual_model._model.model.dtype)
             _pri_hidden_states_for_tracker = dual_out.primary_hidden_states
             primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
             _primary_steps += 1
@@ -1028,7 +1030,7 @@ def speculative_inference(
                 aux_logits = _run_auxiliary_resp(y)
             resp_logits, _pri_hidden_for_prism, _pri_hidden_states_for_tracker = _run_primary_cached_resp(y)
             if _need_aux_hidden and _pri_hidden_for_prism is not None:
-                _step_pri_h_final = _pri_hidden_for_prism.detach()
+                _step_pri_h_final = _pri_hidden_for_prism.detach().to(dtype=dual_model._model.model.dtype)
             primary_fresh_mask = torch.ones(B, L_gen, dtype=torch.bool, device=device)
             _primary_steps += 1
 
