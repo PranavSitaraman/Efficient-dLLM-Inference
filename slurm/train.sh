@@ -50,7 +50,12 @@ fi
 DEFAULT_GPUS="$(python3 - <<PY
 import yaml
 cfg = yaml.safe_load(open("$CONFIG"))
-print(int(cfg.get("hardware", {}).get("tp_size", 1) or 1))
+hw = cfg.get("hardware", {})
+# dp_size: total data-parallel GPUs (for GRPO DP runs); tp_size: tensor-parallel GPUs per group.
+# Use dp_size if set, otherwise fall back to tp_size (legacy TP-only configs).
+dp = int(hw.get("dp_size", 0) or 0)
+tp = int(hw.get("tp_size", 1) or 1)
+print(dp if dp > 0 else tp)
 PY
 )"
 export GPUS_PER_NODE="${GPUS_PER_NODE:-$DEFAULT_GPUS}"
@@ -99,12 +104,21 @@ case "$STAGE" in
       --master_port "$MASTER_PORT" \
       -m aoae.cli train --config "$CONFIG" --stage grpo --resume "$RESUME" "$@"
     ;;
+  warmstart)
+    torchrun \
+      --nproc_per_node "$GPUS_PER_NODE" \
+      --nnodes 1 \
+      --node_rank 0 \
+      --master_addr "$MASTER_ADDR" \
+      --master_port "$MASTER_PORT" \
+      -m aoae.cli train --config "$CONFIG" --stage warmstart "$@"
+    ;;
   pipeline)
     python3 -m aoae.cli pipeline --config "$CONFIG" --resume "$RESUME" "$@"
     ;;
   *)
     echo "Unknown stage: $STAGE" >&2
-    echo "Expected one of: prism, grpo, pipeline" >&2
+    echo "Expected one of: prism, warmstart, grpo, pipeline" >&2
     exit 1
     ;;
 esac

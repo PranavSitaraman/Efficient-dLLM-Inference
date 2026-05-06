@@ -35,6 +35,7 @@ from .models.base_model import LLaDABaseModel
 from .models.soft_mask import SoftMaskedState
 from .models.policy import AOAEPolicy, DefaultPolicy
 from .models.prism import PRISMAdapter
+from .phase_a_v2 import PhaseAV2Policy
 from .inference import (
     aoae_inference,
     block_smode_decode,
@@ -2095,9 +2096,12 @@ def main(
                 )
 
             if has_trained_policy:
-                policy = AOAEPolicy(cfg, input_dim=embed_dim).to(device)
+                _use_v2_policy = bool(cfg.get("phase_a_v2", False))
+                policy_cls = PhaseAV2Policy if _use_v2_policy else AOAEPolicy
+                policy = policy_cls(cfg, input_dim=embed_dim).to(device)
                 if is_global_rank_zero():
-                    print(f"\nLoading trained policy from {checkpoint_path}")
+                    print(f"\nLoading trained policy from {checkpoint_path} "
+                          f"(class={'PhaseAV2Policy' if _use_v2_policy else 'AOAEPolicy'})")
                 ckpt = torch.load(checkpoint_path, map_location=device)
                 load_state_dict_flexible(policy, ckpt["policy"], "policy")
                 if "soft_mask" in ckpt:

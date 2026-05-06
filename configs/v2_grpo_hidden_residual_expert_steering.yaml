@@ -1,0 +1,54 @@
+extends: paper_smoke.yaml
+phase_a_v2: true
+stable_cache_enabled: false
+train_heads: ["u", "r"]
+feature_mode: hidden_residual
+warmstart_checkpoint: null
+target_u_rate: 0.10
+target_r_rate: 0.02
+reward_cache_terms_enabled: false
+phase_a_v2_config:
+  feature_mode: hidden_residual
+  target_u_rate: 0.10
+  target_r_rate: 0.02
+  train_heads: ["u", "r"]
+  warmstart_checkpoint: null
+  stable_cache_enabled: false
+  reward_cache_terms_enabled: false
+policy:
+  d_model: 128
+  n_layers: 1
+  n_heads: 4
+  dropout: 0.0
+  feature_mode: hidden_residual
+  target_u_rate: 0.10
+  target_r_rate: 0.02
+cache:
+  enabled: false
+  stable_kv_cache: false
+grpo:
+  enabled: true
+  train_heads: ["unmask", "remask"]
+  include_heads_in_logprob: ["unmask", "remask"]
+  train_soft_mask: false
+  warm_start_from: outputs/v4_warmstart_hidden_residual/policy_final.pt
+  warm_start_strict: true
+  reward_cache_terms_enabled: false
+  alpha: 1.0
+  beta: 0.0
+  lambda_unresolved: 0.25
+  lambda_extra_remask: 0.05
+  lambda_invalid: 1.0
+  lambda_reset: 0.0
+  expert_steering:
+    enabled: true
+    num_expert_trajectories: 1
+    mixture_weight: 0.125
+    anneal_to_zero: true
+    experts:
+      - canonical
+logging:
+  run_name: v4_grpo_hidden_residual_expert_steering
+  output_dir: outputs/v4_grpo_hidden_residual_expert_steering/
+  log_every: 1
+  save_every: 5
