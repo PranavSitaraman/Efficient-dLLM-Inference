@@ -4,12 +4,12 @@ stable_cache_enabled: false
 train_heads: ["u", "r"]
 feature_mode: scalar_only
 warmstart_checkpoint: null
-target_u_rate: 0.10
+target_u_rate: 0.125
 target_r_rate: 0.02
 reward_cache_terms_enabled: false
 phase_a_v2_config:
   feature_mode: scalar_only
-  target_u_rate: 0.10
+  target_u_rate: 0.125
   target_r_rate: 0.02
   train_heads: ["u", "r"]
   warmstart_checkpoint: null
@@ -21,7 +21,7 @@ policy:
   n_heads: 4
   dropout: 0.0
   feature_mode: scalar_only
-  target_u_rate: 0.10
+  target_u_rate: 0.125
   target_r_rate: 0.02
 cache:
   enabled: false
@@ -41,18 +41,28 @@ warmstart:
   lr: 0.0001
   weight_decay: 0.01
   epochs: 1
-  max_steps: 10
-  max_samples: 10
+  max_steps: 500
+  max_samples: 2000
   max_grad_norm: 1.0
   low_confidence_threshold: 0.15
   lambda_rank: 0.1
-  lambda_rate: 0.01
+  lambda_rate: 0.1
   lambda_hidden_gate: 0.0
   rollout_overrides:
-    inference.steps: 8
-    inference.gen_length: 64
+    # Match eval + GRPO (paper.yaml) rollout budget exactly so warmstart
+    # trajectories match the GRPO / eval distribution.
+    inference.steps: 256
+    inference.gen_length: 512
+    base_model.lossless_verification: true
+    inference.primary_agree_threshold: 0.5
+    inference.verifier.use_prism_score: true
+    inference.drafter.run_on_verifier: never
+    inference.drafter.aux_compute_ratio: 0.0
+hardware:
+  tp_size: 1
 logging:
   run_name: v4_warmstart_scalar_only
   output_dir: outputs/v4_warmstart_scalar_only/
   log_every: 1
-  save_every: 5
+  save_every: 50
+  use_wandb: true

@@ -1251,10 +1251,12 @@ def speculative_inference(
             if bool(cfg.get("phase_a_v2", False)):
                 include_heads = {"remask"} if run_primary else {"unmask"}
             lp = pol_inner.log_prob(policy_out, actions, include_heads=include_heads)
-            trajectory.actions.append({k: v.detach() for k, v in actions.items()})
+            trajectory.actions.append(
+                {k: (v.detach() if torch.is_tensor(v) else v) for k, v in actions.items()}
+            )
             trajectory.log_probs.append(lp.detach())
             trajectory.policy_outputs.append(
-                {k: v.detach() for k, v in policy_out.items()}
+                {k: (v.detach() if torch.is_tensor(v) else v) for k, v in policy_out.items()}
             )
             trajectory.H_t_list.append(H_t.detach())
             trajectory.weighted_embeds_list.append(weighted_embeds.detach())
@@ -1801,9 +1803,13 @@ def aoae_block_inference(
                 )
                 lp = pol_inner.log_prob(policy_out_blk, actions_blk, include_heads=include_heads)
 
-                trajectory.actions.append({k: v.detach() for k, v in full_actions.items()})
+                trajectory.actions.append(
+                    {k: (v.detach() if torch.is_tensor(v) else v) for k, v in full_actions.items()}
+                )
                 trajectory.log_probs.append(lp.detach())
-                trajectory.policy_outputs.append({k: v.detach() for k, v in full_policy_out.items()})
+                trajectory.policy_outputs.append(
+                    {k: (v.detach() if torch.is_tensor(v) else v) for k, v in full_policy_out.items()}
+                )
                 trajectory.H_t_list.append(full_H.detach())
                 trajectory.weighted_embeds_list.append(full_W.detach())
                 trajectory.entropy_list.append(full_E.detach())

@@ -1,0 +1,46 @@
+# Eval config for V3 cold-start GRPO checkpoint (AOAEPolicy, expert-steered).
+# Uses same inference environment as v3 training (lossless, agree=0.5).
+extends: paper_smoke.yaml
+
+# NOT phase_a_v2 — this is the standard AOAEPolicy with 4 heads
+phase_a_v2: false
+
+base_model:
+  lossless_verification: true
+
+cache:
+  enabled: true
+  stable_kv_cache: false
+
+inference:
+  steps: 256
+  gen_length: 512
+  speculative_schedule: aoae
+  max_unmask_fraction_per_step: 0.125
+  disable_remask: false
+  primary_agree_threshold: 0.5
+  verifier:
+    use_prism_score: true
+    acceptance_mode: argmax_match
+  drafter:
+    run_on_verifier: never
+    aux_compute_ratio: 0.0
+    fast_path: false
+  positional_cache:
+    enabled: false
+  verifier_schedule:
+    mode: candidate_budget
+    draft_token_budget: 12
+    max_draft_microsteps: 4
+
+evaluation:
+  speculative_sweep:
+    enabled: false
+
+hardware:
+  tp_size: 1
+
+logging:
+  run_name: eval_v3_coldstart
+  output_dir: outputs/eval_v3_coldstart/
+  use_wandb: false

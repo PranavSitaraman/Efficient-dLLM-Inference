@@ -141,7 +141,18 @@ class _TrainingLogger:
         # WandB
         if self._wandb is not None:
             try:
-                self._wandb.log(metrics, step=step)
+                # Separate text vs numeric: wandb.log handles both but text
+                # samples are better logged as a Table for the UI.
+                text_keys = {k for k, v in metrics.items() if isinstance(v, str)}
+                if text_keys:
+                    import wandb as _wb
+                    table = _wb.Table(columns=sorted(text_keys))
+                    table.add_data(*[metrics[k] for k in sorted(text_keys)])
+                    numeric = {k: v for k, v in metrics.items() if k not in text_keys}
+                    numeric["samples"] = table
+                    self._wandb.log(numeric, step=step)
+                else:
+                    self._wandb.log(metrics, step=step)
             except Exception:
                 pass
 
@@ -1053,9 +1064,12 @@ def collect_rollout_group(
     rewards_t = rewards_t.detach().cpu()
     reward_components_t = {k: v.detach().cpu() for k, v in reward_components_t.items()}
     trajectories = split_group_trajectory(trajectory, G)
+    # Attach best rollout's generated tokens for sample logging
+    best_idx = int(rewards_t.argmax().item())
     for g, traj_data in enumerate(trajectories):
         traj_data["reward"] = float(rewards_t[g].item())
         traj_data["is_expert"] = False
+    trajectories[best_idx]["_best_gen_tokens"] = gen_tokens[best_idx].detach().cpu()
 
     # ------------------------------------------------------------------
     # E expert (heuristic) rollouts — Expert Steering augmentation
@@ -1301,7 +1315,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
         # Wrap policy in DDP for multi-GPU gradient sync
         if is_distributed:
             from torch.nn.parallel import DistributedDataParallel as DDP
-            policy = DDP(policy, device_ids=[local_rank])
+            policy = DDP(policy, device_ids=[local_rank], find_unused_parameters=True)
             # Only wrap soft_mask in DDP if it has parameters that require gradients.
             # When train_soft_mask=false, configure_grpo_trainability freezes all its
             # params, and DDP raises RuntimeError on a fully-frozen module.
@@ -1727,6 +1741,35 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             best_value=None if best_reward == -float("inf") else best_reward,
                         )
                         print(f"  Saved checkpoint: {ckpt_path}")
+                        # Log a sample generation for inspection
+                        if _logger is not None:
+                            try:
+                                _best_gen = None
+                                for _traj in trajectories:
+                                    if "_best_gen_tokens" in _traj:
+                                        _best_gen = _traj["_best_gen_tokens"]
+                                        break
+                                if _best_gen is not None:
+                                    _mask_id = cfg.get("base_model", {}).get("mask_token_id")
+                                    _gen_text = decode_generated_tokens(
+                                        tokenizer, _best_gen, mask_token_id=_mask_id,
+                                    )
+                                    _n_masks = int((_best_gen == _mask_id).sum().item()) if _mask_id is not None else 0
+                                    _sample_rec = {
+                                        "sample/question": question[:200],
+                                        "sample/reference": reference[:200],
+                                        "sample/generation": _gen_text[:500],
+                                        "sample/n_masks_remaining": _n_masks,
+                                        "sample/best_reward": float(rewards.max().item()),
+                                    }
+                                    _logger.log_step(_sample_rec, step=global_step)
+                                    print(
+                                        f"  [Sample] Q: {question[:80]}...\n"
+                                        f"  [Sample] A: {_gen_text[:120]}...\n"
+                                        f"  [Sample] masks={_n_masks} reward={float(rewards.max().item()):.3f}"
+                                    )
+                            except Exception:
+                                pass
 
                     if global_step >= gc["max_steps"]:
                         break

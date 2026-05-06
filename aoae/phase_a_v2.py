@@ -147,13 +147,24 @@ def build_unmask_labels(
     low_confidence_threshold: float = 0.15,
     accepted_weight: float = 3.0,
     accepted_soon_changed_weight: float = 1.0,
-    rejected_weight: float = 3.0,
-    low_conf_unselected_weight: float = 0.25,
+    rejected_weight: float = 1.0,
+    low_conf_unselected_weight: float = 3.0,
     soft_changed_positive: bool = True,
 ) -> WarmStartLabels:
     """Construct partial u_t labels.
 
     Unselected medium/high-confidence candidates remain unlabeled by default.
+
+    Weight rationale:
+      - low_conf_unselected (label=0, w=3.0): strong negative — the heuristic
+        would never unmask these (conf << tau=0.7); policy must not either.
+      - rejected (label=0, w=1.0): weak negative — heuristic made a reasonable
+        choice (conf > tau) that happened to be wrong downstream; don't
+        over-penalise the same reasonable mistake.
+      - stable_accept (label=1, w=3.0): strong positive — heuristic correct
+        and verifier confirmed.
+      - changed_accept (label=1, w=1.0): kept as soft positive; accepted but
+        later remasked so signal is mixed.
     """
     labels = torch.full(candidate_mask.shape, UNLABELED, device=candidate_mask.device)
     weights = torch.zeros(candidate_mask.shape, device=candidate_mask.device, dtype=torch.float32)
@@ -191,10 +202,19 @@ def build_remask_labels(
     later_remasked_or_changed: Optional[torch.BoolTensor] = None,
     forced_weight: float = 4.0,
     accepted_weight: float = 3.0,
-    stable_weight: float = 2.0,
+    stable_weight: float = 1.0,
     later_changed_weight: float = 1.5,
 ) -> WarmStartLabels:
-    """Construct partial r_t labels for the training rollback domain."""
+    """Construct partial r_t labels for the training rollback domain.
+
+    Weight rationale:
+      - forced (label=1, w=4.0): strongest positive — verifier oracle says remask.
+      - accepted (label=0, w=3.0): strong negative — verifier confirmed good token.
+      - stable_kept (label=0, w=1.0): moderate negative — old unmasked tokens the
+        verifier didn't touch this step. Remasking these causes unnecessary thrashing
+        and slower decoding, so the policy should learn to leave them alone. Kept
+        below accepted_weight so forced-reject signal still dominates.
+    """
     labels = torch.full(candidate_mask.shape, UNLABELED, device=candidate_mask.device)
     weights = torch.zeros(candidate_mask.shape, device=candidate_mask.device, dtype=torch.float32)
     candidates = candidate_mask.bool()
