@@ -1516,6 +1516,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                     break
                 batch_indices = indices[i : i + gc["batch_size"]]
 
+                _batch_had_backward = False
                 for idx in batch_indices:
                     sample = train_ds[idx]
 
@@ -1584,6 +1585,17 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                     # Scale loss for gradient accumulation
                     scaled_loss = grpo_loss / (len(batch_indices) * grad_accum)
                     scaled_loss.backward()
+                    _batch_had_backward = True
+
+                # In DP mode every rank must call backward the same number of
+                # times per accumulation window or DDP's all-reduce will hang.
+                # This branch is hit only if every sample in the batch was
+                # skipped (empty question/reference) — rare in practice but
+                # possible with noisy datasets.
+                if is_distributed and not sync_ranks and not _batch_had_backward:
+                    _dummy = sum(p.sum() * 0.0 for p in policy.parameters() if p.requires_grad)
+                    if _dummy is not None and isinstance(_dummy, torch.Tensor):
+                        _dummy.backward()
 
                 accum_step += 1
 
