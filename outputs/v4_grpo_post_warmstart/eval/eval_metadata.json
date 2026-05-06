@@ -1,6 +1,6 @@
 {
   "schema_version": "aoae_eval_v3",
-  "created_at_utc": "2026-05-06T01:52:47.403591+00:00",
+  "created_at_utc": "2026-05-06T18:34:38.626451+00:00",
   "run_name": "eval_v4_grpo_step100",
   "output_dir": "outputs/v4_grpo_post_warmstart/eval/",
   "results_path": "outputs/v4_grpo_post_warmstart/eval/eval_results.json",
@@ -95,8 +95,8 @@
   "saved_predictions": 50,
   "max_saved_predictions": 50,
   "num_results": 3,
-  "host": "holygpu8a16401.rc.fas.harvard.edu",
-  "git_commit": "3f45263cd61d9cb88c79a9fa14fb7e5362f4f497",
+  "host": "holygpu8a16403.rc.fas.harvard.edu",
+  "git_commit": "2c91ab26c6999c7fa4faeb0cb986760196e46e5f",
   "torch_version": "2.8.0+cu128",
   "vllm_version": "0.10.2",
   "transformers_version": "4.57.0",

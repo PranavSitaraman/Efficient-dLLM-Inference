@@ -530,6 +530,7 @@ class PhaseAV2Policy(nn.Module):
             delta_u_v5 = torch.zeros_like(z_u_scalar)
             if aux_h_final is not None:
                 # aux_h_final is the drafter's last hidden state (transformer hidden space)
+                aux_h_final = aux_h_final.to(device=device, dtype=self.aux_hidden_norm.weight.dtype)
                 u_proj = self.aux_hidden_proj(self.aux_hidden_norm(aux_h_final))
                 delta_u_v5 = self.aux_hidden_delta(u_proj).squeeze(-1)
             gate_aux_u = torch.sigmoid(self.gate_aux_u)
@@ -539,6 +540,7 @@ class PhaseAV2Policy(nn.Module):
             delta_r_v5 = torch.zeros_like(z_r_scalar)
             if pri_h_final is not None:
                 # pri_h_final is the primary's last hidden state (transformer hidden space)
+                pri_h_final = pri_h_final.to(device=device, dtype=self.pri_hidden_norm.weight.dtype)
                 r_proj = self.pri_hidden_proj(self.pri_hidden_norm(pri_h_final))
                 delta_r_v5 = self.pri_hidden_delta(r_proj).squeeze(-1)
             gate_pri_r = torch.sigmoid(self.gate_pri_r)

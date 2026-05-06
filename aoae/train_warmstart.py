@@ -225,7 +225,7 @@ def train(cfg: dict) -> str:
     # find_unused_parameters=True is required because the hidden_residual
     # parameters (hidden_proj, hidden_norm, hidden_delta_*, gates) receive no
     # gradients in scalar_only mode.
-    if is_distributed and not sync_ranks:
+    if is_distributed and not sync_ranks and world_size > 1:
         from torch.nn.parallel import DistributedDataParallel as DDP
 
         policy = DDP(policy, device_ids=[local_rank], find_unused_parameters=True)
@@ -352,14 +352,20 @@ def train(cfg: dict) -> str:
 
                 if not step_losses:
                     continue
-                total_loss = torch.stack(step_losses).mean()
+                # Accumulate gradients step-by-step to avoid DDP "marked ready
+                # twice" errors that arise when torch.stack([...]).mean().backward()
+                # traverses the same parameter multiple times in one pass.
+                total_loss_val = sum(l.item() for l in step_losses) / len(step_losses)
                 optimizer.zero_grad()
-                total_loss.backward()
+                n = len(step_losses)
+                for i, sl in enumerate(step_losses):
+                    scaled = sl / n
+                    scaled.backward()
                 torch.nn.utils.clip_grad_norm_(policy.parameters(), grad_clip)
                 optimizer.step()
                 global_step += 1
 
-                metric_buf.setdefault("warmstart/loss", []).append(float(total_loss.item()))
+                metric_buf.setdefault("warmstart/loss", []).append(total_loss_val)
                 if global_step % log_every == 0:
                     record = {
                         "epoch": epoch,

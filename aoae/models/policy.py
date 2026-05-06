@@ -73,7 +73,15 @@ def call_policy(
         params = inspect.signature(candidate).parameters if candidate is not None else {}
     except (TypeError, ValueError):
         params = {}
-    if "confidence" not in params:
+    # Strip any kwargs the target policy doesn't accept (e.g. DefaultPolicy
+    # doesn't accept aux_h_final/pri_h_final added for v5_hybrid).
+    has_var_keyword = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()
+    )
+    if not has_var_keyword and params:
+        kwargs = {k: v for k, v in kwargs.items() if k in params}
+    elif "confidence" not in params:
+        # Legacy fallback for policies with no signature info
         kwargs.pop("confidence", None)
     return policy(H_t, mask_indicator, step_frac, **kwargs)
 
