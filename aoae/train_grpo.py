@@ -716,6 +716,9 @@ def compute_grpo_loss(
             last_action_feat = last_action_list[t_idx] if last_action_list else None
             agreement_list = traj.get("agreement_list", None)
             agreement = agreement_list[t_idx].float() if agreement_list else None
+            # V5 hybrid: pass aux_h_final and pri_h_final
+            aux_h_final = traj.get("aux_h_final_list", [None] * n_steps)[t_idx]
+            pri_h_final = traj.get("pri_h_final_list", [None] * n_steps)[t_idx]
             policy_out = policy(
                 H_t, mask_ind, step_frac,
                 confidence=confidence,
@@ -723,6 +726,8 @@ def compute_grpo_loss(
                 agreement=agreement,
                 age_feature=age_feat,
                 last_action_feature=last_action_feat,
+                aux_h_final=aux_h_final,
+                pri_h_final=pri_h_final,
             )
             pol_inner = policy.module if hasattr(policy, 'module') else policy
             step_include_heads = include_heads_in_logprob
@@ -884,6 +889,8 @@ def split_group_trajectory(trajectory: Any, group_size: int) -> List[Dict[str, A
             ],
             "old_log_probs": [_slice_tensor(lp, g) for lp in trajectory.log_probs],
             "H_t_list": [_slice_tensor(h_t, g) for h_t in trajectory.H_t_list],
+            "aux_h_final_list": [_slice_tensor(h, g) for h in getattr(trajectory, 'aux_h_final_list', [None] * len(trajectory.H_t_list))] if hasattr(trajectory, 'aux_h_final_list') else [None] * len(trajectory.H_t_list),
+            "pri_h_final_list": [_slice_tensor(h, g) for h in getattr(trajectory, 'pri_h_final_list', [None] * len(trajectory.H_t_list))] if hasattr(trajectory, 'pri_h_final_list') else [None] * len(trajectory.H_t_list)],
             "weighted_embeds_list": [
                 _slice_tensor(we, g) for we in getattr(trajectory, "weighted_embeds_list", [])
             ],

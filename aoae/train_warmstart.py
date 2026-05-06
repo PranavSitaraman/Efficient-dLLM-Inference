@@ -321,6 +321,9 @@ def train(cfg: dict) -> str:
                     confidence = trajectory.confidence_list[step_idx]
                     agreement = trajectory.agreement_list[step_idx].float()
                     frontier = trajectory.frontier_before_list[step_idx].float()
+                    # V5 hybrid: pass aux_h_final and pri_h_final to policy
+                    aux_h_final = trajectory.aux_h_final_list[step_idx] if hasattr(trajectory, 'aux_h_final_list') else None
+                    pri_h_final = trajectory.pri_h_final_list[step_idx] if hasattr(trajectory, 'pri_h_final_list') else None
                     out = policy(
                         H_t,
                         trajectory.mask_ind_list[step_idx],
@@ -329,6 +332,8 @@ def train(cfg: dict) -> str:
                         agreement=agreement,
                         frontier_membership=frontier,
                         remask_candidate_mask=r_train_candidates,
+                        aux_h_final=aux_h_final,
+                        pri_h_final=pri_h_final,
                     )
                     loss, metrics = phase_a_supervised_loss(
                         out,

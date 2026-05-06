@@ -1,0 +1,41 @@
+{
+  "stage": "grpo",
+  "output_dir": "outputs/v4_grpo_post_warmstart/",
+  "backend": "dual",
+  "used_dual_model": true,
+  "train_dataset": "nvidia/OpenMathInstruct-2",
+  "train_split": "train",
+  "train_max_samples": 2000,
+  "epochs": 1,
+  "max_steps": 200,
+  "completed_steps": 200,
+  "grad_accum_steps": 1,
+  "group_size": 4,
+  "rollout_steps": 256,
+  "rollout_gen_length": 512,
+  "normalize_advantage_std": false,
+  "best_reward": 0.005061547320508167,
+  "best_checkpoint": "outputs/v4_grpo_post_warmstart/policy_best.pt",
+  "final_checkpoint": "outputs/v4_grpo_post_warmstart/policy_final.pt",
+  "resume_from": "outputs/v4_grpo_post_warmstart/policy_latest.pt",
+  "seed": 42,
+  "train_contract_version": 8,
+  "config_fingerprint": "4b078f7a83790751c716b627b3366998254a09d44c545d720bf3c6e2b6fc2a31",
+  "runtime": {
+    "host": "holygpu8a16201.rc.fas.harvard.edu",
+    "pid": 4011553,
+    "python_version": "3.10.20",
+    "torch_version": "2.8.0+cu128",
+    "cuda_available": true,
+    "cuda_device_count": 4,
+    "cuda_devices": [
+      "NVIDIA H200",
+      "NVIDIA H200",
+      "NVIDIA H200",
+      "NVIDIA H200"
+    ],
+    "vllm_version": "0.10.2",
+    "transformers_version": "4.57.0",
+    "git_commit": "3f45263cd61d9cb88c79a9fa14fb7e5362f4f497"
+  }
+}

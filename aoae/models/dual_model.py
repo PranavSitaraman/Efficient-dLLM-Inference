@@ -35,7 +35,8 @@ class DualModelOutput:
     auxiliary_logits: torch.Tensor     # [B, L, V] from hard-routed auxiliary
     agreement: torch.Tensor           # [B, L] bool: argmax match
     agreement_rate: float             # scalar: mean agreement across batch
-    primary_hidden: Optional[torch.Tensor] = None  # [B, L, D] if requested
+    primary_hidden: Optional[torch.Tensor] = None    # [B, L, D] last hidden, primary
+    auxiliary_hidden: Optional[torch.Tensor] = None  # [B, L, D] last hidden, aux (V5)
     primary_hidden_states: Optional[List[torch.Tensor]] = None  # [N][B, L, D]
     primary_attentions: Optional[List[torch.Tensor]] = None
     primary_layer_kv: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
@@ -198,6 +199,18 @@ class DualModelWrapper(nn.Module):
             )
         finally:
             set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def auxiliary_forward_with_hidden(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Hard-routed forward → (logits [B,L,V], h_final [B,L,D]).
+
+        Used by V5 to supply the drafter's last hidden state to the u_t head
+        without requiring an extra primary forward pass on drafter microsteps.
+        """
+        set_hard_routing(self._model.model)
+        return self._model.forward_with_hidden(input_ids)
 
     @torch.no_grad()
     def auxiliary_forward_with_cache(

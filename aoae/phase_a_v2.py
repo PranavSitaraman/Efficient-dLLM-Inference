@@ -396,8 +396,8 @@ class PhaseAV2Policy(nn.Module):
         n_layers = int(pc.get("n_layers", 1))
         dropout = float(pc.get("dropout", 0.0))
         self.feature_mode = str(v2c.get("feature_mode", pc.get("feature_mode", "scalar_only")))
-        if self.feature_mode not in {"scalar_only", "hidden_residual"}:
-            raise ValueError("feature_mode must be scalar_only or hidden_residual")
+        if self.feature_mode not in {"scalar_only", "hidden_residual", "v5_hybrid"}:
+            raise ValueError("feature_mode must be scalar_only, hidden_residual, or v5_hybrid")
         self.target_u_rate = float(v2c.get("target_u_rate", pc.get("target_u_rate", 0.10)))
         self.target_r_rate = float(v2c.get("target_r_rate", pc.get("target_r_rate", 0.02)))
 
@@ -415,12 +415,30 @@ class PhaseAV2Policy(nn.Module):
         self.head_unmask = nn.Linear(d_model, 1)
         self.head_remask = nn.Linear(d_model, 1)
 
+        # --- hidden_residual mode (legacy E_t / emb_t path) ---
         self.hidden_norm = nn.LayerNorm(input_dim)
         self.hidden_proj = nn.Linear(input_dim, d_model)
         self.hidden_delta_unmask = nn.Linear(d_model, 1)
         self.hidden_delta_remask = nn.Linear(d_model, 1)
         self.gate_u = nn.Parameter(torch.tensor(-8.0))
         self.gate_r = nn.Parameter(torch.tensor(-8.0))
+
+        # --- v5_hybrid mode ---
+        # u_t: aux_h_final (drafter's last hidden state) gated residual
+        # r_t: pri_h_final (primary's last hidden state) gated residual
+        # hidden_dim defaults to input_dim if not specified (same for LLaDA-mini).
+        v5_hidden_dim = int(v2c.get("hidden_dim", pc.get("hidden_dim", input_dim)))
+        # u_t branch: drafter hidden state
+        self.aux_hidden_norm = nn.LayerNorm(v5_hidden_dim)
+        self.aux_hidden_proj = nn.Linear(v5_hidden_dim, d_model)
+        self.aux_hidden_delta = nn.Linear(d_model, 1)
+        self.gate_aux_u = nn.Parameter(torch.tensor(-8.0))
+        # r_t branch: primary hidden state
+        self.pri_hidden_norm = nn.LayerNorm(v5_hidden_dim)
+        self.pri_hidden_proj = nn.Linear(v5_hidden_dim, d_model)
+        self.pri_hidden_delta = nn.Linear(d_model, 1)
+        self.gate_pri_r = nn.Parameter(torch.tensor(-8.0))
+
         self._init_weights()
 
     def _init_weights(self) -> None:
@@ -431,10 +449,20 @@ class PhaseAV2Policy(nn.Module):
                     nn.init.zeros_(module.bias)
         nn.init.constant_(self.head_unmask.bias, logit_from_rate(self.target_u_rate))
         nn.init.constant_(self.head_remask.bias, logit_from_rate(self.target_r_rate))
+        # hidden_residual: zero-init delta heads so mode starts as scalar_only
         nn.init.zeros_(self.hidden_delta_unmask.weight)
         nn.init.zeros_(self.hidden_delta_unmask.bias)
         nn.init.zeros_(self.hidden_delta_remask.weight)
         nn.init.zeros_(self.hidden_delta_remask.bias)
+        # v5_hybrid: zero-init projection heads so mode starts as scalar_only
+        nn.init.zeros_(self.aux_hidden_proj.weight)
+        nn.init.zeros_(self.aux_hidden_proj.bias)
+        nn.init.zeros_(self.aux_hidden_delta.weight)
+        nn.init.zeros_(self.aux_hidden_delta.bias)
+        nn.init.zeros_(self.pri_hidden_proj.weight)
+        nn.init.zeros_(self.pri_hidden_proj.bias)
+        nn.init.zeros_(self.pri_hidden_delta.weight)
+        nn.init.zeros_(self.pri_hidden_delta.bias)
 
     def forward(
         self,
@@ -449,6 +477,8 @@ class PhaseAV2Policy(nn.Module):
         remask_candidate_mask: Optional[torch.BoolTensor] = None,
         quality_scores: Optional[torch.Tensor] = None,
         last_action_feature: Optional[torch.Tensor] = None,
+        aux_h_final: Optional[torch.Tensor] = None,
+        pri_h_final: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         del quality_scores, last_action_feature
         B, L, _ = H_t.shape
@@ -485,12 +515,35 @@ class PhaseAV2Policy(nn.Module):
         delta_r = torch.zeros_like(z_r_scalar)
         gate_u = torch.sigmoid(self.gate_u)
         gate_r = torch.sigmoid(self.gate_r)
+        
+        # --- hidden_residual mode (legacy E_t / emb_t path) ---
         if self.feature_mode == "hidden_residual":
             h = self.hidden_proj(self.hidden_norm(H_t))
             x_hidden = self.backbone(torch.cat([self.input_proj(u_feats) + h, self.input_proj(r_feats) + h], dim=1))
             h_u, h_r = x_hidden[:, :L], x_hidden[:, L:]
             delta_u = self.hidden_delta_unmask(h_u).squeeze(-1)
             delta_r = self.hidden_delta_remask(h_r).squeeze(-1)
+        
+        # --- v5_hybrid mode ---
+        elif self.feature_mode == "v5_hybrid":
+            # u_t: aux_h_final (drafter's last hidden state) for u_t
+            delta_u_v5 = torch.zeros_like(z_u_scalar)
+            if aux_h_final is not None:
+                # aux_h_final is the drafter's last hidden state (transformer hidden space)
+                u_proj = self.aux_hidden_proj(self.aux_hidden_norm(aux_h_final))
+                delta_u_v5 = self.aux_hidden_delta(u_proj).squeeze(-1)
+            gate_aux_u = torch.sigmoid(self.gate_aux_u)
+            delta_u = gate_aux_u * delta_u_v5
+            
+            # r_t: pri_h_final (primary's last hidden state) for r_t
+            delta_r_v5 = torch.zeros_like(z_r_scalar)
+            if pri_h_final is not None:
+                # pri_h_final is the primary's last hidden state (transformer hidden space)
+                r_proj = self.pri_hidden_proj(self.pri_hidden_norm(pri_h_final))
+                delta_r_v5 = self.pri_hidden_delta(r_proj).squeeze(-1)
+            gate_pri_r = torch.sigmoid(self.gate_pri_r)
+            delta_r = gate_pri_r * delta_r_v5
+        
         z_u = z_u_scalar + gate_u * delta_u
         z_r = z_r_scalar + gate_r * delta_r
         z_u = z_u.masked_fill(~u_valid, -1e9)
@@ -517,6 +570,8 @@ class PhaseAV2Policy(nn.Module):
             "hidden/delta_logit_norm_u": delta_u.detach().norm(),
             "hidden/delta_logit_norm_r": delta_r.detach().norm(),
             "hidden_gate_regularizer": gate_u.pow(2) + gate_r.pow(2),
+            "v5/gate_aux_u": gate_aux_u.detach() if self.feature_mode == "v5_hybrid" else torch.tensor(0.0),
+            "v5/gate_pri_r": gate_pri_r.detach() if self.feature_mode == "v5_hybrid" else torch.tensor(0.0),
         }
         return out
 

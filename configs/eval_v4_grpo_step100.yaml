@@ -1,0 +1,52 @@
+# Eval config for v4 GRPO checkpoint (step 100).
+# Faithfully reproduces the rollout environment used during GRPO training.
+extends: paper_smoke.yaml
+phase_a_v2: true
+stable_cache_enabled: false
+feature_mode: scalar_only
+phase_a_v2_config:
+  feature_mode: scalar_only
+  target_u_rate: 0.125
+  target_r_rate: 0.02
+policy:
+  d_model: 128
+  n_layers: 1
+  n_heads: 4
+  dropout: 0.0
+  feature_mode: scalar_only
+  target_u_rate: 0.125
+  target_r_rate: 0.02
+base_model:
+  lossless_verification: true
+cache:
+  enabled: false
+  stable_kv_cache: false
+inference:
+  steps: 256
+  gen_length: 512
+  speculative_schedule: aoae
+  max_unmask_fraction_per_step: 0.125
+  disable_remask: false
+  primary_agree_threshold: 0.5
+  verifier:
+    use_prism_score: true
+    acceptance_mode: argmax_match
+  drafter:
+    run_on_verifier: never
+    aux_compute_ratio: 0.0
+    fast_path: false
+  positional_cache:
+    enabled: false
+  verifier_schedule:
+    mode: candidate_budget
+    draft_token_budget: 12
+    max_draft_microsteps: 4
+evaluation:
+  speculative_sweep:
+    enabled: false
+hardware:
+  tp_size: 1
+logging:
+  run_name: eval_v4_grpo_step100
+  output_dir: outputs/v4_grpo_post_warmstart/eval/
+  use_wandb: false
