@@ -58,14 +58,14 @@ grpo:
   lr: 3.0e-05
   weight_decay: 0.01
   epochs: 1
-  max_steps: 200
-  batch_size: 1
-  grad_accum_steps: 1
-  warmup_steps: 0
+  max_steps: 700
+  batch_size: 4
+  grad_accum_steps: 4
+  warmup_steps: 50
   max_grad_norm: 0.5
   policy_temperature: 1.0
   normalize_advantage_std: false
-  save_every: 20
+  save_every: 50
   # Full rollouts matching warmstart distribution
   rollout_steps: 256
   rollout_gen_length: 512
@@ -80,13 +80,13 @@ grpo:
 data:
   train_dataset: nvidia/OpenMathInstruct-2
   train_split: train
-  train_max_samples: 2000
+  train_max_samples: 5000
 hardware:
   tp_size: 1
   dp_size: 4
 logging:
-  run_name: v4_grpo_post_warmstart
-  output_dir: outputs/v4_grpo_post_warmstart/
+  run_name: v4_grpo_post_warmstart_700steps
+  output_dir: outputs/v4_grpo_post_warmstart_700steps/
   log_every: 1
-  save_every: 20
+  save_every: 50
   use_wandb: true
