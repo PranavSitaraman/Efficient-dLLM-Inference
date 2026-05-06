@@ -8,7 +8,7 @@ Key design choices:
   - Multiplicative reward: correctness * speed_penalty - beta * normalized thrashing
   - Group-mean advantage normalization (no std normalization)
   - Clipped surrogate objective with importance sampling
-  - No KL regularization (policy trained from scratch)
+  - Optional KL regularization (via grpo.kl_coef config)
   - Terminal reward propagated to all preceding steps
 """
 
@@ -639,14 +639,16 @@ def compute_grpo_loss(
     include_heads_in_logprob: Optional[set] = None,
     expert_steering_G: int = 0,
     expert_steering_E: int = 0,
-) -> torch.Tensor:
+    kl_coef: float = 0.0,
+) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Compute clipped GRPO surrogate loss.
+    Compute clipped GRPO surrogate loss with optional KL penalty.
 
     For each trajectory g in the group, recompute log pi_phi(a_t | s_t)
     under the current policy, then compute:
 
       L = -1/G sum_g 1/(T-T_hat_g) sum_t min(rho * A, clip(rho) * A)
+          + kl_coef * KL(pi_new || pi_old)
 
     Args:
         policy:          current policy (parameters being updated).
@@ -656,12 +658,15 @@ def compute_grpo_loss(
                          "actions_list", "old_log_probs"
         advantages:      [G] per-trajectory advantage.
         clip_eps:        clipping threshold epsilon.
+        kl_coef:         KL penalty coefficient (0 = disabled).
 
     Returns:
         loss: scalar (to be minimized).
+        kl_penalty: scalar KL penalty (for logging).
     """
     G_total = len(trajectories)  # G + E under Expert Steering, else G
     total_loss = torch.tensor(0.0, device=advantages.device)
+    total_kl_penalty = torch.tensor(0.0, device=advantages.device)
 
     # Precompute mixture weights for Expert Steering. log_w_policy = log(G/(G+E)),
     # log_w_expert = log(E/(G+E)). When ES is disabled or E=0, these are unused
@@ -774,12 +779,21 @@ def compute_grpo_loss(
             surr2 = torch.clamp(rho, 1.0 - clip_eps, 1.0 + clip_eps) * A_g
             step_loss = step_loss + torch.min(surr1, surr2).squeeze()
 
+            # KL penalty (approximate from log ratio)
+            # KL(pi_new || pi_old) ≈ (log_ratio)^2 / 2 for small changes
+            # This penalizes large policy deviations from the old policy
+            if kl_coef > 0.0:
+                kl_penalty = 0.5 * log_ratio.squeeze() ** 2
+                total_kl_penalty = total_kl_penalty + kl_penalty
+
         # Normalize by number of steps
         step_loss = step_loss / max(n_steps, 1)
         total_loss = total_loss + step_loss
 
     # Average over the augmented group (G + E under Expert Steering, else G).
-    return -total_loss / max(G_total, 1)
+    total_kl_penalty = total_kl_penalty / max(G_total, 1)
+    total_loss = -total_loss / max(G_total, 1) + kl_coef * total_kl_penalty
+    return total_loss, total_kl_penalty
 
 
 def normalize_group_advantages(
@@ -890,7 +904,7 @@ def split_group_trajectory(trajectory: Any, group_size: int) -> List[Dict[str, A
             "old_log_probs": [_slice_tensor(lp, g) for lp in trajectory.log_probs],
             "H_t_list": [_slice_tensor(h_t, g) for h_t in trajectory.H_t_list],
             "aux_h_final_list": [_slice_tensor(h, g) for h in getattr(trajectory, 'aux_h_final_list', [None] * len(trajectory.H_t_list))] if hasattr(trajectory, 'aux_h_final_list') else [None] * len(trajectory.H_t_list),
-            "pri_h_final_list": [_slice_tensor(h, g) for h in getattr(trajectory, 'pri_h_final_list', [None] * len(trajectory.H_t_list))] if hasattr(trajectory, 'pri_h_final_list') else [None] * len(trajectory.H_t_list)],
+            "pri_h_final_list": [_slice_tensor(h, g) for h in getattr(trajectory, 'pri_h_final_list', [None] * len(trajectory.H_t_list))] if hasattr(trajectory, 'pri_h_final_list') else [None] * len(trajectory.H_t_list),
             "weighted_embeds_list": [
                 _slice_tensor(we, g) for we in getattr(trajectory, "weighted_embeds_list", [])
             ],
@@ -1578,7 +1592,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
 
                     # Clipped GRPO surrogate with importance sampling
                     # Pass DDP-wrapped modules so .backward() syncs gradients
-                    grpo_loss = compute_grpo_loss(
+                    grpo_loss, kl_penalty = compute_grpo_loss(
                         policy=policy,
                         soft_mask_module=soft_mask,
                         trajectories=trajectories,
@@ -1587,8 +1601,11 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         include_heads_in_logprob=_include_heads_for_logprob(cfg),
                         expert_steering_G=G if _es_enabled else 0,
                         expert_steering_E=_es_E,
+                        kl_coef=gc.get("kl_coef", 0.0),
                     )
                     _last_grpo_loss = float(grpo_loss.item())
+                    _last_kl_penalty = float(kl_penalty.item())
+                    _component_bufs["kl_penalty"].append(_last_kl_penalty)
                     # Scale loss for gradient accumulation
                     scaled_loss = grpo_loss / (len(batch_indices) * grad_accum)
                     scaled_loss.backward()
@@ -1688,7 +1705,8 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             f"cacheF1_rew={_buf_mean('cache_f1_reward'):.4f}  "
                             f"accessF1={_buf_mean('access_f1'):.3f}  "
                             f"access_rew={_buf_mean('access_reward'):.4f}  "
-                            f"unresolved_pen={_buf_mean('unresolved_penalty'):.4f}"
+                            f"unresolved_pen={_buf_mean('unresolved_penalty'):.4f}  "
+                            f"kl_penalty={_buf_mean('kl_penalty'):.4f}"
                         )
 
                         # Structured log entry for WandB + JSONL
@@ -1712,6 +1730,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                             "reward/access_f1": _buf_mean("access_f1"),
                             "reward/unresolved_penalty": _buf_mean("unresolved_penalty"),
                             "reward/access_reward": _buf_mean("access_reward"),
+                            "policy/kl_penalty": _buf_mean("kl_penalty"),
                             # Cache metrics (useful for WandB curves)
                             "cache/speed_credit_fraction": _buf_mean("mean_cached_fraction"),
                             "cache/mean_stable_fraction": _buf_mean("mean_stable_cached_fraction"),
