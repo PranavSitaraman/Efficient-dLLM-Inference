@@ -1,0 +1,41 @@
+{
+  "stage": "grpo",
+  "output_dir": "outputs/v4_grpo_quality_balanced/",
+  "backend": "dual",
+  "used_dual_model": true,
+  "train_dataset": "nvidia/OpenMathInstruct-2",
+  "train_split": "train",
+  "train_max_samples": 5000,
+  "epochs": 1,
+  "max_steps": 2700,
+  "completed_steps": 313,
+  "grad_accum_steps": 2,
+  "group_size": 4,
+  "rollout_steps": 256,
+  "rollout_gen_length": 512,
+  "normalize_advantage_std": false,
+  "best_reward": 0.030936528342668315,
+  "best_checkpoint": "outputs/v4_grpo_quality_balanced/policy_best.pt",
+  "final_checkpoint": "outputs/v4_grpo_quality_balanced/policy_final.pt",
+  "resume_from": "outputs/v4_grpo_quality_balanced/policy_latest.pt",
+  "seed": 42,
+  "train_contract_version": 8,
+  "config_fingerprint": "a8097d412a2425439fef3782d4997dcd6d4e268c94ab9ccb435a84c08b24ff96",
+  "runtime": {
+    "host": "488bd2e84bd7",
+    "pid": 9411,
+    "python_version": "3.10.20",
+    "torch_version": "2.8.0+cu128",
+    "cuda_available": true,
+    "cuda_device_count": 4,
+    "cuda_devices": [
+      "NVIDIA A100 80GB PCIe",
+      "NVIDIA A100 80GB PCIe",
+      "NVIDIA A100 80GB PCIe",
+      "NVIDIA A100 80GB PCIe"
+    ],
+    "vllm_version": "0.10.2",
+    "transformers_version": "4.55.2",
+    "git_commit": "f551980f16a7ef44d85928692b38bfeba5955b2a"
+  }
+}
