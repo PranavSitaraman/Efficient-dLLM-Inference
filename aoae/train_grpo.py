@@ -1333,10 +1333,22 @@ def train(cfg: dict, resume_from: Optional[str] = None):
         # intentionally excluded from the GRPO likelihood.
         configure_grpo_trainability(policy, soft_mask, cfg)
 
-        # Wrap policy in DDP for multi-GPU gradient sync
-        if is_distributed:
+        # Wrap policy in DDP for multi-GPU gradient sync.
+        # compute_grpo_loss calls policy() multiple times per backward pass
+        # (once per timestep × group). With default DDP this triggers
+        # "Parameter ... marked as ready twice" because each forward-pass
+        # autograd hook fires the reducer for every reuse of a parameter.
+        # static_graph=True tells DDP the used/unused parameter set is fixed
+        # across iterations, which is the documented fix for parameter reuse
+        # across multiple forward passes within one backward pass.
+        if is_distributed and world_size > 1:
             from torch.nn.parallel import DistributedDataParallel as DDP
-            policy = DDP(policy, device_ids=[local_rank], find_unused_parameters=True)
+            policy = DDP(
+                policy,
+                device_ids=[local_rank],
+                find_unused_parameters=False,  # superseded by static_graph
+                static_graph=True,
+            )
             # Only wrap soft_mask in DDP if it has parameters that require gradients.
             # When train_soft_mask=false, configure_grpo_trainability freezes all its
             # params, and DDP raises RuntimeError on a fully-frozen module.
