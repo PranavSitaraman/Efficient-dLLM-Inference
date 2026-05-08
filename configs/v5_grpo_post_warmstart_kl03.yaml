@@ -1,0 +1,100 @@
+# V5 GRPO post-warmstart config.
+# Loads the v5_hybrid warm-started policy and fine-tunes with GRPO reward.
+# Quality-balanced rollout env (agree=0.92, lossless=false, budget 8/3).
+# Stronger KL regularization (kl_coef=0.03) to preserve the strong warmstart prior.
+extends: paper_smoke.yaml
+phase_a_v2: true
+stable_cache_enabled: false
+train_heads: ["u", "r"]
+feature_mode: v5_hybrid
+phase_a_v2_config:
+  feature_mode: v5_hybrid
+  hidden_dim: 2048
+  target_u_rate: 0.125
+  target_r_rate: 0.02
+  train_heads: ["u", "r"]
+  stable_cache_enabled: false
+  reward_cache_terms_enabled: false
+policy:
+  d_model: 128
+  n_layers: 1
+  n_heads: 4
+  dropout: 0.0
+  feature_mode: v5_hybrid
+  hidden_dim: 2048
+  target_u_rate: 0.125
+  target_r_rate: 0.02
+cache:
+  enabled: false
+  stable_kv_cache: false
+grpo:
+  enabled: true
+  kl_coef: 0.03
+  group_size: 4
+  clip_eps: 0.2
+  alpha: 1.0
+  beta: 0.1
+  thrash_normalization: response_length
+  cache_speed_source: none
+  cache_speed_credit_cap: 0.0
+  access_reward_weight: 0.0
+  cache_quality_weight: 0.0
+  reward_cache_terms_enabled: false
+  unresolved_penalty_weight: 0.25
+  min_checkpoint_reward: -1.0
+  # Warm-start from v5 supervised checkpoint
+  warm_start_from: outputs/v5_warmstart_hybrid/policy_final.pt
+  warm_start_strict: true
+  # No expert steering
+  expert_steering:
+    enabled: false
+  # Train only u_t / r_t heads
+  train_heads:
+    - unmask
+    - remask
+  include_heads_in_logprob:
+    - unmask
+    - remask
+  unmask_scope: drafter
+  remask_scope: verifier
+  train_soft_mask: false
+  # Optimization
+  lr: 2.0e-05
+  weight_decay: 0.01
+  epochs: 1
+  max_steps: 500
+  batch_size: 2
+  grad_accum_steps: 2
+  warmup_steps: 30
+  max_grad_norm: 0.5
+  policy_temperature: 1.0
+  normalize_advantage_std: false
+  save_every: 25
+  # Quality-balanced rollout environment
+  rollout_steps: 256
+  rollout_gen_length: 512
+  rollout_overrides:
+    base_model.lossless_verification: false
+    inference.speculative_schedule: aoae
+    inference.verifier_schedule.mode: candidate_budget
+    inference.verifier_schedule.draft_token_budget: 8
+    inference.verifier_schedule.max_draft_microsteps: 3
+    inference.primary_agree_threshold: 0.92
+    inference.max_unmask_fraction_per_step: 0.125
+    inference.disable_remask: false
+    inference.verifier.use_prism_score: true
+    inference.drafter.run_on_verifier: never
+    inference.drafter.aux_compute_ratio: 0.0
+data:
+  train_dataset: nvidia/OpenMathInstruct-2
+  train_split: train
+  train_max_samples: 5000
+hardware:
+  tp_size: 1
+  dp_size: 4
+logging:
+  run_name: v5_grpo_post_warmstart_kl03
+  output_dir: outputs/v5_grpo_post_warmstart_kl03/
+  log_every: 1
+  save_every: 25
+  use_wandb: true

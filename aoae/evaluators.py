@@ -16,11 +16,14 @@ from .code_eval import evaluate_code_sample
 from .tasks import (
     check_gsm8k_correctness_llada,
     check_math_correctness,
+    check_math500_correctness,
     extract_answer,
     extract_gsm8k_llada_answer,
     extract_gsm8k_llada_reference,
     extract_gsm8k_official_answer,
+    extract_math500_answer,
     is_gsm8k_dataset,
+    is_math500_dataset,
 )
 
 
@@ -92,6 +95,32 @@ class MathEvaluator(BaseEvaluator):
         )
 
 
+class Math500Evaluator(BaseEvaluator):
+    """Evaluator for HuggingFaceH4/MATH-500.
+
+    Uses a layered strategy: latex normalisation → numeric float comparison
+    → sympy symbolic equivalence.  The reference is taken directly from the
+    dataset's ``answer`` field (already stripped of \\boxed{}); the prediction
+    is extracted from the last \\boxed{} in the generated text.
+    """
+
+    task_type = "math"
+    evaluator_name = "math500_layered"
+
+    def __init__(self, cfg: Dict[str, Any]):
+        pass
+
+    def evaluate(self, generated: str, reference: str, sample: Optional[Dict[str, Any]] = None) -> EvalDecision:
+        pred = extract_math500_answer(generated)
+        ok = check_math500_correctness(generated, reference)
+        return EvalDecision(
+            correct=bool(ok),
+            detail="math500_layered",
+            extracted_prediction=pred,
+            extracted_reference=(reference or "").strip(),
+        )
+
+
 class CodeEvaluator(BaseEvaluator):
     """HumanEval-style evaluator with execution-based pass/fail."""
 
@@ -127,6 +156,8 @@ class CodeEvaluator(BaseEvaluator):
 def describe_evaluator(cfg: Dict[str, Any]) -> str:
     task_type = str(cfg.get("evaluation", {}).get("task_type", "math")).lower()
     if task_type == "math":
+        if is_math500_dataset(cfg):
+            return "math500_layered"
         return "gsm8k_llada_flexible" if is_gsm8k_dataset(cfg) else "math_heuristic_fallback"
     if task_type == "code":
         return "code_exec_or_string_match"
@@ -136,6 +167,8 @@ def describe_evaluator(cfg: Dict[str, Any]) -> str:
 def build_evaluator(cfg: Dict[str, Any]) -> BaseEvaluator:
     task_type = str(cfg.get("evaluation", {}).get("task_type", "math")).lower()
     if task_type == "math":
+        if is_math500_dataset(cfg):
+            return Math500Evaluator(cfg)
         return MathEvaluator(cfg)
     if task_type == "code":
         return CodeEvaluator(cfg)
