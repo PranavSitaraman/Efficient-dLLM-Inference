@@ -470,6 +470,175 @@ def check_math_correctness(generated: str, reference: str) -> bool:
     return _normalize_answer_text(gen_answer) == _normalize_answer_text(ref_answer)
 
 
+# ---------------------------------------------------------------------------
+# MATH-500 evaluator helpers
+# ---------------------------------------------------------------------------
+# The HuggingFaceH4/MATH-500 dataset stores clean LaTeX answers in the
+# `answer` field (no \boxed{} wrapper in the reference).  Generated answers
+# from masked-diffusion models typically wrap their final answer in \boxed{}.
+# We use a layered comparison strategy:
+#   1. Exact string match after latex normalisation (fast, handles most cases)
+#   2. Numeric float comparison (handles \frac{14}{3} vs 4.667)
+#   3. sympy symbolic equivalence via parse_latex (handles algebraic forms)
+# ---------------------------------------------------------------------------
+
+def _extract_boxed_content(text: str) -> List[str]:
+    """Extract all \\boxed{...} contents handling nested braces."""
+    results = []
+    i = 0
+    while i < len(text):
+        idx = text.find(r"\boxed{", i)
+        if idx == -1:
+            break
+        start = idx + len(r"\boxed{")
+        depth = 1
+        j = start
+        while j < len(text) and depth > 0:
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+            j += 1
+        if depth == 0:
+            results.append(text[start : j - 1])
+        i = idx + 1
+    return results
+
+
+_MATH_LATEX_NORM_SUBS: List[Tuple[str, str]] = [
+    # spacing / sizing macros
+    (r"\\left", ""),
+    (r"\\right", ""),
+    (r"\\big\b", ""),
+    (r"\\Big\b", ""),
+    (r"\\bigg\b", ""),
+    (r"\\Bigg\b", ""),
+    (r"\\!", ""),
+    (r"\\,", ""),
+    (r"\\;", ""),
+    (r"\\:", ""),
+    (r"\\ ", " "),
+    # display-only wrappers
+    (r"\\displaystyle\b", ""),
+    (r"\\textstyle\b", ""),
+    (r"\\scriptstyle\b", ""),
+    # text formatting
+    (r"\\text\s*\{([^}]*)\}", r"\1"),
+    (r"\\mathrm\s*\{([^}]*)\}", r"\1"),
+    (r"\\mathbf\s*\{([^}]*)\}", r"\1"),
+    (r"\\mathit\s*\{([^}]*)\}", r"\1"),
+    # currency / percent that shouldn't affect numeric value
+    (r"\\\$", ""),
+    (r"\\%", "%"),
+    # common aliases
+    (r"\\cdot\b", "*"),
+    (r"\\times\b", "*"),
+    (r"\\div\b", "/"),
+    (r"\\pm\b", "±"),
+    (r"\\mp\b", "∓"),
+    (r"\\leq\b", "<="),
+    (r"\\geq\b", ">="),
+    (r"\\neq\b", "!="),
+    (r"\\infty\b", "inf"),
+]
+_MATH_LATEX_NORM_COMPILED = [(re.compile(p), r) for p, r in _MATH_LATEX_NORM_SUBS]
+
+
+def _normalize_latex(s: str) -> str:
+    """Normalise a LaTeX math string for string-level comparison."""
+    result = (s or "").strip()
+    # strip surrounding \boxed{...} if present (use nested-brace extractor)
+    boxed = _extract_boxed_content(result)
+    if boxed:
+        result = boxed[-1].strip()
+    for pattern, replacement in _MATH_LATEX_NORM_COMPILED:
+        result = pattern.sub(replacement, result)
+    # collapse all whitespace
+    result = re.sub(r"\s+", "", result)
+    # strip trailing punctuation
+    result = result.rstrip(".,;:!?")
+    return result.strip()
+
+
+def extract_math500_answer(text: str) -> str:
+    """Extract the final answer from model output for MATH-500 grading.
+
+    Priority:
+      1. Last \\boxed{...} content (with proper nested-brace handling)
+      2. Explicit answer-marker line
+      3. Last number in text (last-resort fallback)
+    """
+    text = (text or "").strip()
+
+    # 1. Last \boxed{...} with nested-brace support
+    boxed_matches = _extract_boxed_content(text)
+    if boxed_matches:
+        return boxed_matches[-1].strip()
+
+    # 2. Explicit answer markers
+    for pattern in _GSM8K_ANSWER_LINE_RES:
+        matches = pattern.findall(text)
+        if matches:
+            return matches[-1].strip()
+
+    # 3. Last number fallback
+    candidate = _extract_numeric_candidate(text)
+    return candidate if candidate is not None else ""
+
+
+def _try_sympy_equiv(a: str, b: str) -> Optional[bool]:
+    """Try sympy symbolic equivalence; return None on any parse/timeout error."""
+    try:
+        from sympy.parsing.latex import parse_latex
+        import sympy
+        ea = parse_latex(a)
+        eb = parse_latex(b)
+        diff = sympy.simplify(ea - eb)
+        return bool(diff == 0)
+    except Exception:
+        return None
+
+
+def check_math500_correctness(generated: str, reference: str) -> bool:
+    """Grade a MATH-500 sample.
+
+    ``reference`` is the clean answer string from the dataset's ``answer``
+    field (e.g. ``\\frac{14}{3}`` or ``p - q``).
+    ``generated`` is the full model output; the answer is extracted from
+    the last ``\\boxed{...}`` or other answer marker.
+    """
+    pred = extract_math500_answer(generated)
+    ref = (reference or "").strip()
+
+    if not pred:
+        return False
+
+    # 1. Exact match after latex normalisation
+    if _normalize_latex(pred) == _normalize_latex(ref):
+        return True
+
+    # 2. Numeric float comparison (handles \frac vs decimal)
+    pred_num = _parse_numeric_answer(_normalize_answer_text(pred))
+    ref_num = _parse_numeric_answer(_normalize_answer_text(ref))
+    if pred_num is not None and ref_num is not None:
+        return abs(pred_num - ref_num) < 1e-3
+
+    # 3. Sympy symbolic equivalence (best-effort; may be slow or fail)
+    sympy_result = _try_sympy_equiv(pred, ref)
+    if sympy_result is not None:
+        return sympy_result
+
+    return False
+
+
+def is_math500_dataset(cfg: Optional[Dict[str, Any]]) -> bool:
+    """Return True when the configured eval dataset is MATH-500."""
+    if not isinstance(cfg, dict):
+        return False
+    dataset = str(cfg.get("data", {}).get("eval_dataset", "")).lower()
+    return "math-500" in dataset or "math_500" in dataset or "huggingfaceh4/math-500" in dataset
+
+
 def extract_prompt_and_reference(sample: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     """Extract a prompt/reference pair from heterogeneous benchmark schemas."""
 

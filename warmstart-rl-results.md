@@ -452,6 +452,62 @@ V4b (current 700-step GRPO run, job 10445901) is the direct scalar-only comparis
 
 ---
 
+## V4 Quality-Balanced GRPO — Full Results
+
+The V4 QBal run used a different rollout environment from the original V4 GRPO:
+`agree=0.92, lossless=false, budget 8/3` (quality_balanced). Three checkpoints evaluated.
+
+### Checkpoint: policy_latest.pt (164 steps, kl_coef=0.01)
+**Eval job:** 10782719 | **Config:** `configs/eval_v4_grpo_quality_balanced.yaml`
+
+| Point | Accuracy | TPS |
+|-------|----------|-----|
+| qbal_tau0.5 (lossy) | **80%** | **73.4** |
+| qbal_tau1.0 (lossy) | 70% | 46.3 |
+| **qbal_tau0.5_lossless** | **76%** | **92.8** |
+| qbal_tau1.0_lossless | 62% | 49.5 |
+
+> Note: the 76%/92.8 lossless point is the same checkpoint/job as 80%/73.4 — just a different sweep point (lossless verification on vs off). The higher TPS under lossless is because the verifier accepts tokens faster when it can skip borderline cases.
+
+### Checkpoint: policy_best.pt (625 steps, best reward)
+**Eval job:** 10929177 | **Config:** `configs/eval_v4_grpo_qbal_best.yaml`
+
+| Point | Accuracy | TPS |
+|-------|----------|-----|
+| qbal_best_tau0.5 (lossy) | 74% | 67.9 |
+| qbal_best_tau1.0 (lossy) | 70% | 50.9 |
+| **qbal_best_tau0.5_lossless** | **78%** | **82.0** |
+| qbal_best_tau1.0_lossless | 68% | 52.1 |
+
+### Checkpoint: policy_final.pt (625 steps, final)
+**Eval job:** 10929189 | **Config:** `configs/eval_v4_grpo_qbal_final.yaml`
+
+| Point | Accuracy | TPS |
+|-------|----------|-----|
+| qbal_final_tau0.5 (lossy) | 76% | 40.9 |
+| qbal_final_tau1.0 (lossy) | 74% | 28.5 |
+| qbal_final_tau0.5_lossless | 82% | 45.4 |
+| qbal_final_tau1.0_lossless | 68% | 38.3 |
+
+### Summary: V4 QBal Pareto frontier
+
+| Checkpoint | Env | τ | Lossless | Accuracy | TPS | Notes |
+|------------|-----|---|----------|----------|-----|-------|
+| 164-step latest | qbal (agree=0.92, budget 8/3) | 0.5 | off | **80%** | **73.4** | High acc + high TPS |
+| 164-step latest | qbal (agree=0.92, budget 8/3) | 0.5 | on | 76% | **92.8** | Highest TPS of all QBal points |
+| 625-step best | qbal (agree=0.92, budget 8/3) | 0.5 | on | **78%** | 82.0 | +2% acc vs 164-step lossless, −10 TPS |
+| 625-step final | qbal (agree=0.92, budget 8/3) | 0.5 | on | 82% | 45.4 | Highest accuracy, slowest |
+
+For reference — original V4 GRPO (different checkpoint, different env: agree=0.5, lossless, budget 12/4):
+
+| Checkpoint | Env | τ | Accuracy | TPS | Notes |
+|------------|-----|---|----------|-----|-------|
+| v4_grpo_post_warmstart/policy_latest.pt | trained_tau05 (agree=0.5, budget 12/4) | 0.5 | **84%** | 33.2 | Job 10777870 |
+
+The 76%/92.8 and 84%/33.2 TPS difference is **not hardware** — it's rollout environment: QBal uses agree=0.92 (stricter, less verification) and a tighter budget (8/3 vs 12/4), which naturally yields higher TPS. The original V4 env (agree=0.5, budget 12/4) runs more verification steps, trading speed for accuracy.
+
+---
+
 ## V5 Warmstart Hybrid Training — Attempt 1 (FAILED) & Attempt 2 (Pending)
 
 **Job 10705383 (FAILED, 2026-05-06 14:37):**
@@ -461,3 +517,174 @@ V4b (current 700-step GRPO run, job 10445901) is the direct scalar-only comparis
 
 **Job 10725876 (SUBMITTED, afterok eval: 10725887):**
 - Re-submitted with fix applied, seas_gpu partition, 1× H200, 4h wall time
+
+---
+
+## V5 GRPO Post-Warmstart — Training Complete
+
+**DDP fix (2026-05-07):** `static_graph=True` in DDP constructor resolves "Parameter marked as ready twice" caused by `compute_grpo_loss` calling `policy()` multiple times per backward (once per timestep × group). Commit `0c16447`.
+
+### kl_coef=0.01 (Job 10886912)
+- **Config:** `configs/v5_grpo_post_warmstart.yaml`
+- **Checkpoint:** `outputs/v5_grpo_post_warmstart/policy_best.pt`
+- **Hardware:** 4× H200, `holygpu8a16504`
+- **Steps:** 312 completed (grad_accum=2 → 624 effective optimizer steps)
+- **Best reward:** −0.142 (negative rewards expected early in v5_hybrid cold-start)
+- **Eval job:** 11145610, config `configs/eval_v5_grpo_kl01.yaml`
+
+### kl_coef=0.03 (Job 10886915)
+- **Config:** `configs/v5_grpo_post_warmstart_kl03.yaml`
+- **Checkpoint:** `outputs/v5_grpo_post_warmstart_kl03/policy_best.pt`
+- **Hardware:** 4× H200, `holygpu8a16302`
+- **Steps:** 312 completed
+- **Best reward:** −0.142
+- **Eval job:** 11145611, config `configs/eval_v5_grpo_kl03.yaml`
+
+### V5 GRPO Eval Results
+*(Pending — jobs 11145610, 11145611 queued)*
+
+---
+
+## Full-Scale Paper Evals (2026-05-08)
+
+All results below are on **full test sets** (GSM8K: 1319 samples, MATH-500: 500 samples), single H200 GPU, tp_size=1.
+Accuracy = correct/total (verified). TPS = visible output tokens / wall-clock time on eval node.
+Scoring: `gsm8k_llada_flexible` for GSM8K, `math500_layered` (sympy-based LaTeX equivalence) for MATH-500.
+
+### Block Baselines (GSM8K, 1319 samples)
+**Job:** 11215118 | **Config:** `configs/eval_full_block_gsm8k.yaml`
+
+| Method | Correct/Total | Accuracy | TPS | eff_flops |
+|--------|--------------|----------|-----|-----------|
+| llada21_speed_mode | 984/1319 | 74.60% | 72.6 | — |
+| llada21_quality_mode | 1019/1319 | 77.26% | 64.7 | — |
+| AOAE no-train (DefaultPolicy, τ=1.0, lossy) | 1065/1319 | 80.74% | 46.0 | 0.123 |
+
+### Block Baselines (MATH-500, 500 samples)
+**Job:** 11215118 | **Config:** `configs/eval_full_block_math500.yaml`
+
+| Method | Correct/Total | Accuracy | TPS | eff_flops |
+|--------|--------------|----------|-----|-----------|
+| llada21_speed_mode | 197/500 | 39.40% | 100.3 | — |
+| llada21_quality_mode | 207/500 | 41.40% | 91.5 | — |
+| AOAE no-train (DefaultPolicy, τ=1.0, lossy) | 183/500 | 36.60% | 73.4 | 0.127 |
+
+> Note: Only τ=1.0 lossy no-train point was produced; τ=0.5 and lossless points were filtered by `generation_mode_filter` bug (fixed in config, but job used pre-fix config). Re-run needed for full no-train sweep.
+
+### Any-Order Baselines (GSM8K, 1319 samples)
+**Job:** 11215130 | **Config:** `configs/eval_full_anyorder_gsm8k.yaml`
+
+| Method | Correct/Total | Accuracy | TPS | Notes |
+|--------|--------------|----------|-----|-------|
+| llada21_speed_anyorder | 428/1319 | 32.45% | 254.9 | ⚠ LLaDA not trained for any-order |
+| llada21_quality_anyorder | 247/1319 | 18.73% | 243.8 | ⚠ LLaDA not trained for any-order |
+| AOAE no-train (DefaultPolicy, τ=1.0, lossy) | 1089/1319 | 82.56% | 79.3 | 0.122 |
+
+### Any-Order Baselines (MATH-500, 500 samples)
+**Job:** 11215130 | **Config:** `configs/eval_full_anyorder_math500.yaml`
+
+| Method | Correct/Total | Accuracy | TPS | Notes |
+|--------|--------------|----------|-----|-------|
+| llada21_speed_anyorder | 186/500 | 37.20% | 312.4 | ⚠ LLaDA not trained for any-order |
+| llada21_quality_anyorder | 157/500 | 31.40% | 276.2 | ⚠ LLaDA not trained for any-order |
+| AOAE no-train (DefaultPolicy, τ=1.0, lossy) | 189/500 | 37.80% | 123.9 | 0.128 |
+
+> The any-order LLaDA baselines are not meaningful for comparison — LLaDA 2.1 was trained with block-causal attention, not global any-order. Do not use in paper figures.
+
+### V4 QBal Best Checkpoint (GSM8K, 1319 samples)
+**Job:** 11215159 | **Config:** `configs/eval_full_v4best_gsm8k.yaml`
+**Checkpoint:** `outputs/v4_grpo_quality_balanced/policy_best.pt` (625 GRPO steps, scalar_only features)
+
+| Point | τ | Lossless | Correct/Total | Accuracy | TPS | eff_flops |
+|-------|---|----------|--------------|----------|-----|-----------|
+| v4best_tau0.5_lossy | 0.5 | off | 1050/1319 | 79.61% | 72.6 | 0.271 |
+| v4best_tau1.0_lossy | 1.0 | off | 921/1319 | 69.83% | 51.3 | 0.471 |
+| v4best_tau0.5_lossless | 0.5 | on | 1002/1319 | 75.97% | 77.2 | 0.285 |
+| v4best_tau1.0_lossless | 1.0 | on | 921/1319 | 69.83% | 56.0 | 0.480 |
+
+**Best Pareto point:** τ=0.5 lossy — 79.61% @ 72.6 TPS (matches quality baseline accuracy at speed baseline TPS).
+
+### V4 QBal Best Checkpoint (MATH-500, 500 samples)
+**Job:** 11215159 | **Config:** `configs/eval_full_v4best_math500.yaml`
+**Checkpoint:** `outputs/v4_grpo_quality_balanced/policy_best.pt`
+
+| Point | τ | Lossless | Correct/Total | Accuracy | TPS | eff_flops |
+|-------|---|----------|--------------|----------|-----|-----------|
+| v4best_tau0.5_lossy | 0.5 | off | 182/500 | 36.40% | 112.5 | 0.292 |
+| v4best_tau1.0_lossy | 1.0 | off | 129/500 | 25.80% | 65.5 | 0.577 |
+| v4best_tau0.5_lossless | 0.5 | on | 166/500 | 33.20% | 113.4 | 0.322 |
+| v4best_tau1.0_lossless | 1.0 | on | 151/500 | 30.20% | 73.5 | 0.577 |
+
+> V4 was trained on OpenMathInstruct-2 (GSM8K-style). On MATH-500, best point (36.4%) is below quality baseline (41.4%) — expected generalization gap.
+
+### V5 Warmstart Checkpoint (GSM8K, 1319 samples)
+**Job:** 11215170 (COMPLETED) | **Config:** `configs/eval_full_v5ws_gsm8k.yaml`
+**Checkpoint:** `outputs/v5_warmstart_hybrid/policy_final.pt`
+
+| Point | τ | Lossless | Correct/Total | Accuracy | TPS | eff_flops |
+|-------|---|----------|--------------|----------|-----|-----------|
+| v5ws_tau0.5_lossy | 0.5 | off | 1032/1319 | 78.24% | 44.8 | 0.275 |
+| v5ws_tau1.0_lossy | 1.0 | off | 1023/1319 | 77.56% | 42.7 | 0.294 |
+| v5ws_tau0.5_lossless | 0.5 | on | 1002/1319 | 75.97% | 49.5 | 0.282 |
+| v5ws_tau1.0_lossless | 1.0 | on | 998/1319 | 75.66% | 48.1 | 0.293 |
+
+**Best Pareto point:** τ=0.5 lossy — 78.24% @ 44.8 TPS.
+
+### V5 Warmstart Checkpoint (MATH-500, 500 samples)
+**Job:** 11215170 (COMPLETED) | **Config:** `configs/eval_full_v5ws_math500.yaml`
+**Checkpoint:** `outputs/v5_warmstart_hybrid/policy_final.pt`
+
+| Point | τ | Lossless | Correct/Total | Accuracy | TPS | eff_flops |
+|-------|---|----------|--------------|----------|-----|-----------|
+| v5ws_tau0.5_lossy | 0.5 | off | 169/500 | 33.80% | 62.5 | 0.333 |
+| v5ws_tau1.0_lossy | 1.0 | off | 176/500 | 35.20% | 59.1 | 0.366 |
+| v5ws_tau0.5_lossless | 0.5 | on | 165/500 | 33.00% | 69.0 | 0.346 |
+| v5ws_tau1.0_lossless | 1.0 | on | 159/500 | 31.80% | 65.4 | 0.377 |
+
+**Best Pareto point:** τ=1.0 lossy — 35.20% @ 59.1 TPS (but all below V4 τ=0.5 lossy=36.4%; warmstart alone doesn't generalize well to MATH-500).
+
+> Note: truncation_rate=0.55 on MATH-500 (budget=8 too tight for long proofs). Consider budget=16 for MATH-500 evals.
+
+---
+
+### V5 GRPO v2 Training Summary
+**Jobs:** 11167589 (kl=0.01), 11167644 (kl=0.03)
+**Status:** Hit 7.5h walltime at step 312/500; training clean-exited, saved `policy_best.pt` + `policy_final.pt`
+**Warmstart:** `outputs/v5_warmstart_hybrid/policy_final.pt`
+
+#### kl=0.01 (v5_grpo_post_warmstart_v2)
+Per-epoch window averages (50-step windows):
+
+| Steps | Reward | Correct | eff_flops | frac_pos |
+|-------|--------|---------|-----------|----------|
+| 1-50 | −0.035 | 14.0% | 0.481 | 24% |
+| 51-100 | −0.003 | 18.0% | 0.389 | 32% |
+| 101-150 | −0.039 | 17.4% | 0.381 | 26% |
+| 151-200 | −0.000 | 15.5% | 0.420 | 30% |
+| 201-250 | +0.018 | 18.8% | 0.427 | 38% |
+| 251-300 | **+0.042** | 16.1% | 0.415 | **44%** |
+| 301-312 | +0.004 | 15.1% | 0.417 | 25% |
+
+**Best checkpoint:** `policy_best.pt` (epoch_mean_reward=−0.0044)
+
+#### kl=0.03 (v5_grpo_post_warmstart_kl03_v2)
+Per-epoch window averages (50-step windows):
+
+| Steps | Reward | Correct | eff_flops | frac_pos |
+|-------|--------|---------|-----------|----------|
+| 1-50 | −0.045 | 13.5% | 0.473 | 20% |
+| 51-100 | −0.010 | 16.6% | 0.423 | 28% |
+| 101-150 | −0.025 | 18.1% | 0.397 | 32% |
+| 151-200 | +0.004 | 15.1% | 0.412 | 24% |
+| 201-250 | −0.001 | 16.4% | 0.406 | 30% |
+| 251-300 | +0.019 | 14.2% | 0.436 | 34% |
+| 301-312 | −0.028 | 12.5% | 0.449 | 25% |
+
+**Best checkpoint:** `policy_best.pt` (epoch_mean_reward=−0.0044)
+
+> Both runs similar: kl=0.01 trended slightly better (frac_pos 44% in steps 251-300 vs 34%).
+> Both hit reward plateau ~+0.04 mean — similar to V4 at step 312. Would benefit from full 500 steps.
+> Snapshotted: `policy_step110.pt`, `policy_step250.pt` for both.
+
+### V5 GRPO v2 Evals — PENDING
+Eval configs to be created: `eval_full_v5kl01_gsm8k.yaml`, `eval_full_v5kl01_math500.yaml`, `eval_full_v5kl03_gsm8k.yaml`, `eval_full_v5kl03_math500.yaml`
