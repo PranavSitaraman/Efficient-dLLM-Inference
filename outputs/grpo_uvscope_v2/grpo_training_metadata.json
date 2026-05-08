@@ -1,0 +1,39 @@
+{
+  "stage": "grpo",
+  "output_dir": "outputs/grpo_uvscope_v2/",
+  "backend": "dual",
+  "used_dual_model": true,
+  "train_dataset": "nvidia/OpenMathInstruct-2",
+  "train_split": "train",
+  "train_max_samples": 1000,
+  "epochs": 3,
+  "max_steps": 500,
+  "completed_steps": 500,
+  "grad_accum_steps": 1,
+  "group_size": 8,
+  "rollout_steps": 256,
+  "rollout_gen_length": 512,
+  "normalize_advantage_std": true,
+  "best_reward": 0.051967054095352065,
+  "best_checkpoint": "outputs/grpo_uvscope_v2/policy_best.pt",
+  "final_checkpoint": "outputs/grpo_uvscope_v2/policy_final.pt",
+  "resume_from": null,
+  "seed": 42,
+  "train_contract_version": 7,
+  "config_fingerprint": "87a0e2dba0691722b3c6753fb20cb8b1ed74b1d20a26f46de630430180f74f34",
+  "runtime": {
+    "host": "holygpu8a18104.rc.fas.harvard.edu",
+    "pid": 140563,
+    "python_version": "3.10.20",
+    "torch_version": "2.8.0+cu128",
+    "cuda_available": true,
+    "cuda_device_count": 2,
+    "cuda_devices": [
+      "NVIDIA H200",
+      "NVIDIA H200"
+    ],
+    "vllm_version": "0.10.2",
+    "transformers_version": "4.57.0",
+    "git_commit": "231e36184554ad6a7972293573b080080b20ae61"
+  }
+}

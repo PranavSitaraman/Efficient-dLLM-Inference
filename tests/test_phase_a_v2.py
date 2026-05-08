@@ -6,6 +6,7 @@ def _cfg(feature_mode="scalar_only"):
         "phase_a_v2": True,
         "phase_a_v2_config": {
             "feature_mode": feature_mode,
+            "hidden_dim": 8,
             "target_u_rate": 0.10,
             "target_r_rate": 0.02,
         },
@@ -20,6 +21,32 @@ def _cfg(feature_mode="scalar_only"):
             "include_heads_in_logprob": ["unmask", "remask"],
         },
     }
+
+
+def test_v5_hybrid_accepts_bf16_model_hidden_states():
+    from aoae.phase_a_v2 import PhaseAV2Policy
+
+    policy = PhaseAV2Policy(_cfg("v5_hybrid"), input_dim=8)
+    H_t = torch.randn(1, 4, 8)
+    mask = torch.tensor([[True, False, True, False]])
+    confidence = torch.rand(1, 4)
+    agreement = torch.rand(1, 4)
+    frontier = torch.zeros(1, 4)
+    hidden = torch.randn(1, 4, 8, dtype=torch.bfloat16)
+
+    out = policy(
+        H_t,
+        mask,
+        0.25,
+        confidence=confidence,
+        agreement=agreement,
+        frontier_membership=frontier,
+        aux_h_final=hidden,
+        pri_h_final=hidden,
+    )
+
+    assert torch.isfinite(out["unmask_probs"]).all()
+    assert torch.isfinite(out["remask_probs"]).all()
 
 
 def test_candidate_extraction_scopes_u_and_r_domains():

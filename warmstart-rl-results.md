@@ -1,5 +1,32 @@
 # V4 Warmstart + GRPO: Results & Ongoing Experiments
 
+---
+
+## ★ BEST CHECKPOINT (as of 2026-05-05)
+
+**Checkpoint:** `outputs/v4_grpo_post_warmstart/policy_latest.pt` — **step 200**
+**Training config:** `configs/v4_grpo_post_warmstart.yaml` (warmstart → GRPO, G=4, DP=4, 200 steps)
+**Eval job:** SLURM job 10418496, config `configs/eval_v4_grpo_step100.yaml`
+**Hardware:** 1× NVIDIA H200 (`holygpu8a16201`), `tp_size=1`
+**Dataset:** GSM8K, 50 samples, `any_order` generation
+
+### Best result: tau_pi=0.5, faithful (agree=0.5), lossless verification
+
+| Metric | Value |
+|--------|-------|
+| **Accuracy** | **86%** (43/50) |
+| **TPS** | **57.3** |
+| NFE | ~31 |
+| Eff. FLOPs | ~0.122 |
+
+**Pareto-dominates warmstart baseline** (72% / 44.1 TPS): +14% accuracy, +30% TPS.
+**Beats DefaultPolicy on speed** (84% / 53.1 TPS): +7.5% faster with only −2% accuracy.
+
+> Note: The output directory `outputs/v4_grpo_post_warmstart/eval/` was subsequently
+> overwritten by later runs. The authoritative numbers are from SLURM log `logs/10418496_eval.out`.
+
+---
+
 ## Warmstart Training (Completed)
 
 **Job:** 10275730 (1× GPU, `seas_gpu`)
@@ -403,3 +430,34 @@ grpo:
 
 ### Comparison baseline
 V4b (current 700-step GRPO run, job 10445901) is the direct scalar-only comparison point.
+
+---
+
+## Any-Order Baseline Eval (2026-05-06)
+
+**Job:** 10706930 (COMPLETED, 13m31s, 1× H200, seas_gpu)
+**Config:** `configs/eval_anyorder_baselines.yaml`
+**Dataset:** GSM8K, 100 samples, generation_mode_filter=any_order, tp_size=1
+
+| Method | Accuracy | TPS | Notes |
+|--------|----------|-----|-------|
+| `llada21_speed_anyorder` (threshold=0.5, edit=0.0) | 36% | 258.1 | any-order decoding |
+| `llada21_quality_anyorder` (threshold=0.7, edit=0.5) | 22% | 245.8 | any-order decoding |
+| Speculative-AOAE (DefaultPolicy, no checkpoint) | **85%** | **77.1** | tau_r=0.1, agree=0.85, budget=12 |
+
+**Key findings:**
+- Any-order baselines are dramatically worse in accuracy (22–36%) vs left-to-right quality (~78%). This aligns with prior observations: any-order decoding on LLaDA trades ordering flexibility for coherence and achieves much higher raw TPS (245–258) but at unacceptable accuracy loss.
+- **Speculative-AOAE DefaultPolicy (training-free) achieves 85% / 77.1 TPS** — this is the ceiling we want trained policy to beat on speed. Compare to v4 GRPO best checkpoint: 86% / 57.6 TPS. The DefaultPolicy is faster at comparable accuracy because it uses a tighter agreement threshold (0.85 vs 0.5) with lossless verification.
+- Output dir: `outputs/eval_anyorder_baselines/`
+
+---
+
+## V5 Warmstart Hybrid Training — Attempt 1 (FAILED) & Attempt 2 (Pending)
+
+**Job 10705383 (FAILED, 2026-05-06 14:37):**
+- Error: `RuntimeError: Expected to mark a variable ready only once` in DDP backward pass
+- Root cause: `torch.stack(step_losses).mean().backward()` traverses `aux_hidden_delta` parameters multiple times (once per trajectory step) in a single backward call, triggering DDP grad hooks more than once
+- Fix: replaced stacked backward with per-step `(loss / n).backward()` accumulation in `aoae/train_warmstart.py`
+
+**Job 10725876 (SUBMITTED, afterok eval: 10725887):**
+- Re-submitted with fix applied, seas_gpu partition, 1× H200, 4h wall time

@@ -1,0 +1,1109 @@
+nohup: ignoring input
+W0506 14:27:58.539000 9346 site-packages/torch/distributed/run.py:774] 
+W0506 14:27:58.539000 9346 site-packages/torch/distributed/run.py:774] *****************************************
+W0506 14:27:58.539000 9346 site-packages/torch/distributed/run.py:774] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0506 14:27:58.539000 9346 site-packages/torch/distributed/run.py:774] *****************************************
+Distributed training: 4 GPUs
+[GRPO] Distributed mode: data-parallel (sharded prompts)  (tp_size=1, world_size=4)
+Device: cuda:0  (world_size=4)
+Loading dual model (hard aux + soft primary, single-copy)...
+
+INFO 05-06 14:28:05 [__init__.py:216] Automatically detected platform cuda.
+INFO 05-06 14:28:05 [__init__.py:216] Automatically detected platform cuda.
+INFO 05-06 14:28:06 [__init__.py:216] Automatically detected platform cuda.
+INFO 05-06 14:28:06 [__init__.py:216] Automatically detected platform cuda.
+WARNING 05-06 14:28:07 [__init__.py:3804] Current vLLM config is not set.
+WARNING 05-06 14:28:07 [__init__.py:3804] Current vLLM config is not set.
+WARNING 05-06 14:28:08 [__init__.py:3804] Current vLLM config is not set.
+WARNING 05-06 14:28:08 [__init__.py:3804] Current vLLM config is not set.
+[Gloo] Rank [Gloo] Rank [Gloo] Rank [Gloo] Rank 1032 is connected to  is connected to  is connected to  is connected to 3333 peer ranks.  peer ranks.  peer ranks.  peer ranks. Expected number of connected peer ranks is : Expected number of connected peer ranks is : Expected number of connected peer ranks is : Expected number of connected peer ranks is : 3333
+
+
+
+WARNING 05-06 14:28:08 [__init__.py:3804] Current vLLM config is not set.
+WARNING 05-06 14:28:08 [__init__.py:3804] Current vLLM config is not set.
+WARNING 05-06 14:28:08 [__init__.py:3804] Current vLLM config is not set.
+WARNING 05-06 14:28:08 [__init__.py:3804] Current vLLM config is not set.
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0[Gloo] Rank 
+0 is connected to 0 peer ranks. Expected number of connected peer ranks is : [Gloo] Rank 00
+ is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0[Gloo] Rank 
+0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+INFO 05-06 14:28:08 [parallel_state.py:1165] rank 3 in world size 4 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+INFO 05-06 14:28:08 [parallel_state.py:1165] rank 2 in world size 4 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+INFO 05-06 14:28:08 [parallel_state.py:1165] rank 1 in world size 4 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+[Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+INFO 05-06 14:28:08 [parallel_state.py:1165] rank 0 in world size 4 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+Fetching 13 files:   0%|          | 0/13 [00:00<?, ?it/s]Fetching 13 files: 100%|██████████| 13/13 [00:00<00:00, 101349.35it/s]
+Fetching 13 files:   0%|          | 0/13 [00:00<?, ?it/s]Fetching 13 files: 100%|██████████| 13/13 [00:00<00:00, 86275.24it/s]
+Fetching 13 files:   0%|          | 0/13 [00:00<?, ?it/s]Fetching 13 files: 100%|██████████| 13/13 [00:00<00:00, 99499.91it/s]
+Fetching 13 files:   0%|          | 0/13 [00:00<?, ?it/s]Fetching 13 files: 100%|██████████| 13/13 [00:00<00:00, 53932.69it/s]
+  0%|          | 0/8 [00:00<?, ?it/s]  0%|          | 0/8 [00:00<?, ?it/s] 25%|██▌       | 2/8 [00:00<00:00, 19.71it/s] 38%|███▊      | 3/8 [00:00<00:00, 20.82it/s] 62%|██████▎   | 5/8 [00:00<00:00, 20.43it/s] 75%|███████▌  | 6/8 [00:00<00:00, 21.27it/s]  0%|          | 0/8 [00:00<?, ?it/s]100%|██████████| 8/8 [00:00<00:00, 11.68it/s]100%|██████████| 8/8 [00:00<00:00, 12.99it/s]
+  0%|          | 0/14813 [00:00<?, ?it/s]100%|██████████| 8/8 [00:00<00:00, 13.20it/s]
+  0%|          | 0/14813 [00:00<?, ?it/s]100%|██████████| 14813/14813 [00:00<00:00, 1004514.48it/s]
+  0%|          | 0/20 [00:00<?, ?it/s]100%|██████████| 14813/14813 [00:00<00:00, 983680.20it/s]
+  0%|          | 0/20 [00:00<?, ?it/s] 38%|███▊      | 3/8 [00:00<00:00, 21.50it/s] 75%|███████▌  | 6/8 [00:00<00:00, 21.59it/s] 10%|█         | 2/20 [00:00<00:03,  5.40it/s] 10%|█         | 2/20 [00:00<00:03,  5.34it/s]100%|██████████| 8/8 [00:00<00:00, 11.70it/s]
+  0%|          | 0/14813 [00:00<?, ?it/s]100%|██████████| 14813/14813 [00:00<00:00, 922579.96it/s]
+  0%|          | 0/20 [00:00<?, ?it/s] 15%|█▌        | 3/20 [00:00<00:03,  4.32it/s] 15%|█▌        | 3/20 [00:00<00:03,  4.30it/s] 10%|█         | 2/20 [00:00<00:02,  6.27it/s] 20%|██        | 4/20 [00:00<00:04,  3.90it/s] 20%|██        | 4/20 [00:00<00:04,  3.88it/s] 15%|█▌        | 3/20 [00:00<00:03,  4.75it/s] 25%|██▌       | 5/20 [00:01<00:04,  3.56it/s] 25%|██▌       | 5/20 [00:01<00:04,  3.56it/s] 20%|██        | 4/20 [00:00<00:03,  4.23it/s]  0%|          | 0/8 [00:00<?, ?it/s] 30%|███       | 6/20 [00:01<00:04,  3.40it/s] 38%|███▊      | 3/8 [00:00<00:00, 21.46it/s] 30%|███       | 6/20 [00:01<00:04,  3.40it/s] 75%|███████▌  | 6/8 [00:00<00:00, 21.77it/s] 25%|██▌       | 5/20 [00:01<00:03,  3.79it/s] 35%|███▌      | 7/20 [00:01<00:03,  3.33it/s] 35%|███▌      | 7/20 [00:01<00:03,  3.32it/s] 30%|███       | 6/20 [00:01<00:03,  3.62it/s]100%|██████████| 8/8 [00:00<00:00, 11.60it/s]
+  0%|          | 0/14813 [00:00<?, ?it/s]100%|██████████| 14813/14813 [00:00<00:00, 940725.64it/s]
+  0%|          | 0/20 [00:00<?, ?it/s] 40%|████      | 8/20 [00:02<00:03,  3.25it/s] 40%|████      | 8/20 [00:02<00:03,  3.24it/s] 35%|███▌      | 7/20 [00:01<00:03,  3.75it/s] 10%|█         | 2/20 [00:00<00:02,  6.60it/s] 45%|████▌     | 9/20 [00:02<00:03,  3.37it/s] 45%|████▌     | 9/20 [00:02<00:03,  3.37it/s] 40%|████      | 8/20 [00:02<00:03,  3.71it/s] 15%|█▌        | 3/20 [00:00<00:03,  4.92it/s] 50%|█████     | 10/20 [00:02<00:02,  3.37it/s] 50%|█████     | 10/20 [00:02<00:02,  3.37it/s] 45%|████▌     | 9/20 [00:02<00:03,  3.66it/s] 20%|██        | 4/20 [00:00<00:03,  4.30it/s] 55%|█████▌    | 11/20 [00:03<00:02,  3.31it/s] 55%|█████▌    | 11/20 [00:03<00:02,  3.31it/s] 50%|█████     | 10/20 [00:02<00:02,  3.63it/s] 25%|██▌       | 5/20 [00:01<00:03,  4.01it/s] 55%|█████▌    | 11/20 [00:02<00:02,  3.72it/s] 60%|██████    | 12/20 [00:03<00:02,  3.32it/s] 60%|██████    | 12/20 [00:03<00:02,  3.28it/s] 30%|███       | 6/20 [00:01<00:03,  3.90it/s] 60%|██████    | 12/20 [00:03<00:02,  3.69it/s] 65%|██████▌   | 13/20 [00:03<00:02,  3.32it/s] 65%|██████▌   | 13/20 [00:03<00:02,  3.23it/s] 35%|███▌      | 7/20 [00:01<00:03,  3.94it/s] 65%|██████▌   | 13/20 [00:03<00:01,  3.66it/s] 70%|███████   | 14/20 [00:04<00:01,  3.30it/s] 70%|███████   | 14/20 [00:04<00:01,  3.22it/s] 40%|████      | 8/20 [00:01<00:03,  3.86it/s] 70%|███████   | 14/20 [00:03<00:01,  3.64it/s] 75%|███████▌  | 15/20 [00:04<00:01,  3.26it/s] 45%|████▌     | 9/20 [00:02<00:02,  3.78it/s] 75%|███████▌  | 15/20 [00:04<00:01,  3.21it/s] 75%|███████▌  | 15/20 [00:03<00:01,  3.63it/s] 80%|████████  | 16/20 [00:04<00:01,  3.27it/s] 50%|█████     | 10/20 [00:02<00:02,  3.73it/s] 80%|████████  | 16/20 [00:04<00:01,  3.22it/s] 80%|████████  | 16/20 [00:04<00:01,  3.61it/s] 55%|█████▌    | 11/20 [00:02<00:02,  3.81it/s] 85%|████████▌ | 17/20 [00:04<00:00,  3.28it/s] 85%|████████▌ | 17/20 [00:05<00:00,  3.23it/s] 85%|████████▌ | 17/20 [00:04<00:00,  3.63it/s] 60%|██████    | 12/20 [00:03<00:02,  3.74it/s] 90%|█████████ | 18/20 [00:05<00:00,  3.22it/s] 90%|█████████ | 18/20 [00:05<00:00,  3.20it/s] 90%|█████████ | 18/20 [00:04<00:00,  3.56it/s] 65%|██████▌   | 13/20 [00:03<00:01,  3.70it/s] 95%|█████████▌| 19/20 [00:05<00:00,  3.25it/s] 95%|█████████▌| 19/20 [00:05<00:00,  3.23it/s] 95%|█████████▌| 19/20 [00:05<00:00,  3.33it/s] 70%|███████   | 14/20 [00:03<00:01,  3.67it/s]100%|██████████| 20/20 [00:05<00:00,  3.24it/s]100%|██████████| 20/20 [00:05<00:00,  3.39it/s]
+unused_keys []
+not_inited_keys []
+  0%|          | 0/259 [00:00<?, ?it/s]100%|██████████| 20/20 [00:05<00:00,  3.21it/s]100%|██████████| 20/20 [00:05<00:00,  3.36it/s]
+unused_keys []
+not_inited_keys []
+  0%|          | 0/259 [00:00<?, ?it/s]  8%|▊         | 20/259 [00:00<00:01, 193.34it/s]100%|██████████| 20/20 [00:05<00:00,  3.32it/s]100%|██████████| 20/20 [00:05<00:00,  3.68it/s]
+unused_keys []
+not_inited_keys []
+  0%|          | 0/259 [00:00<?, ?it/s] 75%|███████▌  | 15/20 [00:03<00:01,  3.64it/s]  8%|▊         | 20/259 [00:00<00:01, 199.56it/s] 74%|███████▍  | 192/259 [00:00<00:00, 1070.20it/s] 10%|█         | 26/259 [00:00<00:00, 255.56it/s] 78%|███████▊  | 202/259 [00:00<00:00, 1151.27it/s]100%|██████████| 259/259 [00:00<00:00, 854.27it/s] 
+ 82%|████████▏ | 213/259 [00:00<00:00, 1198.32it/s]100%|██████████| 259/259 [00:00<00:00, 898.08it/s] 
+ 80%|████████  | 16/20 [00:04<00:01,  3.64it/s]100%|██████████| 259/259 [00:00<00:00, 883.29it/s] 
+ 85%|████████▌ | 17/20 [00:04<00:00,  3.72it/s] 90%|█████████ | 18/20 [00:04<00:00,  3.73it/s] 95%|█████████▌| 19/20 [00:04<00:00,  3.49it/s]100%|██████████| 20/20 [00:05<00:00,  3.44it/s]100%|██████████| 20/20 [00:05<00:00,  3.79it/s]
+unused_keys []
+not_inited_keys []
+  0%|          | 0/259 [00:00<?, ?it/s]  8%|▊         | 20/259 [00:00<00:01, 198.32it/s] 70%|███████   | 182/259 [00:00<00:00, 1029.41it/s]100%|██████████| 259/259 [00:00<00:00, 789.54it/s] 
+[SoftMoE] Patched 19 MoE gates with native_top_k=8, soft_topk=16, tau_r=0.1 (widening=yes)
+/root/miniconda3/envs/rtx/lib/python3.10/site-packages/torch/nn/modules/transformer.py:392: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+[SoftMoE] Patched 19 MoE gates with native_top_k=8, soft_topk=16, tau_r=0.1 (widening=yes)
+/root/miniconda3/envs/rtx/lib/python3.10/site-packages/torch/nn/modules/transformer.py:392: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+[SoftMoE] Patched 19 MoE gates with native_top_k=8, soft_topk=16, tau_r=0.1 (widening=yes)
+/root/miniconda3/envs/rtx/lib/python3.10/site-packages/torch/nn/modules/transformer.py:392: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+Policy parameters: 465,926 (0.47M)
+[SoftMoE] Patched 19 MoE gates with native_top_k=8, soft_topk=16, tau_r=0.1 (widening=yes)
+/root/miniconda3/envs/rtx/lib/python3.10/site-packages/torch/nn/modules/transformer.py:392: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(
+No PRISM adapter found — policy will not receive quality scores.
+[GRPO] train_heads=['unmask', 'remask']; include_logprob=['unmask', 'remask']; train_soft_mask=False
+Loading training data...
+GRPO rollout budget: group_size=4  steps=256  gen_length=512  max_steps=2700  prompt_budget≈5000
+[Logger] WandB init failed (No module named 'wandb'); falling back to file-only logging.
+Auto-detected checkpoint: outputs/v4_grpo_quality_balanced/policy_latest.pt
+Resuming from checkpoint: outputs/v4_grpo_quality_balanced/policy_latest.pt
+  Resumed at global_step=1, epoch=0, accum_step=2
+
+=== Epoch 1/1 ===
+Training:   0%|          | 0/625 [00:00<?, ?it/s]WARNING 05-06 14:28:32 [fused_moe.py:727] Using default MoE config. Performance might be sub-optimal! Config file not found at ['/root/miniconda3/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=256,N=512,device_name=NVIDIA_A100_80GB_PCIe.json']
+WARNING 05-06 14:28:32 [fused_moe.py:727] Using default MoE config. Performance might be sub-optimal! Config file not found at ['/root/miniconda3/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=256,N=512,device_name=NVIDIA_A100_80GB_PCIe.json']
+WARNING 05-06 14:28:32 [fused_moe.py:727] Using default MoE config. Performance might be sub-optimal! Config file not found at ['/root/miniconda3/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=256,N=512,device_name=NVIDIA_A100_80GB_PCIe.json']
+WARNING 05-06 14:28:32 [fused_moe.py:727] Using default MoE config. Performance might be sub-optimal! Config file not found at ['/root/miniconda3/envs/rtx/lib/python3.10/site-packages/vllm/model_executor/layers/fused_moe/configs/E=256,N=512,device_name=NVIDIA_A100_80GB_PCIe.json']
+/root/Efficient-dLLM-Inference/aoae/evaluators.py:139: RuntimeWarning: Using the repo's ad-hoc math answer extractor as a fallback. Do not use this path for datasets that define an official evaluator.
+  return MathEvaluator(cfg)
+/root/Efficient-dLLM-Inference/aoae/evaluators.py:139: RuntimeWarning: Using the repo's ad-hoc math answer extractor as a fallback. Do not use this path for datasets that define an official evaluator.
+  return MathEvaluator(cfg)
+/root/Efficient-dLLM-Inference/aoae/evaluators.py:139: RuntimeWarning: Using the repo's ad-hoc math answer extractor as a fallback. Do not use this path for datasets that define an official evaluator.
+  return MathEvaluator(cfg)
+/root/Efficient-dLLM-Inference/aoae/evaluators.py:139: RuntimeWarning: Using the repo's ad-hoc math answer extractor as a fallback. Do not use this path for datasets that define an official evaluator.
+  return MathEvaluator(cfg)
+Training:   0%|          | 1/625 [01:33<16:14:27, 93.70s/it]  step=    2  reward=-0.0007±0.0000  frac_pos=0.00  loss=-0.0000  lr=8.00e-07
+    correct=0.062  speed=0.517  eff_flops=0.483  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0172
+Training:   0%|          | 2/625 [02:56<15:05:23, 87.20s/it]Training:   0%|          | 3/625 [04:21<14:56:36, 86.49s/it]  step=    3  reward=-0.0013±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.20e-06
+    correct=0.125  speed=0.469  eff_flops=0.531  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0205
+Training:   1%|          | 4/625 [05:49<14:57:51, 86.75s/it]Training:   1%|          | 5/625 [07:13<14:45:45, 85.72s/it]  step=    4  reward=+0.0793±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.60e-06
+    correct=0.125  speed=0.591  eff_flops=0.409  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0926
+Training:   1%|          | 6/625 [08:50<15:26:04, 89.77s/it]Training:   1%|          | 7/625 [10:13<15:01:17, 87.50s/it]  step=    5  reward=+0.0990±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-06
+    correct=0.188  speed=0.505  eff_flops=0.495  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0484
+Training:   1%|▏         | 8/625 [11:42<15:05:07, 88.02s/it]Training:   1%|▏         | 9/625 [13:12<15:09:49, 88.62s/it]  step=    6  reward=+0.1047±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.40e-06
+    correct=0.125  speed=0.538  eff_flops=0.462  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0625
+Training:   2%|▏         | 10/625 [14:38<14:58:39, 87.67s/it]Training:   2%|▏         | 11/625 [16:03<14:51:10, 87.08s/it]  step=    7  reward=-0.0244±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.80e-06
+    correct=0.062  speed=0.590  eff_flops=0.410  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0709
+Training:   2%|▏         | 12/625 [17:28<14:42:32, 86.38s/it]Training:   2%|▏         | 13/625 [18:53<14:35:15, 85.81s/it]  step=    8  reward=-0.0014±0.0000  frac_pos=0.00  loss=+0.0000  lr=3.20e-06
+    correct=0.000  speed=0.510  eff_flops=0.490  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0281
+Training:   2%|▏         | 14/625 [20:15<14:23:46, 84.82s/it]Training:   2%|▏         | 15/625 [21:41<14:26:19, 85.21s/it]  step=    9  reward=+0.2208±0.0000  frac_pos=1.00  loss=-0.0000  lr=3.60e-06
+    correct=0.438  speed=0.460  eff_flops=0.540  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0391
+Training:   3%|▎         | 16/625 [23:06<14:24:14, 85.15s/it]Training:   3%|▎         | 17/625 [24:29<14:15:57, 84.47s/it]  step=   10  reward=+0.0405±0.0000  frac_pos=1.00  loss=+0.0000  lr=4.00e-06
+    correct=0.188  speed=0.564  eff_flops=0.436  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0838
+Training:   3%|▎         | 18/625 [25:53<14:11:40, 84.19s/it]Training:   3%|▎         | 19/625 [27:18<14:13:50, 84.54s/it]  step=   11  reward=+0.3650±0.0000  frac_pos=1.00  loss=-0.0000  lr=4.40e-06
+    correct=0.188  speed=0.434  eff_flops=0.566  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0451
+Training:   3%|▎         | 20/625 [28:41<14:08:45, 84.17s/it]Training:   3%|▎         | 21/625 [30:02<13:55:26, 82.99s/it]  step=   12  reward=-0.0065±0.0000  frac_pos=0.00  loss=+0.0000  lr=4.80e-06
+    correct=0.062  speed=0.416  eff_flops=0.584  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0489
+Training:   4%|▎         | 22/625 [31:28<14:04:34, 84.04s/it]Training:   4%|▎         | 23/625 [32:53<14:04:27, 84.17s/it]  step=   13  reward=-0.0166±0.0000  frac_pos=0.00  loss=-0.0000  lr=5.20e-06
+    correct=0.062  speed=0.506  eff_flops=0.494  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0344
+Training:   4%|▍         | 24/625 [34:16<13:59:53, 83.85s/it]Training:   4%|▍         | 25/625 [35:40<14:00:21, 84.04s/it]  step=   14  reward=+0.3605±0.0000  frac_pos=1.00  loss=+0.0000  lr=5.60e-06
+    correct=0.438  speed=0.598  eff_flops=0.402  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0928
+Training:   4%|▍         | 26/625 [37:04<13:58:53, 84.03s/it]Training:   4%|▍         | 27/625 [38:32<14:08:35, 85.14s/it]  step=   15  reward=+0.0446±0.0000  frac_pos=1.00  loss=-0.0000  lr=6.00e-06
+    correct=0.125  speed=0.542  eff_flops=0.458  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0474
+Training:   4%|▍         | 28/625 [39:57<14:07:34, 85.18s/it]Training:   5%|▍         | 29/625 [41:20<13:57:47, 84.34s/it]  step=   16  reward=-0.0012±0.0000  frac_pos=0.00  loss=-0.0000  lr=6.40e-06
+    correct=0.000  speed=0.543  eff_flops=0.457  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0495
+Training:   5%|▍         | 30/625 [43:01<14:47:59, 89.55s/it]Training:   5%|▍         | 31/625 [44:27<14:33:57, 88.28s/it]  step=   17  reward=-0.0233±0.0000  frac_pos=0.00  loss=+0.0000  lr=6.80e-06
+    correct=0.062  speed=0.426  eff_flops=0.574  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0427
+Training:   5%|▌         | 32/625 [45:52<14:25:30, 87.57s/it]Training:   5%|▌         | 33/625 [47:18<14:17:26, 86.90s/it]  step=   18  reward=-0.0370±0.0000  frac_pos=0.00  loss=-0.0000  lr=7.20e-06
+    correct=0.062  speed=0.524  eff_flops=0.476  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0430
+Training:   5%|▌         | 34/625 [48:43<14:10:41, 86.37s/it]Training:   6%|▌         | 35/625 [50:10<14:10:46, 86.52s/it]  step=   19  reward=-0.0264±0.0000  frac_pos=0.00  loss=+0.0000  lr=7.60e-06
+    correct=0.250  speed=0.583  eff_flops=0.417  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0263
+Training:   6%|▌         | 36/625 [51:33<13:59:01, 85.47s/it]Training:   6%|▌         | 37/625 [52:58<13:57:11, 85.43s/it]  step=   20  reward=-0.0758±0.0000  frac_pos=0.00  loss=+0.0000  lr=8.00e-06
+    correct=0.188  speed=0.431  eff_flops=0.569  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0449
+Training:   6%|▌         | 38/625 [54:26<14:02:23, 86.10s/it]Training:   6%|▌         | 39/625 [55:50<13:56:28, 85.65s/it]  step=   21  reward=-0.0008±0.0000  frac_pos=0.00  loss=+0.0000  lr=8.40e-06
+    correct=0.250  speed=0.481  eff_flops=0.519  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0295
+Training:   6%|▋         | 40/625 [57:18<13:59:17, 86.08s/it]Training:   7%|▋         | 41/625 [58:41<13:51:37, 85.44s/it]  step=   22  reward=-0.0696±0.0000  frac_pos=0.00  loss=+0.0000  lr=8.80e-06
+    correct=0.125  speed=0.479  eff_flops=0.521  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0564
+Training:   7%|▋         | 42/625 [1:00:05<13:45:38, 84.97s/it]Training:   7%|▋         | 43/625 [1:01:34<13:54:54, 86.07s/it]  step=   23  reward=+0.1017±0.0000  frac_pos=1.00  loss=+0.0000  lr=9.20e-06
+    correct=0.062  speed=0.444  eff_flops=0.556  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0177
+Training:   7%|▋         | 44/625 [1:03:00<13:52:08, 85.94s/it]Training:   7%|▋         | 45/625 [1:04:24<13:46:28, 85.50s/it]  step=   24  reward=+0.0810±0.0000  frac_pos=1.00  loss=+0.0000  lr=9.60e-06
+    correct=0.250  speed=0.521  eff_flops=0.479  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0598
+Training:   7%|▋         | 46/625 [1:06:00<14:14:35, 88.56s/it]Training:   8%|▊         | 47/625 [1:07:27<14:08:43, 88.10s/it]  step=   25  reward=-0.0529±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.00e-05
+    correct=0.000  speed=0.477  eff_flops=0.523  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0700
+Training:   8%|▊         | 48/625 [1:08:59<14:19:16, 89.35s/it]Training:   8%|▊         | 49/625 [1:10:32<14:28:08, 90.43s/it]  step=   26  reward=-0.0012±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.04e-05
+    correct=0.000  speed=0.479  eff_flops=0.521  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0098
+Training:   8%|▊         | 50/625 [1:11:56<14:07:47, 88.47s/it]Training:   8%|▊         | 51/625 [1:13:33<14:31:30, 91.10s/it]  step=   27  reward=-0.1411±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.08e-05
+    correct=0.250  speed=0.528  eff_flops=0.472  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0785
+Training:   8%|▊         | 52/625 [1:14:59<14:14:54, 89.52s/it]Training:   8%|▊         | 53/625 [1:16:24<13:59:32, 88.06s/it]  step=   28  reward=+0.1901±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.12e-05
+    correct=0.125  speed=0.536  eff_flops=0.464  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0592
+Training:   9%|▊         | 54/625 [1:17:48<13:47:36, 86.96s/it]Training:   9%|▉         | 55/625 [1:19:11<13:35:42, 85.86s/it]  step=   29  reward=+0.1092±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.16e-05
+    correct=0.062  speed=0.449  eff_flops=0.551  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0489
+Training:   9%|▉         | 56/625 [1:20:47<14:02:39, 88.86s/it]Training:   9%|▉         | 57/625 [1:22:10<13:42:51, 86.92s/it]  step=   30  reward=-0.0014±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.20e-05
+    correct=0.250  speed=0.487  eff_flops=0.513  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0386
+Training:   9%|▉         | 58/625 [1:23:33<13:31:24, 85.86s/it]Training:   9%|▉         | 59/625 [1:24:59<13:29:41, 85.83s/it]  step=   31  reward=+0.0798±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.24e-05
+    correct=0.188  speed=0.578  eff_flops=0.422  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0300
+Training:  10%|▉         | 60/625 [1:26:26<13:32:15, 86.26s/it]Training:  10%|▉         | 61/625 [1:27:51<13:27:09, 85.87s/it]  step=   32  reward=-0.0179±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.28e-05
+    correct=0.062  speed=0.496  eff_flops=0.504  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0119
+Training:  10%|▉         | 62/625 [1:29:28<13:58:00, 89.31s/it]Training:  10%|█         | 63/625 [1:30:51<13:39:00, 87.44s/it]  step=   33  reward=+0.1985±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.32e-05
+    correct=0.250  speed=0.452  eff_flops=0.548  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0503
+Training:  10%|█         | 64/625 [1:32:17<13:33:35, 87.02s/it]Training:  10%|█         | 65/625 [1:33:39<13:17:27, 85.44s/it]  step=   34  reward=-0.0413±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.36e-05
+    correct=0.250  speed=0.486  eff_flops=0.514  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0600
+Training:  11%|█         | 66/625 [1:35:02<13:09:22, 84.73s/it]Training:  11%|█         | 67/625 [1:36:26<13:04:45, 84.38s/it]  step=   35  reward=+0.0516±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.40e-05
+    correct=0.062  speed=0.534  eff_flops=0.466  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0109
+Training:  11%|█         | 68/625 [1:37:53<13:10:35, 85.16s/it]Training:  11%|█         | 69/625 [1:39:17<13:05:08, 84.73s/it]  step=   36  reward=-0.1692±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.44e-05
+    correct=0.000  speed=0.603  eff_flops=0.397  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0836
+Training:  11%|█         | 70/625 [1:40:40<12:59:06, 84.23s/it]Training:  11%|█▏        | 71/625 [1:42:03<12:55:51, 84.03s/it]  step=   37  reward=-0.0290±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.48e-05
+    correct=0.250  speed=0.449  eff_flops=0.551  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0242
+Training:  12%|█▏        | 72/625 [1:43:28<12:56:48, 84.28s/it]Training:  12%|█▏        | 73/625 [1:44:51<12:53:04, 84.03s/it]  step=   38  reward=+0.0982±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.52e-05
+    correct=0.062  speed=0.542  eff_flops=0.458  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0408
+Training:  12%|█▏        | 74/625 [1:46:13<12:45:57, 83.41s/it]Training:  12%|█▏        | 75/625 [1:47:36<12:42:49, 83.22s/it]  step=   39  reward=-0.0014±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.56e-05
+    correct=0.000  speed=0.445  eff_flops=0.555  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0108
+Training:  12%|█▏        | 76/625 [1:49:00<12:43:08, 83.40s/it]Training:  12%|█▏        | 77/625 [1:50:24<12:42:15, 83.46s/it]  step=   40  reward=+0.0412±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.60e-05
+    correct=0.125  speed=0.524  eff_flops=0.476  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0710
+Training:  12%|█▏        | 78/625 [1:51:47<12:40:58, 83.47s/it]Training:  13%|█▎        | 79/625 [1:53:13<12:45:41, 84.14s/it]  step=   41  reward=-0.0013±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.64e-05
+    correct=0.000  speed=0.585  eff_flops=0.415  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0310
+Training:  13%|█▎        | 80/625 [1:54:35<12:39:13, 83.59s/it]Training:  13%|█▎        | 81/625 [1:56:02<12:46:09, 84.50s/it]  step=   42  reward=-0.0569±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.68e-05
+    correct=0.062  speed=0.547  eff_flops=0.453  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0641
+Training:  13%|█▎        | 82/625 [1:57:26<12:43:53, 84.41s/it]Training:  13%|█▎        | 83/625 [1:59:06<13:23:40, 88.97s/it]  step=   43  reward=-0.0009±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.72e-05
+    correct=0.188  speed=0.528  eff_flops=0.472  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0720
+Training:  13%|█▎        | 84/625 [2:00:30<13:09:04, 87.51s/it]Training:  14%|█▎        | 85/625 [2:01:55<13:02:17, 86.92s/it]  step=   44  reward=-0.1273±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.76e-05
+    correct=0.000  speed=0.540  eff_flops=0.460  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0566
+Training:  14%|█▍        | 86/625 [2:03:20<12:54:49, 86.25s/it]Training:  14%|█▍        | 87/625 [2:04:44<12:48:24, 85.70s/it]  step=   45  reward=+0.1077±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.80e-05
+    correct=0.125  speed=0.521  eff_flops=0.479  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0216
+Training:  14%|█▍        | 88/625 [2:06:07<12:39:19, 84.84s/it]Training:  14%|█▍        | 89/625 [2:07:31<12:34:12, 84.43s/it]  step=   46  reward=+0.2120±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.84e-05
+    correct=0.188  speed=0.588  eff_flops=0.412  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0481
+Training:  14%|█▍        | 90/625 [2:08:56<12:35:49, 84.77s/it]Training:  15%|█▍        | 91/625 [2:10:22<12:36:34, 85.01s/it]  step=   47  reward=-0.0177±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.88e-05
+    correct=0.000  speed=0.572  eff_flops=0.428  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0645
+Training:  15%|█▍        | 92/625 [2:11:43<12:24:22, 83.79s/it]Training:  15%|█▍        | 93/625 [2:13:06<12:22:19, 83.72s/it]  step=   48  reward=-0.0813±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.92e-05
+    correct=0.062  speed=0.474  eff_flops=0.526  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0763
+Training:  15%|█▌        | 94/625 [2:14:29<12:19:02, 83.51s/it]Training:  15%|█▌        | 95/625 [2:15:56<12:27:06, 84.58s/it]  step=   49  reward=-0.0975±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.125  speed=0.470  eff_flops=0.530  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0470
+Training:  15%|█▌        | 96/625 [2:17:20<12:22:32, 84.22s/it]Training:  16%|█▌        | 97/625 [2:18:54<12:46:25, 87.09s/it]  step=   50  reward=+0.0717±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.062  speed=0.471  eff_flops=0.529  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0208
+  Saved checkpoint: outputs/v4_grpo_quality_balanced/policy_latest.pt
+  [Sample] Q: A function $f(x)$ is defined as $f(x) = |x - 3| + 2$. Find the sum of all distin...
+  [Sample] A: We are given a function:
+
+$$
+f(x) = |x - 3| + 2
+$$
+
+We are to find the **sum of all distinct numbers $x$ such that that
+...
+  [Sample] masks=273 reward=0.335
+Training:  16%|█▌        | 98/625 [2:20:17<12:35:46, 86.05s/it]Training:  16%|█▌        | 99/625 [2:21:40<12:27:04, 85.22s/it]  step=   51  reward=-0.0428±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.125  speed=0.527  eff_flops=0.473  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0425
+Training:  16%|█▌        | 100/625 [2:23:06<12:25:39, 85.22s/it]Training:  16%|█▌        | 101/625 [2:24:27<12:14:57, 84.16s/it]  step=   52  reward=-0.0007±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.250  speed=0.567  eff_flops=0.433  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0560
+Training:  16%|█▋        | 102/625 [2:25:54<12:18:58, 84.78s/it]Training:  16%|█▋        | 103/625 [2:27:16<12:12:51, 84.24s/it]  step=   53  reward=+0.1210±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.188  speed=0.506  eff_flops=0.494  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0046
+Training:  17%|█▋        | 104/625 [2:28:40<12:09:42, 84.04s/it]Training:  17%|█▋        | 105/625 [2:30:06<12:12:57, 84.57s/it]  step=   54  reward=+0.0772±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.188  speed=0.404  eff_flops=0.596  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0353
+Training:  17%|█▋        | 106/625 [2:31:28<12:05:40, 83.89s/it]Training:  17%|█▋        | 107/625 [2:32:50<11:59:15, 83.31s/it]  step=   55  reward=-0.1105±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.062  speed=0.544  eff_flops=0.456  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0476
+Training:  17%|█▋        | 108/625 [2:34:14<12:00:16, 83.59s/it]Training:  17%|█▋        | 109/625 [2:35:49<12:27:53, 86.97s/it]  step=   56  reward=+0.0909±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.062  speed=0.588  eff_flops=0.412  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0390
+Training:  18%|█▊        | 110/625 [2:37:14<12:20:10, 86.23s/it]Training:  18%|█▊        | 111/625 [2:38:38<12:14:48, 85.78s/it]  step=   57  reward=+0.2303±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.125  speed=0.561  eff_flops=0.439  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0218
+Training:  18%|█▊        | 112/625 [2:40:03<12:11:19, 85.54s/it]Training:  18%|█▊        | 113/625 [2:41:29<12:10:01, 85.55s/it]  step=   58  reward=-0.0014±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.250  speed=0.542  eff_flops=0.458  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0201
+Training:  18%|█▊        | 114/625 [2:42:52<12:02:19, 84.81s/it]Training:  18%|█▊        | 115/625 [2:44:16<11:59:42, 84.67s/it]  step=   59  reward=+0.1170±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.125  speed=0.558  eff_flops=0.442  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0578
+Training:  19%|█▊        | 116/625 [2:45:39<11:53:16, 84.08s/it]Training:  19%|█▊        | 117/625 [2:47:03<11:51:21, 84.02s/it]  step=   60  reward=+0.1757±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.500  speed=0.484  eff_flops=0.516  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0666
+Training:  19%|█▉        | 118/625 [2:48:33<12:05:30, 85.86s/it]Training:  19%|█▉        | 119/625 [2:49:57<11:58:35, 85.21s/it]  step=   61  reward=-0.1224±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.250  speed=0.619  eff_flops=0.381  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.1045
+Training:  19%|█▉        | 120/625 [2:51:20<11:51:30, 84.54s/it]Training:  19%|█▉        | 121/625 [2:52:43<11:46:37, 84.12s/it]  step=   62  reward=-0.1245±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.062  speed=0.583  eff_flops=0.417  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0366
+Training:  20%|█▉        | 122/625 [2:54:07<11:45:51, 84.20s/it]Training:  20%|█▉        | 123/625 [2:55:31<11:43:39, 84.10s/it]  step=   63  reward=-0.0014±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.250  speed=0.614  eff_flops=0.386  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0853
+Training:  20%|█▉        | 124/625 [2:56:54<11:39:31, 83.77s/it]Training:  20%|██        | 125/625 [2:58:18<11:37:18, 83.68s/it]  step=   64  reward=+0.0824±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.062  speed=0.585  eff_flops=0.415  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0876
+Training:  20%|██        | 126/625 [2:59:40<11:32:46, 83.30s/it]Training:  20%|██        | 127/625 [3:01:02<11:27:46, 82.86s/it]  step=   65  reward=+0.1198±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.188  speed=0.515  eff_flops=0.485  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0138
+Training:  20%|██        | 128/625 [3:02:26<11:29:17, 83.21s/it]Training:  21%|██        | 129/625 [3:03:53<11:37:30, 84.38s/it]  step=   66  reward=+0.4315±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.250  speed=0.512  eff_flops=0.488  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0453
+Training:  21%|██        | 130/625 [3:05:35<12:18:30, 89.52s/it]Training:  21%|██        | 131/625 [3:07:01<12:09:35, 88.61s/it]  step=   67  reward=+0.2148±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.125  speed=0.531  eff_flops=0.469  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0341
+Training:  21%|██        | 132/625 [3:08:24<11:55:01, 87.02s/it]Training:  21%|██▏       | 133/625 [3:09:51<11:51:36, 86.78s/it]  step=   68  reward=-0.0210±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.062  speed=0.433  eff_flops=0.567  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0292
+Training:  21%|██▏       | 134/625 [3:11:19<11:53:28, 87.19s/it]Training:  22%|██▏       | 135/625 [3:12:44<11:48:08, 86.71s/it]  step=   69  reward=+0.0720±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.438  speed=0.543  eff_flops=0.457  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0539
+Training:  22%|██▏       | 136/625 [3:14:21<12:10:05, 89.58s/it]Training:  22%|██▏       | 137/625 [3:15:46<11:58:49, 88.38s/it]  step=   70  reward=+0.2419±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.312  speed=0.604  eff_flops=0.396  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0726
+Training:  22%|██▏       | 138/625 [3:17:16<12:01:25, 88.88s/it]Training:  22%|██▏       | 139/625 [3:18:40<11:47:11, 87.31s/it]  step=   71  reward=-0.0018±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.000  speed=0.519  eff_flops=0.481  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0155
+Training:  22%|██▏       | 140/625 [3:20:05<11:39:50, 86.58s/it]Training:  23%|██▎       | 141/625 [3:21:29<11:33:45, 86.00s/it]  step=   72  reward=-0.0730±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.000  speed=0.544  eff_flops=0.456  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0262
+Training:  23%|██▎       | 142/625 [3:22:51<11:22:33, 84.79s/it]Training:  23%|██▎       | 143/625 [3:24:17<11:23:51, 85.13s/it]  step=   73  reward=+0.0073±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.125  speed=0.495  eff_flops=0.505  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0510
+Training:  23%|██▎       | 144/625 [3:25:46<11:31:03, 86.20s/it]Training:  23%|██▎       | 145/625 [3:27:11<11:26:52, 85.86s/it]  step=   74  reward=+0.0165±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.375  speed=0.497  eff_flops=0.503  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0588
+Training:  23%|██▎       | 146/625 [3:28:34<11:18:23, 84.98s/it]Training:  24%|██▎       | 147/625 [3:29:57<11:11:40, 84.31s/it]  step=   75  reward=-0.0090±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.312  speed=0.490  eff_flops=0.510  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0661
+Training:  24%|██▎       | 148/625 [3:31:21<11:11:02, 84.41s/it]Training:  24%|██▍       | 149/625 [3:32:45<11:07:15, 84.11s/it]  step=   76  reward=-0.0498±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.188  speed=0.400  eff_flops=0.600  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0251
+Training:  24%|██▍       | 150/625 [3:34:12<11:13:37, 85.09s/it]Training:  24%|██▍       | 151/625 [3:35:36<11:08:30, 84.62s/it]  step=   77  reward=-0.0086±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.062  speed=0.572  eff_flops=0.428  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0978
+Training:  24%|██▍       | 152/625 [3:36:57<10:59:11, 83.62s/it]Training:  24%|██▍       | 153/625 [3:38:23<11:03:36, 84.36s/it]  step=   78  reward=-0.0111±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.125  speed=0.568  eff_flops=0.432  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0336
+Training:  25%|██▍       | 154/625 [3:40:09<11:52:36, 90.78s/it]Training:  25%|██▍       | 155/625 [3:41:34<11:38:16, 89.14s/it]  step=   79  reward=-0.0131±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.125  speed=0.485  eff_flops=0.515  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0466
+Training:  25%|██▍       | 156/625 [3:43:08<11:47:10, 90.47s/it]Training:  25%|██▌       | 157/625 [3:44:46<12:04:14, 92.85s/it]  step=   80  reward=-0.0110±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.000  speed=0.470  eff_flops=0.530  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0333
+Training:  25%|██▌       | 158/625 [3:46:14<11:51:04, 91.36s/it]Training:  25%|██▌       | 159/625 [3:47:39<11:35:10, 89.51s/it]  step=   81  reward=-0.0164±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.125  speed=0.576  eff_flops=0.424  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0307
+Training:  26%|██▌       | 160/625 [3:49:06<11:27:39, 88.73s/it]Training:  26%|██▌       | 161/625 [3:50:33<11:22:08, 88.21s/it]  step=   82  reward=+0.1775±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.250  speed=0.562  eff_flops=0.438  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0612
+Training:  26%|██▌       | 162/625 [3:51:59<11:15:51, 87.58s/it]Training:  26%|██▌       | 163/625 [3:53:29<11:18:30, 88.12s/it]  step=   83  reward=+0.0152±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.188  speed=0.437  eff_flops=0.563  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0443
+Training:  26%|██▌       | 164/625 [3:54:58<11:20:59, 88.63s/it]Training:  26%|██▋       | 165/625 [3:56:22<11:08:30, 87.20s/it]  step=   84  reward=+0.2292±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.188  speed=0.538  eff_flops=0.462  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0616
+Training:  27%|██▋       | 166/625 [3:57:49<11:04:57, 86.92s/it]Training:  27%|██▋       | 167/625 [3:59:13<10:58:46, 86.30s/it]  step=   85  reward=-0.0769±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.125  speed=0.495  eff_flops=0.505  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0473
+Training:  27%|██▋       | 168/625 [4:00:39<10:55:45, 86.10s/it]Training:  27%|██▋       | 169/625 [4:02:07<10:58:51, 86.69s/it]  step=   86  reward=+0.0614±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.062  speed=0.585  eff_flops=0.415  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0802
+Training:  27%|██▋       | 170/625 [4:03:31<10:51:19, 85.89s/it]Training:  27%|██▋       | 171/625 [4:04:58<10:51:14, 86.07s/it]  step=   87  reward=-0.0799±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.188  speed=0.449  eff_flops=0.551  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0563
+Training:  28%|██▊       | 172/625 [4:06:22<10:45:32, 85.50s/it]Training:  28%|██▊       | 173/625 [4:07:47<10:44:03, 85.50s/it]  step=   88  reward=-0.0501±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.125  speed=0.481  eff_flops=0.519  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0256
+Training:  28%|██▊       | 174/625 [4:09:23<11:06:28, 88.67s/it]Training:  28%|██▊       | 175/625 [4:10:47<10:53:10, 87.09s/it]  step=   89  reward=-0.0382±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.375  speed=0.510  eff_flops=0.490  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0429
+Training:  28%|██▊       | 176/625 [4:12:15<10:55:15, 87.56s/it]Training:  28%|██▊       | 177/625 [4:13:36<10:38:57, 85.58s/it]  step=   90  reward=+0.2392±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.312  speed=0.483  eff_flops=0.517  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0327
+Training:  28%|██▊       | 178/625 [4:15:00<10:32:13, 84.86s/it]Training:  29%|██▊       | 179/625 [4:16:27<10:37:30, 85.76s/it]  step=   91  reward=-0.0651±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.375  speed=0.589  eff_flops=0.411  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.1088
+Training:  29%|██▉       | 180/625 [4:17:53<10:36:09, 85.77s/it]Training:  29%|██▉       | 181/625 [4:19:20<10:36:46, 86.05s/it]  step=   92  reward=-0.0274±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.125  speed=0.513  eff_flops=0.487  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0413
+Training:  29%|██▉       | 182/625 [4:20:43<10:29:35, 85.27s/it]Training:  29%|██▉       | 183/625 [4:22:14<10:38:58, 86.74s/it]  step=   93  reward=-0.0008±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.188  speed=0.460  eff_flops=0.540  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0532
+Training:  29%|██▉       | 184/625 [4:23:40<10:36:54, 86.65s/it]Training:  30%|██▉       | 185/625 [4:25:09<10:40:34, 87.35s/it]  step=   94  reward=-0.0469±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.188  speed=0.471  eff_flops=0.529  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0319
+Training:  30%|██▉       | 186/625 [4:26:34<10:34:36, 86.73s/it]Training:  30%|██▉       | 187/625 [4:27:57<10:24:56, 85.61s/it]  step=   95  reward=+0.2387±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.438  speed=0.419  eff_flops=0.581  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0471
+Training:  30%|███       | 188/625 [4:29:21<10:20:17, 85.17s/it]Training:  30%|███       | 189/625 [4:30:47<10:19:46, 85.29s/it]  step=   96  reward=+0.5230±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.250  speed=0.551  eff_flops=0.449  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0334
+Training:  30%|███       | 190/625 [4:32:12<10:18:11, 85.27s/it]Training:  31%|███       | 191/625 [4:33:38<10:16:53, 85.28s/it]  step=   97  reward=-0.0659±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.125  speed=0.564  eff_flops=0.436  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0476
+Training:  31%|███       | 192/625 [4:35:05<10:19:14, 85.81s/it]Training:  31%|███       | 193/625 [4:36:31<10:19:07, 85.99s/it]  step=   98  reward=-0.0010±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.125  speed=0.465  eff_flops=0.535  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0401
+Training:  31%|███       | 194/625 [4:37:56<10:15:16, 85.65s/it]Training:  31%|███       | 195/625 [4:39:21<10:12:13, 85.43s/it]  step=   99  reward=-0.0639±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.188  speed=0.364  eff_flops=0.636  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0524
+Training:  31%|███▏      | 196/625 [4:40:46<10:11:00, 85.45s/it]Training:  32%|███▏      | 197/625 [4:42:10<10:05:40, 84.91s/it]  step=  100  reward=+0.0805±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.062  speed=0.511  eff_flops=0.489  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0369
+  Saved checkpoint: outputs/v4_grpo_quality_balanced/policy_latest.pt
+  [Sample] Q: Let $f(x)=e^x$ and $g(x)=2x$. Find the sum of all $x$ that satisfy the equation ...
+  [Sample] A: We are given two functions:
+
+- $ f(x) = e^x $
+- $ g(x) = 2x $
+
+We are to find the **sum of all $ $** that satisfy the eq...
+  [Sample] masks=4 reward=0.463
+Training:  32%|███▏      | 198/625 [4:43:36<10:07:17, 85.33s/it]Training:  32%|███▏      | 199/625 [4:45:02<10:05:57, 85.35s/it]  step=  101  reward=-0.0137±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.000  speed=0.465  eff_flops=0.535  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0252
+Training:  32%|███▏      | 200/625 [4:46:25<10:01:11, 84.87s/it]Training:  32%|███▏      | 201/625 [4:47:48<9:55:22, 84.25s/it]   step=  102  reward=+0.1756±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.375  speed=0.497  eff_flops=0.503  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0923
+Training:  32%|███▏      | 202/625 [4:49:11<9:50:21, 83.74s/it]Training:  32%|███▏      | 203/625 [4:50:51<10:23:43, 88.68s/it]  step=  103  reward=-0.0022±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.062  speed=0.444  eff_flops=0.556  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0457
+Training:  33%|███▎      | 204/625 [4:52:13<10:09:19, 86.84s/it]Training:  33%|███▎      | 205/625 [4:53:38<10:02:48, 86.12s/it]  step=  104  reward=-0.0012±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.125  speed=0.541  eff_flops=0.459  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0494
+Training:  33%|███▎      | 206/625 [4:55:04<10:00:56, 86.05s/it]Training:  33%|███▎      | 207/625 [4:56:29<9:58:19, 85.88s/it]   step=  105  reward=-0.1039±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.000  speed=0.553  eff_flops=0.447  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0474
+Training:  33%|███▎      | 208/625 [4:57:53<9:53:12, 85.35s/it]Training:  33%|███▎      | 209/625 [4:59:20<9:55:02, 85.82s/it]  step=  106  reward=-0.0798±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.000  speed=0.479  eff_flops=0.521  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0613
+Training:  34%|███▎      | 210/625 [5:00:43<9:46:13, 84.75s/it]Training:  34%|███▍      | 211/625 [5:02:06<9:42:29, 84.42s/it]  step=  107  reward=-0.0063±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.000  speed=0.552  eff_flops=0.448  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0284
+Training:  34%|███▍      | 212/625 [5:03:31<9:42:47, 84.67s/it]Training:  34%|███▍      | 213/625 [5:04:55<9:39:24, 84.38s/it]  step=  108  reward=+0.1538±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.188  speed=0.512  eff_flops=0.488  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0462
+Training:  34%|███▍      | 214/625 [5:06:18<9:35:48, 84.06s/it]Training:  34%|███▍      | 215/625 [5:07:42<9:33:23, 83.91s/it]  step=  109  reward=-0.0003±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.000  speed=0.597  eff_flops=0.403  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0400
+Training:  35%|███▍      | 216/625 [5:09:06<9:32:33, 83.99s/it]Training:  35%|███▍      | 217/625 [5:10:30<9:31:35, 84.06s/it]  step=  110  reward=-0.0972±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.125  speed=0.457  eff_flops=0.543  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0710
+Training:  35%|███▍      | 218/625 [5:11:58<9:38:03, 85.22s/it]Training:  35%|███▌      | 219/625 [5:13:23<9:35:06, 84.99s/it]  step=  111  reward=-0.0014±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.250  speed=0.517  eff_flops=0.483  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0163
+Training:  35%|███▌      | 220/625 [5:14:46<9:29:37, 84.39s/it]Training:  35%|███▌      | 221/625 [5:16:10<9:26:53, 84.19s/it]  step=  112  reward=-0.0014±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.000  speed=0.533  eff_flops=0.467  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0291
+Training:  36%|███▌      | 222/625 [5:17:36<9:29:26, 84.78s/it]Training:  36%|███▌      | 223/625 [5:19:04<9:34:08, 85.69s/it]  step=  113  reward=+0.0686±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.312  speed=0.535  eff_flops=0.465  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0455
+Training:  36%|███▌      | 224/625 [5:20:43<10:00:55, 89.91s/it]Training:  36%|███▌      | 225/625 [5:22:03<9:39:40, 86.95s/it]   step=  114  reward=+0.1827±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.250  speed=0.614  eff_flops=0.386  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0685
+Training:  36%|███▌      | 226/625 [5:23:28<9:32:52, 86.15s/it]Training:  36%|███▋      | 227/625 [5:24:52<9:27:21, 85.53s/it]  step=  115  reward=-0.0855±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.062  speed=0.533  eff_flops=0.467  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0555
+Training:  36%|███▋      | 228/625 [5:26:15<9:21:46, 84.90s/it]Training:  37%|███▋      | 229/625 [5:27:36<9:12:33, 83.72s/it]  step=  116  reward=+0.0795±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.062  speed=0.533  eff_flops=0.467  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0566
+Training:  37%|███▋      | 230/625 [5:29:02<9:14:42, 84.26s/it]Training:  37%|███▋      | 231/625 [5:30:25<9:12:12, 84.09s/it]  step=  117  reward=-0.2317±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.250  speed=0.511  eff_flops=0.489  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.1005
+Training:  37%|███▋      | 232/625 [5:31:59<9:29:24, 86.93s/it]Training:  37%|███▋      | 233/625 [5:33:24<9:23:57, 86.32s/it]  step=  118  reward=+0.0642±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.125  speed=0.543  eff_flops=0.457  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0571
+Training:  37%|███▋      | 234/625 [5:34:52<9:25:56, 86.85s/it]Training:  38%|███▊      | 235/625 [5:36:09<9:06:31, 84.08s/it]  step=  119  reward=-0.0000±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.000  speed=0.543  eff_flops=0.457  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0582
+Training:  38%|███▊      | 236/625 [5:37:34<9:05:05, 84.07s/it]Training:  38%|███▊      | 237/625 [5:38:57<9:02:03, 83.82s/it]  step=  120  reward=-0.0687±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.125  speed=0.561  eff_flops=0.439  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0392
+Training:  38%|███▊      | 238/625 [5:40:30<9:19:23, 86.73s/it]Training:  38%|███▊      | 239/625 [5:41:53<9:10:49, 85.62s/it]  step=  121  reward=-0.0024±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.000  speed=0.538  eff_flops=0.462  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0350
+Training:  38%|███▊      | 240/625 [5:43:14<9:00:46, 84.28s/it]Training:  39%|███▊      | 241/625 [5:44:38<8:58:16, 84.11s/it]  step=  122  reward=-0.0525±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.062  speed=0.424  eff_flops=0.576  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0351
+Training:  39%|███▊      | 242/625 [5:46:03<8:57:47, 84.25s/it]Training:  39%|███▉      | 243/625 [5:47:26<8:54:30, 83.96s/it]  step=  123  reward=+0.1363±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.312  speed=0.494  eff_flops=0.506  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0358
+Training:  39%|███▉      | 244/625 [5:48:57<9:06:26, 86.05s/it]Training:  39%|███▉      | 245/625 [5:50:19<8:57:46, 84.91s/it]  step=  124  reward=-0.0268±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.125  speed=0.473  eff_flops=0.527  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0393
+Training:  39%|███▉      | 246/625 [5:51:55<9:16:34, 88.11s/it]Training:  40%|███▉      | 247/625 [5:53:18<9:05:39, 86.61s/it]  step=  125  reward=+0.1757±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.188  speed=0.541  eff_flops=0.459  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0689
+Training:  40%|███▉      | 248/625 [5:54:43<9:00:48, 86.07s/it]Training:  40%|███▉      | 249/625 [5:56:10<9:02:11, 86.52s/it]  step=  126  reward=-0.0700±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.250  speed=0.586  eff_flops=0.414  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0546
+Training:  40%|████      | 250/625 [5:57:36<8:58:34, 86.17s/it]Training:  40%|████      | 251/625 [5:58:59<8:52:50, 85.48s/it]  step=  127  reward=+0.2778±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.125  speed=0.376  eff_flops=0.624  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0151
+Training:  40%|████      | 252/625 [6:00:24<8:50:15, 85.30s/it]Training:  40%|████      | 253/625 [6:01:49<8:48:27, 85.24s/it]  step=  128  reward=-0.0591±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.062  speed=0.468  eff_flops=0.532  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0201
+Training:  41%|████      | 254/625 [6:03:13<8:44:48, 84.88s/it]Training:  41%|████      | 255/625 [6:04:52<9:09:31, 89.11s/it]  step=  129  reward=-0.1019±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.312  speed=0.599  eff_flops=0.401  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0683
+Training:  41%|████      | 256/625 [6:06:16<8:57:44, 87.44s/it]Training:  41%|████      | 257/625 [6:07:39<8:47:18, 85.97s/it]  step=  130  reward=-0.1235±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.250  speed=0.566  eff_flops=0.434  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0772
+Training:  41%|████▏     | 258/625 [6:09:01<8:39:46, 84.98s/it]Training:  41%|████▏     | 259/625 [6:10:24<8:35:04, 84.44s/it]  step=  131  reward=-0.1334±0.0000  frac_pos=0.00  loss=+0.0000  lr=2.00e-05
+    correct=0.000  speed=0.444  eff_flops=0.556  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0387
+Training:  42%|████▏     | 260/625 [6:11:48<8:31:24, 84.07s/it]Training:  42%|████▏     | 261/625 [6:13:13<8:33:13, 84.60s/it]  step=  132  reward=+0.2208±0.0000  frac_pos=1.00  loss=-0.0000  lr=2.00e-05
+    correct=0.188  speed=0.570  eff_flops=0.430  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0645
+Training:  42%|████▏     | 262/625 [6:14:37<8:29:20, 84.19s/it]Training:  42%|████▏     | 263/625 [6:15:58<8:22:19, 83.26s/it]  step=  133  reward=-0.0312±0.0000  frac_pos=0.00  loss=-0.0000  lr=2.00e-05
+    correct=0.062  speed=0.566  eff_flops=0.434  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0489
+Training:  42%|████▏     | 264/625 [6:17:18<8:14:56, 82.26s/it]Training:  42%|████▏     | 265/625 [6:18:39<8:12:28, 82.08s/it]  step=  134  reward=+0.2470±0.0000  frac_pos=1.00  loss=+0.0000  lr=2.00e-05
+    correct=0.188  speed=0.411  eff_flops=0.589  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0732
+Training:  43%|████▎     | 266/625 [6:20:12<8:29:32, 85.16s/it]Training:  43%|████▎     | 267/625 [6:21:38<8:29:23, 85.37s/it]  step=  135  reward=-0.0091±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.312  speed=0.497  eff_flops=0.503  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0168
+Training:  43%|████▎     | 268/625 [6:23:03<8:28:58, 85.54s/it]Training:  43%|████▎     | 269/625 [6:24:27<8:23:12, 84.81s/it]  step=  136  reward=-0.0107±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.250  speed=0.447  eff_flops=0.553  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0335
+Training:  43%|████▎     | 270/625 [6:25:49<8:17:27, 84.08s/it]Training:  43%|████▎     | 271/625 [6:27:17<8:23:41, 85.37s/it]  step=  137  reward=-0.0312±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.125  speed=0.418  eff_flops=0.582  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0238
+Training:  44%|████▎     | 272/625 [6:28:39<8:16:20, 84.36s/it]Training:  44%|████▎     | 273/625 [6:30:02<8:11:08, 83.72s/it]  step=  138  reward=+0.2253±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.312  speed=0.490  eff_flops=0.510  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0429
+Training:  44%|████▍     | 274/625 [6:31:23<8:06:00, 83.08s/it]Training:  44%|████▍     | 275/625 [6:32:45<8:03:19, 82.86s/it]  step=  139  reward=-0.0738±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.062  speed=0.557  eff_flops=0.443  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0582
+Training:  44%|████▍     | 276/625 [6:34:10<8:05:35, 83.48s/it]Training:  44%|████▍     | 277/625 [6:35:29<7:56:23, 82.14s/it]  step=  140  reward=-0.0595±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.062  speed=0.530  eff_flops=0.470  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0579
+Training:  44%|████▍     | 278/625 [6:36:55<8:00:16, 83.04s/it]Training:  45%|████▍     | 279/625 [6:38:27<8:15:21, 85.90s/it]  step=  141  reward=-0.0024±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.188  speed=0.470  eff_flops=0.530  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0153
+Training:  45%|████▍     | 280/625 [6:39:52<8:11:51, 85.54s/it]Training:  45%|████▍     | 281/625 [6:41:16<8:08:25, 85.19s/it]  step=  142  reward=-0.0179±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.000  speed=0.543  eff_flops=0.457  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0416
+Training:  45%|████▌     | 282/625 [6:42:40<8:04:23, 84.73s/it]Training:  45%|████▌     | 283/625 [6:44:04<8:01:06, 84.40s/it]  step=  143  reward=-0.0014±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.125  speed=0.490  eff_flops=0.510  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0728
+Training:  45%|████▌     | 284/625 [6:45:26<7:56:44, 83.88s/it]Training:  46%|████▌     | 285/625 [6:46:50<7:55:17, 83.87s/it]  step=  144  reward=+0.0356±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.375  speed=0.505  eff_flops=0.495  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0679
+Training:  46%|████▌     | 286/625 [6:48:12<7:50:07, 83.21s/it]Training:  46%|████▌     | 287/625 [6:49:35<7:48:30, 83.17s/it]  step=  145  reward=+0.4016±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.500  speed=0.519  eff_flops=0.481  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0258
+Training:  46%|████▌     | 288/625 [6:51:04<7:57:26, 85.01s/it]Training:  46%|████▌     | 289/625 [6:52:26<7:51:15, 84.15s/it]  step=  146  reward=-0.0525±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.062  speed=0.525  eff_flops=0.475  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0450
+Training:  46%|████▋     | 290/625 [6:53:48<7:46:06, 83.48s/it]Training:  47%|████▋     | 291/625 [6:55:11<7:43:54, 83.34s/it]  step=  147  reward=+0.1786±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.99e-05
+    correct=0.125  speed=0.503  eff_flops=0.497  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0941
+Training:  47%|████▋     | 292/625 [6:56:33<7:39:37, 82.82s/it]Training:  47%|████▋     | 293/625 [6:57:55<7:37:52, 82.75s/it]  step=  148  reward=+0.0934±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.125  speed=0.480  eff_flops=0.520  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0263
+Training:  47%|████▋     | 294/625 [6:59:16<7:32:20, 82.00s/it]Training:  47%|████▋     | 295/625 [7:00:37<7:30:38, 81.94s/it]  step=  149  reward=+0.0575±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.188  speed=0.547  eff_flops=0.453  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0933
+Training:  47%|████▋     | 296/625 [7:02:00<7:29:49, 82.03s/it]Training:  48%|████▊     | 297/625 [7:03:23<7:30:06, 82.34s/it]  step=  150  reward=-0.0007±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.125  speed=0.511  eff_flops=0.489  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0371
+  Saved checkpoint: outputs/v4_grpo_quality_balanced/policy_latest.pt
+  [Sample] Q: Ava runs a small rental business. Her neighbor rents a lawn mower from her for $...
+  [Sample] A: Let's break this down step by step:
+
+1. Ava has three items being rented out:
+   - Lawn mower: $10 per day
+0 per days
+  ...
+  [Sample] masks=3 reward=-0.000
+Training:  48%|████▊     | 298/625 [7:04:46<7:30:58, 82.75s/it]Training:  48%|████▊     | 299/625 [7:06:09<7:29:46, 82.78s/it]  step=  151  reward=+0.4404±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.438  speed=0.566  eff_flops=0.434  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0563
+Training:  48%|████▊     | 300/625 [7:07:34<7:32:20, 83.51s/it]Training:  48%|████▊     | 301/625 [7:08:58<7:30:28, 83.42s/it]  step=  152  reward=-0.0015±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.062  speed=0.553  eff_flops=0.447  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0299
+Training:  48%|████▊     | 302/625 [7:10:21<7:28:46, 83.36s/it]Training:  48%|████▊     | 303/625 [7:11:43<7:25:09, 82.95s/it]  step=  153  reward=-0.1388±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.312  speed=0.554  eff_flops=0.446  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0953
+Training:  49%|████▊     | 304/625 [7:13:06<7:24:18, 83.05s/it]Training:  49%|████▉     | 305/625 [7:14:31<7:26:05, 83.64s/it]  step=  154  reward=-0.0049±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.125  speed=0.573  eff_flops=0.427  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0510
+Training:  49%|████▉     | 306/625 [7:15:54<7:23:42, 83.46s/it]Training:  49%|████▉     | 307/625 [7:17:19<7:24:27, 83.86s/it]  step=  155  reward=-0.0424±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.062  speed=0.553  eff_flops=0.447  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0435
+Training:  49%|████▉     | 308/625 [7:18:51<7:36:35, 86.42s/it]Training:  49%|████▉     | 309/625 [7:20:24<7:45:29, 88.38s/it]  step=  156  reward=-0.0045±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.000  speed=0.449  eff_flops=0.551  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0215
+Training:  50%|████▉     | 310/625 [7:21:51<7:40:36, 87.73s/it]Training:  50%|████▉     | 311/625 [7:23:13<7:31:06, 86.20s/it]  step=  157  reward=-0.0132±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.000  speed=0.447  eff_flops=0.553  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0511
+Training:  50%|████▉     | 312/625 [7:24:37<7:25:19, 85.36s/it]Training:  50%|█████     | 313/625 [7:25:59<7:18:43, 84.37s/it]  step=  158  reward=-0.0906±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.250  speed=0.531  eff_flops=0.469  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0659
+Training:  50%|█████     | 314/625 [7:27:22<7:15:59, 84.11s/it]Training:  50%|█████     | 315/625 [7:28:45<7:12:37, 83.73s/it]  step=  159  reward=-0.0751±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.188  speed=0.578  eff_flops=0.422  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0619
+Training:  51%|█████     | 316/625 [7:30:09<7:11:44, 83.83s/it]Training:  51%|█████     | 317/625 [7:31:32<7:08:08, 83.40s/it]  step=  160  reward=+0.0868±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.250  speed=0.581  eff_flops=0.419  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0609
+Training:  51%|█████     | 318/625 [7:32:55<7:07:28, 83.54s/it]Training:  51%|█████     | 319/625 [7:34:16<7:02:05, 82.76s/it]  step=  161  reward=-0.0007±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.000  speed=0.535  eff_flops=0.465  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0306
+Training:  51%|█████     | 320/625 [7:35:39<7:00:04, 82.64s/it]Training:  51%|█████▏    | 321/625 [7:37:02<6:59:51, 82.87s/it]  step=  162  reward=+0.0435±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.99e-05
+    correct=0.125  speed=0.497  eff_flops=0.503  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0665
+Training:  52%|█████▏    | 322/625 [7:38:24<6:56:38, 82.50s/it]Training:  52%|█████▏    | 323/625 [7:39:44<6:52:30, 81.96s/it]  step=  163  reward=-0.0654±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.188  speed=0.562  eff_flops=0.438  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0468
+Training:  52%|█████▏    | 324/625 [7:41:07<6:52:25, 82.21s/it]Training:  52%|█████▏    | 325/625 [7:42:33<6:56:07, 83.23s/it]  step=  164  reward=-0.0242±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.125  speed=0.569  eff_flops=0.431  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0188
+Training:  52%|█████▏    | 326/625 [7:43:57<6:56:51, 83.65s/it]Training:  52%|█████▏    | 327/625 [7:45:28<7:06:09, 85.80s/it]  step=  165  reward=+0.0659±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.250  speed=0.544  eff_flops=0.456  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0550
+Training:  52%|█████▏    | 328/625 [7:46:51<7:00:35, 84.97s/it]Training:  53%|█████▎    | 329/625 [7:48:16<6:58:14, 84.78s/it]  step=  166  reward=+0.0562±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.99e-05
+    correct=0.188  speed=0.416  eff_flops=0.584  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0240
+Training:  53%|█████▎    | 330/625 [7:49:41<6:56:58, 84.81s/it]Training:  53%|█████▎    | 331/625 [7:51:07<6:57:36, 85.23s/it]  step=  167  reward=-0.0030±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.000  speed=0.432  eff_flops=0.568  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0190
+Training:  53%|█████▎    | 332/625 [7:52:29<6:52:02, 84.38s/it]Training:  53%|█████▎    | 333/625 [7:53:57<6:55:42, 85.42s/it]  step=  168  reward=+0.0831±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.188  speed=0.426  eff_flops=0.574  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0446
+Training:  53%|█████▎    | 334/625 [7:55:19<6:49:46, 84.49s/it]Training:  54%|█████▎    | 335/625 [7:56:42<6:45:56, 83.99s/it]  step=  169  reward=-0.1445±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.000  speed=0.559  eff_flops=0.441  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0365
+Training:  54%|█████▍    | 336/625 [7:58:05<6:43:02, 83.67s/it]Training:  54%|█████▍    | 337/625 [7:59:28<6:40:07, 83.36s/it]  step=  170  reward=-0.0480±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.188  speed=0.554  eff_flops=0.446  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0256
+Training:  54%|█████▍    | 338/625 [8:00:51<6:38:20, 83.28s/it]Training:  54%|█████▍    | 339/625 [8:02:16<6:39:51, 83.89s/it]  step=  171  reward=-0.0391±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.062  speed=0.369  eff_flops=0.631  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0124
+Training:  54%|█████▍    | 340/625 [8:03:38<6:35:06, 83.18s/it]Training:  55%|█████▍    | 341/625 [8:05:04<6:38:05, 84.11s/it]  step=  172  reward=-0.0011±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.062  speed=0.547  eff_flops=0.453  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0265
+Training:  55%|█████▍    | 342/625 [8:06:30<6:39:25, 84.68s/it]Training:  55%|█████▍    | 343/625 [8:07:53<6:36:29, 84.36s/it]  step=  173  reward=-0.0048±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.125  speed=0.482  eff_flops=0.518  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0216
+Training:  55%|█████▌    | 344/625 [8:09:15<6:31:27, 83.59s/it]Training:  55%|█████▌    | 345/625 [8:10:38<6:29:33, 83.48s/it]  step=  174  reward=+0.0732±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.062  speed=0.481  eff_flops=0.519  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0422
+Training:  55%|█████▌    | 346/625 [8:12:05<6:32:31, 84.41s/it]Training:  56%|█████▌    | 347/625 [8:13:28<6:29:19, 84.03s/it]  step=  175  reward=+0.2221±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.188  speed=0.552  eff_flops=0.448  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0412
+Training:  56%|█████▌    | 348/625 [8:14:53<6:28:20, 84.12s/it]Training:  56%|█████▌    | 349/625 [8:16:19<6:30:45, 84.95s/it]  step=  176  reward=+0.1406±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.99e-05
+    correct=0.438  speed=0.483  eff_flops=0.517  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0162
+Training:  56%|█████▌    | 350/625 [8:17:42<6:26:06, 84.24s/it]Training:  56%|█████▌    | 351/625 [8:19:34<7:02:21, 92.49s/it]  step=  177  reward=+0.0330±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.99e-05
+    correct=0.250  speed=0.321  eff_flops=0.679  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0331
+Training:  56%|█████▋    | 352/625 [8:20:57<6:47:42, 89.61s/it]Training:  56%|█████▋    | 353/625 [8:22:20<6:38:21, 87.87s/it]  step=  178  reward=-0.0082±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.250  speed=0.375  eff_flops=0.625  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0144
+Training:  57%|█████▋    | 354/625 [8:23:45<6:32:54, 86.99s/it]Training:  57%|█████▋    | 355/625 [8:25:08<6:25:15, 85.61s/it]  step=  179  reward=-0.0021±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.000  speed=0.545  eff_flops=0.455  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0353
+Training:  57%|█████▋    | 356/625 [8:26:32<6:22:27, 85.30s/it]Training:  57%|█████▋    | 357/625 [8:27:57<6:19:54, 85.06s/it]  step=  180  reward=+0.0101±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.99e-05
+    correct=0.062  speed=0.470  eff_flops=0.530  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0495
+Training:  57%|█████▋    | 358/625 [8:29:26<6:23:58, 86.29s/it]Training:  57%|█████▋    | 359/625 [8:30:48<6:17:01, 85.04s/it]  step=  181  reward=+0.0561±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.188  speed=0.624  eff_flops=0.376  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.1009
+Training:  58%|█████▊    | 360/625 [8:32:09<6:09:48, 83.73s/it]Training:  58%|█████▊    | 361/625 [8:33:34<6:09:57, 84.08s/it]  step=  182  reward=+0.5301±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.99e-05
+    correct=0.312  speed=0.543  eff_flops=0.457  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0310
+Training:  58%|█████▊    | 362/625 [8:35:06<6:19:21, 86.55s/it]Training:  58%|█████▊    | 363/625 [8:36:31<6:15:59, 86.10s/it]  step=  183  reward=+0.0668±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.99e-05
+    correct=0.062  speed=0.482  eff_flops=0.518  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0575
+Training:  58%|█████▊    | 364/625 [8:37:55<6:12:05, 85.54s/it]Training:  58%|█████▊    | 365/625 [8:39:19<6:08:21, 85.00s/it]  step=  184  reward=+0.5495±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.250  speed=0.431  eff_flops=0.569  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0099
+Training:  59%|█████▊    | 366/625 [8:40:53<6:18:17, 87.64s/it]Training:  59%|█████▊    | 367/625 [8:42:15<6:10:07, 86.08s/it]  step=  185  reward=-0.0619±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.250  speed=0.543  eff_flops=0.457  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0524
+Training:  59%|█████▉    | 368/625 [8:43:38<6:04:04, 85.00s/it]Training:  59%|█████▉    | 369/625 [8:45:00<5:58:45, 84.08s/it]  step=  186  reward=-0.0020±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.000  speed=0.530  eff_flops=0.470  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0043
+Training:  59%|█████▉    | 370/625 [8:46:26<5:59:59, 84.70s/it]Training:  59%|█████▉    | 371/625 [8:47:48<5:55:31, 83.98s/it]  step=  187  reward=-0.0921±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.062  speed=0.531  eff_flops=0.469  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0454
+Training:  60%|█████▉    | 372/625 [8:49:14<5:56:09, 84.47s/it]Training:  60%|█████▉    | 373/625 [8:50:39<5:55:13, 84.58s/it]  step=  188  reward=+0.1760±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.250  speed=0.552  eff_flops=0.448  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0558
+Training:  60%|█████▉    | 374/625 [8:52:02<5:52:19, 84.22s/it]Training:  60%|██████    | 375/625 [8:53:26<5:50:37, 84.15s/it]  step=  189  reward=-0.0221±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.125  speed=0.534  eff_flops=0.466  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0217
+Training:  60%|██████    | 376/625 [8:54:48<5:46:50, 83.58s/it]Training:  60%|██████    | 377/625 [8:56:15<5:49:04, 84.45s/it]  step=  190  reward=-0.0056±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.062  speed=0.412  eff_flops=0.588  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0195
+Training:  60%|██████    | 378/625 [8:57:40<5:48:53, 84.75s/it]Training:  61%|██████    | 379/625 [8:59:05<5:47:37, 84.79s/it]  step=  191  reward=+0.0830±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.99e-05
+    correct=0.062  speed=0.521  eff_flops=0.479  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0788
+Training:  61%|██████    | 380/625 [9:00:27<5:42:30, 83.88s/it]Training:  61%|██████    | 381/625 [9:01:53<5:44:27, 84.70s/it]  step=  192  reward=-0.0004±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.250  speed=0.522  eff_flops=0.478  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0214
+Training:  61%|██████    | 382/625 [9:03:17<5:41:14, 84.26s/it]Training:  61%|██████▏   | 383/625 [9:04:40<5:38:27, 83.92s/it]  step=  193  reward=-0.0885±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.188  speed=0.582  eff_flops=0.418  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0811
+Training:  61%|██████▏   | 384/625 [9:06:02<5:35:13, 83.46s/it]Training:  62%|██████▏   | 385/625 [9:07:27<5:36:05, 84.02s/it]  step=  194  reward=-0.0027±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.99e-05
+    correct=0.062  speed=0.531  eff_flops=0.469  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0294
+Training:  62%|██████▏   | 386/625 [9:08:51<5:34:06, 83.88s/it]Training:  62%|██████▏   | 387/625 [9:10:20<5:38:16, 85.28s/it]  step=  195  reward=-0.0000±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.99e-05
+    correct=0.000  speed=0.618  eff_flops=0.382  steps_frac=0.873  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0670
+Training:  62%|██████▏   | 388/625 [9:11:41<5:31:45, 83.99s/it]Training:  62%|██████▏   | 389/625 [9:13:06<5:32:00, 84.41s/it]  step=  196  reward=+0.2751±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.99e-05
+    correct=0.375  speed=0.503  eff_flops=0.497  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0509
+Training:  62%|██████▏   | 390/625 [9:14:29<5:29:36, 84.15s/it]Training:  63%|██████▎   | 391/625 [9:16:07<5:43:41, 88.13s/it]  step=  197  reward=-0.0107±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.000  speed=0.413  eff_flops=0.587  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0219
+Training:  63%|██████▎   | 392/625 [9:17:31<5:37:00, 86.78s/it]Training:  63%|██████▎   | 393/625 [9:18:57<5:34:54, 86.61s/it]  step=  198  reward=-0.0301±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.125  speed=0.416  eff_flops=0.584  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0274
+Training:  63%|██████▎   | 394/625 [9:20:28<5:38:47, 88.00s/it]Training:  63%|██████▎   | 395/625 [9:22:06<5:48:25, 90.89s/it]  step=  199  reward=-0.0432±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.062  speed=0.536  eff_flops=0.464  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0479
+Training:  63%|██████▎   | 396/625 [9:23:29<5:38:33, 88.71s/it]Training:  64%|██████▎   | 397/625 [9:24:57<5:35:57, 88.41s/it]  step=  200  reward=+0.1979±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.98e-05
+    correct=0.125  speed=0.521  eff_flops=0.479  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0269
+  Saved checkpoint: outputs/v4_grpo_quality_balanced/policy_latest.pt
+  [Sample] Q: A rectangular prism has a base with an area of $24 \text{ cm}^2$ and a height of...
+  [Sample] A: We are given the following information about a rectangular prism:
+
+- Original area area = $24 \text{ cm}^2$
+- Original h...
+  [Sample] masks=169 reward=0.464
+Training:  64%|██████▎   | 398/625 [9:26:24<5:32:29, 87.88s/it]Training:  64%|██████▍   | 399/625 [9:27:47<5:26:27, 86.67s/it]  step=  201  reward=+0.1104±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.98e-05
+    correct=0.062  speed=0.510  eff_flops=0.490  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0052
+Training:  64%|██████▍   | 400/625 [9:29:14<5:24:34, 86.55s/it]Training:  64%|██████▍   | 401/625 [9:30:35<5:17:11, 84.96s/it]  step=  202  reward=-0.0859±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.000  speed=0.544  eff_flops=0.456  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0312
+Training:  64%|██████▍   | 402/625 [9:32:00<5:15:58, 85.02s/it]Training:  64%|██████▍   | 403/625 [9:33:26<5:15:12, 85.19s/it]  step=  203  reward=+0.0837±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.98e-05
+    correct=0.125  speed=0.420  eff_flops=0.580  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0229
+Training:  65%|██████▍   | 404/625 [9:35:03<5:26:38, 88.68s/it]Training:  65%|██████▍   | 405/625 [9:36:23<5:16:30, 86.32s/it]  step=  204  reward=-0.0123±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.062  speed=0.491  eff_flops=0.509  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0234
+Training:  65%|██████▍   | 406/625 [9:37:48<5:13:17, 85.83s/it]Training:  65%|██████▌   | 407/625 [9:39:15<5:12:46, 86.08s/it]  step=  205  reward=-0.0013±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.375  speed=0.365  eff_flops=0.635  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0284
+Training:  65%|██████▌   | 408/625 [9:40:40<5:10:02, 85.72s/it]Training:  65%|██████▌   | 409/625 [9:42:05<5:08:34, 85.72s/it]  step=  206  reward=-0.0315±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.125  speed=0.542  eff_flops=0.458  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0489
+Training:  66%|██████▌   | 410/625 [9:43:35<5:11:31, 86.94s/it]Training:  66%|██████▌   | 411/625 [9:44:59<5:07:15, 86.15s/it]  step=  207  reward=-0.0310±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.062  speed=0.399  eff_flops=0.601  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0484
+Training:  66%|██████▌   | 412/625 [9:46:29<5:09:01, 87.05s/it]Training:  66%|██████▌   | 413/625 [9:47:52<5:03:42, 85.96s/it]  step=  208  reward=-0.0004±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.000  speed=0.486  eff_flops=0.514  steps_frac=0.914  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0082
+Training:  66%|██████▌   | 414/625 [9:49:15<4:58:58, 85.01s/it]Training:  66%|██████▋   | 415/625 [9:50:40<4:57:32, 85.01s/it]  step=  209  reward=-0.0562±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.062  speed=0.497  eff_flops=0.503  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0214
+Training:  67%|██████▋   | 416/625 [9:52:04<4:54:59, 84.69s/it]Training:  67%|██████▋   | 417/625 [9:53:27<4:51:50, 84.19s/it]  step=  210  reward=+0.0508±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.98e-05
+    correct=0.562  speed=0.538  eff_flops=0.462  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0661
+Training:  67%|██████▋   | 418/625 [9:54:51<4:50:33, 84.22s/it]Training:  67%|██████▋   | 419/625 [9:56:16<4:50:11, 84.52s/it]  step=  211  reward=+0.2533±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.98e-05
+    correct=0.250  speed=0.506  eff_flops=0.494  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0223
+Training:  67%|██████▋   | 420/625 [9:57:44<4:51:50, 85.41s/it]Training:  67%|██████▋   | 421/625 [9:59:20<5:01:10, 88.58s/it]  step=  212  reward=-0.1470±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.000  speed=0.631  eff_flops=0.369  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0951
+Training:  68%|██████▊   | 422/625 [10:00:44<4:55:11, 87.25s/it]Training:  68%|██████▊   | 423/625 [10:02:09<4:51:36, 86.62s/it]  step=  213  reward=-0.0012±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.375  speed=0.600  eff_flops=0.400  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0652
+Training:  68%|██████▊   | 424/625 [10:03:32<4:46:31, 85.53s/it]Training:  68%|██████▊   | 425/625 [10:04:56<4:43:55, 85.18s/it]  step=  214  reward=-0.0101±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.000  speed=0.498  eff_flops=0.502  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0192
+Training:  68%|██████▊   | 426/625 [10:06:23<4:43:48, 85.57s/it]Training:  68%|██████▊   | 427/625 [10:07:48<4:42:00, 85.46s/it]  step=  215  reward=-0.0007±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.062  speed=0.539  eff_flops=0.461  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0357
+Training:  68%|██████▊   | 428/625 [10:09:11<4:38:32, 84.84s/it]Training:  69%|██████▊   | 429/625 [10:10:37<4:37:30, 84.95s/it]  step=  216  reward=-0.0722±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.062  speed=0.639  eff_flops=0.361  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0941
+Training:  69%|██████▉   | 430/625 [10:12:07<4:40:58, 86.45s/it]Training:  69%|██████▉   | 431/625 [10:13:30<4:36:18, 85.45s/it]  step=  217  reward=+0.1017±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.98e-05
+    correct=0.125  speed=0.501  eff_flops=0.499  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0244
+Training:  69%|██████▉   | 432/625 [10:14:53<4:32:32, 84.73s/it]Training:  69%|██████▉   | 433/625 [10:16:30<4:43:26, 88.58s/it]  step=  218  reward=-0.0370±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.125  speed=0.565  eff_flops=0.435  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0725
+Training:  69%|██████▉   | 434/625 [10:17:55<4:38:35, 87.51s/it]Training:  70%|██████▉   | 435/625 [10:19:20<4:34:31, 86.69s/it]  step=  219  reward=+0.0985±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.98e-05
+    correct=0.312  speed=0.503  eff_flops=0.497  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0217
+Training:  70%|██████▉   | 436/625 [10:20:54<4:39:33, 88.75s/it]Training:  70%|██████▉   | 437/625 [10:22:18<4:33:35, 87.32s/it]  step=  220  reward=-0.0020±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.125  speed=0.483  eff_flops=0.517  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0257
+Training:  70%|███████   | 438/625 [10:23:41<4:28:12, 86.06s/it]Training:  70%|███████   | 439/625 [10:25:05<4:25:29, 85.64s/it]  step=  221  reward=-0.0299±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.000  speed=0.384  eff_flops=0.616  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0386
+Training:  70%|███████   | 440/625 [10:26:27<4:20:36, 84.52s/it]Training:  71%|███████   | 441/625 [10:27:51<4:18:53, 84.42s/it]  step=  222  reward=+0.1987±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.98e-05
+    correct=0.125  speed=0.457  eff_flops=0.543  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0299
+Training:  71%|███████   | 442/625 [10:29:19<4:20:42, 85.48s/it]Training:  71%|███████   | 443/625 [10:30:42<4:16:37, 84.60s/it]  step=  223  reward=-0.0043±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.000  speed=0.423  eff_flops=0.577  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0136
+Training:  71%|███████   | 444/625 [10:32:08<4:16:34, 85.05s/it]Training:  71%|███████   | 445/625 [10:33:29<4:11:07, 83.71s/it]  step=  224  reward=-0.0031±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.000  speed=0.393  eff_flops=0.607  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0420
+Training:  71%|███████▏  | 446/625 [10:34:51<4:08:50, 83.41s/it]Training:  72%|███████▏  | 447/625 [10:36:15<4:07:21, 83.38s/it]  step=  225  reward=-0.0904±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.000  speed=0.528  eff_flops=0.472  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0316
+Training:  72%|███████▏  | 448/625 [10:37:46<4:12:37, 85.63s/it]Training:  72%|███████▏  | 449/625 [10:39:06<4:06:31, 84.04s/it]  step=  226  reward=-0.0242±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.375  speed=0.566  eff_flops=0.434  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0684
+Training:  72%|███████▏  | 450/625 [10:40:28<4:03:45, 83.57s/it]Training:  72%|███████▏  | 451/625 [10:41:51<4:01:18, 83.21s/it]  step=  227  reward=-0.0071±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.188  speed=0.512  eff_flops=0.488  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0285
+Training:  72%|███████▏  | 452/625 [10:43:15<4:00:23, 83.37s/it]Training:  72%|███████▏  | 453/625 [10:44:36<3:57:04, 82.70s/it]  step=  228  reward=+0.3730±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.98e-05
+    correct=0.188  speed=0.409  eff_flops=0.591  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0430
+Training:  73%|███████▎  | 454/625 [10:46:09<4:04:42, 85.86s/it]Training:  73%|███████▎  | 455/625 [10:47:46<4:12:31, 89.13s/it]  step=  229  reward=+0.2302±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.98e-05
+    correct=0.312  speed=0.551  eff_flops=0.449  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0698
+Training:  73%|███████▎  | 456/625 [10:49:09<4:06:35, 87.55s/it]Training:  73%|███████▎  | 457/625 [10:50:33<4:01:55, 86.40s/it]  step=  230  reward=-0.0332±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.000  speed=0.561  eff_flops=0.439  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0352
+Training:  73%|███████▎  | 458/625 [10:51:55<3:57:01, 85.16s/it]Training:  73%|███████▎  | 459/625 [10:53:18<3:53:30, 84.40s/it]  step=  231  reward=-0.0025±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.000  speed=0.476  eff_flops=0.524  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0336
+Training:  74%|███████▎  | 460/625 [10:54:39<3:49:22, 83.41s/it]Training:  74%|███████▍  | 461/625 [10:56:01<3:46:44, 82.95s/it]  step=  232  reward=+0.1069±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.98e-05
+    correct=0.062  speed=0.593  eff_flops=0.407  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0483
+Training:  74%|███████▍  | 462/625 [10:57:26<3:46:46, 83.47s/it]Training:  74%|███████▍  | 463/625 [10:58:44<3:41:26, 82.01s/it]  step=  233  reward=+0.2700±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.98e-05
+    correct=0.250  speed=0.557  eff_flops=0.443  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0523
+Training:  74%|███████▍  | 464/625 [11:00:06<3:39:35, 81.83s/it]Training:  74%|███████▍  | 465/625 [11:01:32<3:41:38, 83.11s/it]  step=  234  reward=-0.0049±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.000  speed=0.358  eff_flops=0.642  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0282
+Training:  75%|███████▍  | 466/625 [11:02:54<3:39:17, 82.75s/it]Training:  75%|███████▍  | 467/625 [11:04:14<3:35:49, 81.96s/it]  step=  235  reward=+0.0770±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.98e-05
+    correct=0.250  speed=0.580  eff_flops=0.420  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0583
+Training:  75%|███████▍  | 468/625 [11:05:42<3:39:18, 83.81s/it]Training:  75%|███████▌  | 469/625 [11:07:06<3:38:02, 83.86s/it]  step=  236  reward=-0.0974±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.98e-05
+    correct=0.312  speed=0.525  eff_flops=0.475  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0591
+Training:  75%|███████▌  | 470/625 [11:08:31<3:37:44, 84.28s/it]Training:  75%|███████▌  | 471/625 [11:09:54<3:35:07, 83.82s/it]  step=  237  reward=-0.0141±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.250  speed=0.597  eff_flops=0.403  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0828
+Training:  76%|███████▌  | 472/625 [11:11:14<3:30:54, 82.71s/it]Training:  76%|███████▌  | 473/625 [11:12:35<3:28:00, 82.11s/it]  step=  238  reward=+0.2223±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.98e-05
+    correct=0.125  speed=0.592  eff_flops=0.408  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0457
+Training:  76%|███████▌  | 474/625 [11:13:56<3:26:16, 81.96s/it]Training:  76%|███████▌  | 475/625 [11:15:22<3:27:31, 83.01s/it]  step=  239  reward=-0.0001±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.98e-05
+    correct=0.062  speed=0.633  eff_flops=0.367  steps_frac=0.927  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0546
+Training:  76%|███████▌  | 476/625 [11:16:52<3:31:41, 85.25s/it]Training:  76%|███████▋  | 477/625 [11:18:15<3:28:13, 84.42s/it]  step=  240  reward=+0.1406±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.97e-05
+    correct=0.312  speed=0.527  eff_flops=0.473  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0348
+Training:  76%|███████▋  | 478/625 [11:19:49<3:33:58, 87.34s/it]Training:  77%|███████▋  | 479/625 [11:21:18<3:33:27, 87.72s/it]  step=  241  reward=-0.0038±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.062  speed=0.385  eff_flops=0.615  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0436
+Training:  77%|███████▋  | 480/625 [11:22:41<3:29:02, 86.50s/it]Training:  77%|███████▋  | 481/625 [11:24:04<3:24:51, 85.36s/it]  step=  242  reward=-0.0019±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.97e-05
+    correct=0.000  speed=0.508  eff_flops=0.492  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0113
+Training:  77%|███████▋  | 482/625 [11:25:29<3:23:12, 85.26s/it]Training:  77%|███████▋  | 483/625 [11:26:53<3:20:38, 84.78s/it]  step=  243  reward=+0.2353±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.97e-05
+    correct=0.250  speed=0.472  eff_flops=0.528  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0202
+Training:  77%|███████▋  | 484/625 [11:28:15<3:17:29, 84.04s/it]Training:  78%|███████▊  | 485/625 [11:29:53<3:26:00, 88.29s/it]  step=  244  reward=+0.0957±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.97e-05
+    correct=0.375  speed=0.476  eff_flops=0.524  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0343
+Training:  78%|███████▊  | 486/625 [11:31:14<3:19:32, 86.13s/it]Training:  78%|███████▊  | 487/625 [11:32:42<3:19:04, 86.55s/it]  step=  245  reward=+0.3585±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.97e-05
+    correct=0.125  speed=0.638  eff_flops=0.362  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0434
+Training:  78%|███████▊  | 488/625 [11:34:04<3:14:52, 85.35s/it]Training:  78%|███████▊  | 489/625 [11:35:28<3:12:04, 84.74s/it]  step=  246  reward=+0.0605±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.97e-05
+    correct=0.125  speed=0.550  eff_flops=0.450  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0503
+Training:  78%|███████▊  | 490/625 [11:36:52<3:10:37, 84.72s/it]Training:  79%|███████▊  | 491/625 [11:38:15<3:07:31, 83.96s/it]  step=  247  reward=+0.0866±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.97e-05
+    correct=0.125  speed=0.528  eff_flops=0.472  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0171
+Training:  79%|███████▊  | 492/625 [11:39:37<3:04:49, 83.38s/it]Training:  79%|███████▉  | 493/625 [11:41:01<3:04:06, 83.69s/it]  step=  248  reward=-0.0855±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.97e-05
+    correct=0.188  speed=0.472  eff_flops=0.528  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0479
+Training:  79%|███████▉  | 494/625 [11:42:24<3:02:02, 83.38s/it]Training:  79%|███████▉  | 495/625 [11:43:47<3:00:20, 83.24s/it]  step=  249  reward=-0.0415±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.125  speed=0.515  eff_flops=0.485  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0534
+Training:  79%|███████▉  | 496/625 [11:45:10<2:58:59, 83.25s/it]Training:  80%|███████▉  | 497/625 [11:46:32<2:56:48, 82.88s/it]  step=  250  reward=-0.0009±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.000  speed=0.603  eff_flops=0.397  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0009
+  Saved checkpoint: outputs/v4_grpo_quality_balanced/policy_latest.pt
+  [Sample] Q: Maria's 5 rabbits gave birth to 8 baby rabbits, with 4 males and 4 females. How ...
+  [Sample] A: Let's break this down step by step:
+
+1. Maria originally had 5 rabbits.
+2. These rabbits gave birth to 8 baby rabbits.
+3...
+  [Sample] masks=1 reward=-0.000
+Training:  80%|███████▉  | 498/625 [11:47:53<2:54:15, 82.33s/it]Training:  80%|███████▉  | 499/625 [11:49:15<2:52:37, 82.20s/it]  step=  251  reward=-0.0135±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.062  speed=0.426  eff_flops=0.574  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0523
+Training:  80%|████████  | 500/625 [11:50:38<2:51:47, 82.46s/it]Training:  80%|████████  | 501/625 [11:51:58<2:49:05, 81.82s/it]  step=  252  reward=+0.3824±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.97e-05
+    correct=0.312  speed=0.478  eff_flops=0.522  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0332
+Training:  80%|████████  | 502/625 [11:53:28<2:52:39, 84.23s/it]Training:  80%|████████  | 503/625 [11:54:49<2:49:28, 83.35s/it]  step=  253  reward=-0.0352±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.000  speed=0.467  eff_flops=0.533  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0194
+Training:  81%|████████  | 504/625 [11:56:14<2:48:52, 83.74s/it]Training:  81%|████████  | 505/625 [11:57:36<2:46:24, 83.21s/it]  step=  254  reward=-0.0990±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.97e-05
+    correct=0.250  speed=0.450  eff_flops=0.550  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0302
+Training:  81%|████████  | 506/625 [11:58:57<2:43:33, 82.46s/it]Training:  81%|████████  | 507/625 [12:00:21<2:43:26, 83.10s/it]  step=  255  reward=-0.0123±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.250  speed=0.542  eff_flops=0.458  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0249
+Training:  81%|████████▏ | 508/625 [12:01:41<2:40:05, 82.10s/it]Training:  81%|████████▏ | 509/625 [12:03:05<2:40:04, 82.80s/it]  step=  256  reward=-0.0015±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.000  speed=0.573  eff_flops=0.427  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0385
+Training:  82%|████████▏ | 510/625 [12:04:30<2:39:55, 83.44s/it]Training:  82%|████████▏ | 511/625 [12:05:51<2:36:44, 82.49s/it]  step=  257  reward=+0.2158±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.97e-05
+    correct=0.188  speed=0.556  eff_flops=0.444  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0672
+Training:  82%|████████▏ | 512/625 [12:07:16<2:36:53, 83.30s/it]Training:  82%|████████▏ | 513/625 [12:08:39<2:35:19, 83.21s/it]  step=  258  reward=-0.0056±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.97e-05
+    correct=0.125  speed=0.420  eff_flops=0.580  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0368
+Training:  82%|████████▏ | 514/625 [12:10:05<2:35:26, 84.02s/it]Training:  82%|████████▏ | 515/625 [12:11:30<2:34:45, 84.41s/it]  step=  259  reward=+0.1256±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.97e-05
+    correct=0.062  speed=0.590  eff_flops=0.410  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0253
+Training:  83%|████████▎ | 516/625 [12:12:58<2:35:23, 85.54s/it]Training:  83%|████████▎ | 517/625 [12:14:28<2:36:17, 86.83s/it]  step=  260  reward=+0.2350±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.97e-05
+    correct=0.125  speed=0.567  eff_flops=0.433  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0589
+Training:  83%|████████▎ | 518/625 [12:15:50<2:32:16, 85.38s/it]Training:  83%|████████▎ | 519/625 [12:17:16<2:30:51, 85.39s/it]  step=  261  reward=-0.0371±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.97e-05
+    correct=0.000  speed=0.463  eff_flops=0.537  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0411
+Training:  83%|████████▎ | 520/625 [12:18:41<2:29:18, 85.32s/it]Training:  83%|████████▎ | 521/625 [12:20:03<2:26:27, 84.50s/it]  step=  262  reward=-0.0382±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.97e-05
+    correct=0.062  speed=0.473  eff_flops=0.527  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0559
+Training:  84%|████████▎ | 522/625 [12:21:30<2:25:58, 85.04s/it]Training:  84%|████████▎ | 523/625 [12:22:50<2:22:09, 83.63s/it]  step=  263  reward=+0.0467±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.97e-05
+    correct=0.250  speed=0.582  eff_flops=0.418  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0653
+Training:  84%|████████▍ | 524/625 [12:24:21<2:24:26, 85.80s/it]Training:  84%|████████▍ | 525/625 [12:25:46<2:22:47, 85.68s/it]  step=  264  reward=-0.0328±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.188  speed=0.618  eff_flops=0.382  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0644
+Training:  84%|████████▍ | 526/625 [12:27:10<2:20:34, 85.20s/it]Training:  84%|████████▍ | 527/625 [12:28:35<2:18:43, 84.93s/it]  step=  265  reward=-0.0595±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.188  speed=0.479  eff_flops=0.521  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0931
+Training:  84%|████████▍ | 528/625 [12:29:58<2:16:29, 84.43s/it]Training:  85%|████████▍ | 529/625 [12:31:22<2:14:59, 84.37s/it]  step=  266  reward=+0.1545±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.97e-05
+    correct=0.188  speed=0.571  eff_flops=0.429  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0659
+Training:  85%|████████▍ | 530/625 [12:32:44<2:12:19, 83.57s/it]Training:  85%|████████▍ | 531/625 [12:34:07<2:10:51, 83.53s/it]  step=  267  reward=-0.0008±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.97e-05
+    correct=0.250  speed=0.412  eff_flops=0.588  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0332
+Training:  85%|████████▌ | 532/625 [12:35:31<2:09:27, 83.53s/it]Training:  85%|████████▌ | 533/625 [12:36:53<2:07:31, 83.17s/it]  step=  268  reward=-0.0541±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.97e-05
+    correct=0.000  speed=0.517  eff_flops=0.483  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0410
+Training:  85%|████████▌ | 534/625 [12:38:17<2:06:31, 83.42s/it]Training:  86%|████████▌ | 535/625 [12:39:40<2:05:08, 83.43s/it]  step=  269  reward=+0.2273±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.97e-05
+    correct=0.188  speed=0.543  eff_flops=0.457  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0665
+Training:  86%|████████▌ | 536/625 [12:41:02<2:03:04, 82.97s/it]Training:  86%|████████▌ | 537/625 [12:42:25<2:01:26, 82.80s/it]  step=  270  reward=+0.0943±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.97e-05
+    correct=0.375  speed=0.410  eff_flops=0.590  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0101
+Training:  86%|████████▌ | 538/625 [12:43:49<2:00:31, 83.12s/it]Training:  86%|████████▌ | 539/625 [12:45:11<1:58:48, 82.89s/it]  step=  271  reward=-0.0040±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.062  speed=0.568  eff_flops=0.432  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0594
+Training:  86%|████████▋ | 540/625 [12:46:32<1:56:49, 82.46s/it]Training:  87%|████████▋ | 541/625 [12:48:04<1:59:22, 85.27s/it]  step=  272  reward=-0.0182±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.97e-05
+    correct=0.000  speed=0.579  eff_flops=0.421  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0489
+Training:  87%|████████▋ | 542/625 [12:49:27<1:56:52, 84.48s/it]Training:  87%|████████▋ | 543/625 [12:50:48<1:54:09, 83.54s/it]  step=  273  reward=+0.0681±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.97e-05
+    correct=0.188  speed=0.614  eff_flops=0.386  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0357
+Training:  87%|████████▋ | 544/625 [12:52:11<1:52:20, 83.22s/it]Training:  87%|████████▋ | 545/625 [12:53:32<1:50:20, 82.76s/it]  step=  274  reward=+0.3331±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.96e-05
+    correct=0.312  speed=0.578  eff_flops=0.422  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0543
+Training:  87%|████████▋ | 546/625 [12:54:57<1:49:29, 83.16s/it]Training:  88%|████████▊ | 547/625 [12:56:22<1:48:55, 83.79s/it]  step=  275  reward=-0.1104±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.96e-05
+    correct=0.062  speed=0.525  eff_flops=0.475  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0555
+Training:  88%|████████▊ | 548/625 [12:57:47<1:48:03, 84.20s/it]Training:  88%|████████▊ | 549/625 [12:59:10<1:46:07, 83.79s/it]  step=  276  reward=-0.0183±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.062  speed=0.543  eff_flops=0.457  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0462
+Training:  88%|████████▊ | 550/625 [13:00:32<1:44:03, 83.24s/it]Training:  88%|████████▊ | 551/625 [13:02:01<1:44:50, 85.01s/it]  step=  277  reward=-0.0956±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.188  speed=0.604  eff_flops=0.396  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0824
+Training:  88%|████████▊ | 552/625 [13:03:21<1:41:32, 83.46s/it]Training:  88%|████████▊ | 553/625 [13:04:54<1:43:38, 86.37s/it]  step=  278  reward=+0.2585±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.96e-05
+    correct=0.188  speed=0.467  eff_flops=0.533  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0387
+Training:  89%|████████▊ | 554/625 [13:06:18<1:41:34, 85.84s/it]Training:  89%|████████▉ | 555/625 [13:08:02<1:46:22, 91.18s/it]  step=  279  reward=-0.0288±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.125  speed=0.564  eff_flops=0.436  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0406
+Training:  89%|████████▉ | 556/625 [13:09:23<1:41:24, 88.18s/it]Training:  89%|████████▉ | 557/625 [13:10:48<1:38:54, 87.27s/it]  step=  280  reward=-0.0074±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.062  speed=0.352  eff_flops=0.648  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0272
+Training:  89%|████████▉ | 558/625 [13:12:13<1:36:35, 86.51s/it]Training:  89%|████████▉ | 559/625 [13:13:43<1:36:07, 87.39s/it]  step=  281  reward=+0.2026±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.96e-05
+    correct=0.312  speed=0.452  eff_flops=0.548  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0504
+Training:  90%|████████▉ | 560/625 [13:15:06<1:33:27, 86.27s/it]Training:  90%|████████▉ | 561/625 [13:16:30<1:31:20, 85.63s/it]  step=  282  reward=-0.0037±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.125  speed=0.571  eff_flops=0.429  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0536
+Training:  90%|████████▉ | 562/625 [13:17:55<1:29:39, 85.39s/it]Training:  90%|█████████ | 563/625 [13:19:17<1:27:06, 84.30s/it]  step=  283  reward=-0.0637±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.000  speed=0.586  eff_flops=0.414  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0906
+Training:  90%|█████████ | 564/625 [13:20:40<1:25:13, 83.83s/it]Training:  90%|█████████ | 565/625 [13:22:03<1:23:41, 83.69s/it]  step=  284  reward=-0.0003±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.375  speed=0.490  eff_flops=0.510  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0425
+Training:  91%|█████████ | 566/625 [13:23:27<1:22:18, 83.70s/it]Training:  91%|█████████ | 567/625 [13:24:53<1:21:46, 84.59s/it]  step=  285  reward=+0.2559±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.96e-05
+    correct=0.188  speed=0.641  eff_flops=0.359  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0839
+Training:  91%|█████████ | 568/625 [13:26:16<1:19:39, 83.86s/it]Training:  91%|█████████ | 569/625 [13:27:40<1:18:22, 83.97s/it]  step=  286  reward=-0.0928±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.96e-05
+    correct=0.000  speed=0.582  eff_flops=0.418  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0542
+Training:  91%|█████████ | 570/625 [13:29:07<1:17:58, 85.06s/it]Training:  91%|█████████▏| 571/625 [13:30:43<1:19:18, 88.12s/it]  step=  287  reward=-0.0094±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.96e-05
+    correct=0.125  speed=0.575  eff_flops=0.425  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0502
+Training:  92%|█████████▏| 572/625 [13:32:07<1:16:43, 86.87s/it]Training:  92%|█████████▏| 573/625 [13:33:30<1:14:16, 85.70s/it]  step=  288  reward=+0.0912±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.96e-05
+    correct=0.062  speed=0.540  eff_flops=0.460  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0100
+Training:  92%|█████████▏| 574/625 [13:34:52<1:12:06, 84.84s/it]Training:  92%|█████████▏| 575/625 [13:36:17<1:10:34, 84.68s/it]  step=  289  reward=-0.0006±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.062  speed=0.420  eff_flops=0.580  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0374
+Training:  92%|█████████▏| 576/625 [13:37:44<1:09:48, 85.47s/it]Training:  92%|█████████▏| 577/625 [13:39:07<1:07:46, 84.71s/it]  step=  290  reward=-0.0251±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.125  speed=0.534  eff_flops=0.466  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0562
+Training:  92%|█████████▏| 578/625 [13:40:32<1:06:24, 84.78s/it]Training:  93%|█████████▎| 579/625 [13:41:56<1:04:47, 84.51s/it]  step=  291  reward=-0.0300±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.125  speed=0.569  eff_flops=0.431  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0345
+Training:  93%|█████████▎| 580/625 [13:43:20<1:03:22, 84.49s/it]Training:  93%|█████████▎| 581/625 [13:44:46<1:02:09, 84.77s/it]  step=  292  reward=-0.0003±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.000  speed=0.443  eff_flops=0.557  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0185
+Training:  93%|█████████▎| 582/625 [13:46:09<1:00:23, 84.27s/it]Training:  93%|█████████▎| 583/625 [13:47:30<58:18, 83.29s/it]    step=  293  reward=-0.0223±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.96e-05
+    correct=0.000  speed=0.434  eff_flops=0.566  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0336
+Training:  93%|█████████▎| 584/625 [13:48:52<56:44, 83.03s/it]Training:  94%|█████████▎| 585/625 [13:50:39<1:00:10, 90.26s/it]  step=  294  reward=+0.3944±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.96e-05
+    correct=0.250  speed=0.590  eff_flops=0.410  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0728
+Training:  94%|█████████▍| 586/625 [13:52:04<57:33, 88.55s/it]  Training:  94%|█████████▍| 587/625 [13:53:27<55:06, 87.02s/it]  step=  295  reward=-0.0789±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.96e-05
+    correct=0.000  speed=0.521  eff_flops=0.479  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0491
+Training:  94%|█████████▍| 588/625 [13:54:52<53:11, 86.26s/it]Training:  94%|█████████▍| 589/625 [13:56:36<55:01, 91.70s/it]  step=  296  reward=+0.1941±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.96e-05
+    correct=0.250  speed=0.490  eff_flops=0.510  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0407
+Training:  94%|█████████▍| 590/625 [13:58:05<52:54, 90.70s/it]Training:  95%|█████████▍| 591/625 [13:59:39<52:01, 91.80s/it]  step=  297  reward=-0.0136±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.96e-05
+    correct=0.000  speed=0.436  eff_flops=0.564  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0505
+Training:  95%|█████████▍| 592/625 [14:01:01<48:55, 88.94s/it]Training:  95%|█████████▍| 593/625 [14:02:24<46:25, 87.05s/it]  step=  298  reward=-0.1273±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.96e-05
+    correct=0.000  speed=0.604  eff_flops=0.396  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0871
+Training:  95%|█████████▌| 594/625 [14:03:50<44:52, 86.87s/it]Training:  95%|█████████▌| 595/625 [14:05:15<43:08, 86.28s/it]  step=  299  reward=+0.4064±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.96e-05
+    correct=0.188  speed=0.525  eff_flops=0.475  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0188
+Training:  95%|█████████▌| 596/625 [14:06:37<40:58, 84.79s/it]Training:  96%|█████████▌| 597/625 [14:08:06<40:16, 86.31s/it]  step=  300  reward=+0.5604±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.96e-05
+    correct=0.312  speed=0.621  eff_flops=0.379  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0490
+  Saved checkpoint: outputs/v4_grpo_quality_balanced/policy_latest.pt
+  [Sample] Q: Let $a,$ $b,$ and $c$ be nonnegative real numbers such that $a + b + c = 8.$  Fi...
+  [Sample] A: We are given that $ a, b, c $ are nonnegative real numbers such that:
+
+$$
+a + b + c = 8
+$$
+
+We are to **maximize** the e...
+  [Sample] masks=64 reward=0.625
+Training:  96%|█████████▌| 598/625 [14:09:27<38:03, 84.57s/it]Training:  96%|█████████▌| 599/625 [14:10:47<36:06, 83.32s/it]  step=  301  reward=+0.0815±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.96e-05
+    correct=0.062  speed=0.578  eff_flops=0.422  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0368
+Training:  96%|█████████▌| 600/625 [14:12:10<34:37, 83.10s/it]Training:  96%|█████████▌| 601/625 [14:13:34<33:18, 83.27s/it]  step=  302  reward=+0.2339±0.0000  frac_pos=1.00  loss=+0.0000  lr=1.96e-05
+    correct=0.250  speed=0.587  eff_flops=0.413  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0370
+Training:  96%|█████████▋| 602/625 [14:15:08<33:09, 86.51s/it]Training:  96%|█████████▋| 603/625 [14:16:32<31:30, 85.93s/it]  step=  303  reward=-0.2072±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.96e-05
+    correct=0.250  speed=0.603  eff_flops=0.397  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0999
+Training:  97%|█████████▋| 604/625 [14:17:56<29:50, 85.28s/it]Training:  97%|█████████▋| 605/625 [14:19:20<28:17, 84.88s/it]  step=  304  reward=+0.3987±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.96e-05
+    correct=0.375  speed=0.562  eff_flops=0.438  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0779
+Training:  97%|█████████▋| 606/625 [14:20:42<26:38, 84.12s/it]Training:  97%|█████████▋| 607/625 [14:22:10<25:32, 85.16s/it]  step=  305  reward=-0.0020±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.95e-05
+    correct=0.188  speed=0.460  eff_flops=0.540  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0139
+Training:  97%|█████████▋| 608/625 [14:23:34<24:04, 84.97s/it]Training:  97%|█████████▋| 609/625 [14:24:58<22:34, 84.64s/it]  step=  306  reward=-0.0008±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.95e-05
+    correct=0.000  speed=0.401  eff_flops=0.599  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0232
+Training:  98%|█████████▊| 610/625 [14:26:22<21:03, 84.24s/it]Training:  98%|█████████▊| 611/625 [14:27:54<20:12, 86.62s/it]  step=  307  reward=-0.0237±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.95e-05
+    correct=0.188  speed=0.596  eff_flops=0.404  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0590
+Training:  98%|█████████▊| 612/625 [14:29:17<18:33, 85.62s/it]Training:  98%|█████████▊| 613/625 [14:30:40<16:58, 84.87s/it]  step=  308  reward=-0.1412±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.95e-05
+    correct=0.062  speed=0.650  eff_flops=0.350  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.1162
+Training:  98%|█████████▊| 614/625 [14:32:02<15:24, 84.06s/it]Training:  98%|█████████▊| 615/625 [14:33:25<13:55, 83.53s/it]  step=  309  reward=-0.0374±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.95e-05
+    correct=0.125  speed=0.435  eff_flops=0.565  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0376
+Training:  99%|█████████▊| 616/625 [14:34:49<12:35, 83.92s/it]Training:  99%|█████████▊| 617/625 [14:36:14<11:11, 83.97s/it]  step=  310  reward=-0.1066±0.0000  frac_pos=0.00  loss=+0.0000  lr=1.95e-05
+    correct=0.125  speed=0.616  eff_flops=0.384  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0895
+Training:  99%|█████████▉| 618/625 [14:37:36<09:44, 83.48s/it]Training:  99%|█████████▉| 619/625 [14:38:58<08:18, 83.09s/it]  step=  311  reward=-0.0388±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.95e-05
+    correct=0.062  speed=0.619  eff_flops=0.381  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0574
+Training:  99%|█████████▉| 620/625 [14:40:19<06:52, 82.49s/it]Training:  99%|█████████▉| 621/625 [14:41:48<05:37, 84.30s/it]  step=  312  reward=-0.0361±0.0000  frac_pos=0.00  loss=-0.0000  lr=1.95e-05
+    correct=0.188  speed=0.485  eff_flops=0.515  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0382
+Training: 100%|█████████▉| 622/625 [14:43:09<04:10, 83.44s/it]Training: 100%|█████████▉| 623/625 [14:44:31<02:45, 82.92s/it]  step=  313  reward=+0.1780±0.0000  frac_pos=1.00  loss=-0.0000  lr=1.95e-05
+    correct=0.125  speed=0.570  eff_flops=0.430  steps_frac=1.000  speed_cache=0.000  stable=0.000  spec=0.000
+    thrash_pen=0.0000  thrash_rate=0.000  thrash_cnt=0.0  cacheF1_rew=0.0000  accessF1=0.000  access_rew=0.0000  unresolved_pen=0.0738
+Training: 100%|█████████▉| 624/625 [14:46:07<01:26, 86.95s/it]Training: 100%|██████████| 625/625 [14:47:32<00:00, 86.36s/it]Training: 100%|██████████| 625/625 [14:47:32<00:00, 85.20s/it]
+  Saved best checkpoint: outputs/v4_grpo_quality_balanced/policy_best.pt (epoch_mean_reward=0.0309)
+
+Training complete. Final model saved to outputs/v4_grpo_quality_balanced/policy_final.pt
+GRPO metadata saved to outputs/v4_grpo_quality_balanced/grpo_training_metadata.json
+Training log (JSONL) saved to outputs/v4_grpo_quality_balanced/training_log.jsonl
