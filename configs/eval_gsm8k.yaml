@@ -1,0 +1,28 @@
+extends: paper.yaml
+
+grpo:
+  enabled: false
+  warm_start_from: null
+
+warmstart:
+  enabled: false
+
+data:
+  eval_dataset: "openai/gsm8k"
+  eval_split: "test"
+  eval_max_samples: 1319
+  max_prompt_len: 512
+  max_answer_len: 256
+
+evaluation:
+  task_type: "math"
+  generation_mode_filter: "all"
+
+hardware:
+  tp_size: 1
+  dp_size: 1
+
+logging:
+  run_name: "eval_gsm8k"
+  output_dir: "outputs/paper_final/gsm8k/"
+  use_wandb: false

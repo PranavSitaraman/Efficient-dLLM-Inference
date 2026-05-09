@@ -1,0 +1,22 @@
+extends: eval_gsm8k.yaml
+
+data:
+  eval_dataset: "openai/openai_humaneval"
+  eval_dataset_config: null
+  eval_split: "test"
+  eval_max_samples: 164
+  use_chat_template: "auto"
+  math_prompt_style: "none"
+  max_prompt_len: 1024
+  max_answer_len: 512
+
+evaluation:
+  task_type: "code"
+  code:
+    timeout_sec: 3.0
+    cpu_time_limit_sec: 2
+    memory_limit_mb: 1024
+
+logging:
+  run_name: "eval_humaneval"
+  output_dir: "outputs/paper_final/humaneval/"

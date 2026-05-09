@@ -1,4 +1,0 @@
-constraint,best_tps_method,best_tps,lowest_thrash_method,lowest_thrash
-acc_drop<=0.01,temporal_confidence@0.700000,66.619,no_reuse@-1.000000,0.000000
-acc_drop<=0.02,temporal_confidence@0.700000,66.619,no_reuse@-1.000000,0.000000
-acc_drop<=0.05,temporal_confidence@0.700000,66.619,no_reuse@-1.000000,0.000000

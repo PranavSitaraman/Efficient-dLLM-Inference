@@ -1,5 +1,5 @@
 from aoae.code_eval import evaluate_code_sample
-from aoae.evaluators import CodeEvaluator
+from aoae.evaluators import CodeEvaluator, build_evaluator, describe_evaluator
 
 
 def _sample():
@@ -40,3 +40,20 @@ def test_code_evaluator_uses_execution_when_schema_available():
     assert ok.detail.startswith("code_exec:")
     assert bad.detail.startswith("code_exec:")
 
+
+def test_humaneval_config_uses_code_evaluator_and_schema_fields():
+    from pathlib import Path
+
+    from aoae.cli import _load_config
+    from aoae.tasks import extract_prompt_and_reference
+
+    root = Path(__file__).resolve().parents[1]
+    cfg = _load_config(str(root / "configs" / "eval_humaneval.yaml"))
+    sample = _sample()
+    prompt, reference = extract_prompt_and_reference(sample)
+
+    assert cfg["data"]["eval_dataset"] == "openai/openai_humaneval"
+    assert describe_evaluator(cfg) == "code_exec_or_string_match"
+    assert isinstance(build_evaluator(cfg), CodeEvaluator)
+    assert prompt == sample["prompt"]
+    assert reference == sample["canonical_solution"]

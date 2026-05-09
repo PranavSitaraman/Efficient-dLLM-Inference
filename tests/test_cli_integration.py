@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 import types
+from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
@@ -308,7 +309,7 @@ def test_cli_paper_suite_passthrough(monkeypatch):
 
 
 def test_cli_auto_torchrun_for_multi_gpu_config(monkeypatch, tmp_path):
-    cfg = {"hardware": {"tp_size": 2}}
+    cfg = {"hardware": {"tp_size": 4}}
     cfg_path = tmp_path / "cfg.yaml"
     cfg_path.write_text(yaml.safe_dump(cfg))
 
@@ -340,7 +341,7 @@ def test_cli_auto_torchrun_for_multi_gpu_config(monkeypatch, tmp_path):
 
 
 def test_cli_pipeline_does_not_auto_torchrun_for_multi_gpu_config(monkeypatch, tmp_path):
-    cfg = {"hardware": {"tp_size": 2}}
+    cfg = {"hardware": {"tp_size": 4}}
     cfg_path = tmp_path / "cfg.yaml"
     cfg_path.write_text(yaml.safe_dump(cfg))
 
@@ -369,7 +370,7 @@ def test_cli_pipeline_does_not_auto_torchrun_for_multi_gpu_config(monkeypatch, t
 
 
 def test_cli_skips_auto_torchrun_inside_distributed_env(monkeypatch, tmp_path):
-    cfg = {"hardware": {"tp_size": 2}}
+    cfg = {"hardware": {"tp_size": 4}}
     cfg_path = tmp_path / "cfg.yaml"
     cfg_path.write_text(yaml.safe_dump(cfg))
 
@@ -671,22 +672,46 @@ def test_cli_pipeline_uses_completed_low_reward_checkpoint_for_eval(monkeypatch,
 
 
 def test_cli_normalizes_legacy_prism_train_invocation():
-    assert _normalize_legacy_cli_argv(["train", "prism", "configs/llada21_hard.yaml"]) == [
+    assert _normalize_legacy_cli_argv(["train", "prism", "configs/paper.yaml"]) == [
         "train",
         "--stage",
         "prism",
         "--config",
-        "configs/llada21_hard.yaml",
+        "configs/paper.yaml",
     ]
 
 
 def test_cli_normalizes_legacy_grpo_train_invocation_with_resume():
-    assert _normalize_legacy_cli_argv(["train", "grpo", "configs/llada21_hard.yaml", "auto"]) == [
+    assert _normalize_legacy_cli_argv(["train", "grpo", "configs/paper.yaml", "auto"]) == [
         "train",
         "--stage",
         "grpo",
         "--config",
-        "configs/llada21_hard.yaml",
+        "configs/paper.yaml",
         "--resume",
         "auto",
     ]
+
+
+def test_reproduce_wrapper_exposes_submission_workflows_in_dry_run():
+    commands = [
+        ["bash", "reproduce.sh", "--workflow", "smoke", "--dry_run"],
+        ["bash", "reproduce.sh", "--workflow", "paper", "--max_samples", "1", "--dry_run"],
+        ["bash", "reproduce.sh", "--workflow", "train", "--stage", "warmstart", "--dry_run"],
+        [
+            "bash",
+            "reproduce.sh",
+            "--workflow",
+            "eval",
+            "--dataset",
+            "humaneval",
+            "--checkpoint",
+            "none",
+            "--dry_run",
+        ],
+    ]
+
+    for cmd in commands:
+        result = subprocess.run(cmd, cwd=Path(__file__).resolve().parents[1], text=True, capture_output=True)
+        assert result.returncode == 0, result.stderr
+        assert "AOAE Reproduction Wrapper" in result.stdout

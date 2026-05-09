@@ -129,7 +129,7 @@ def _required_world_size(argv_list: List[str]) -> int:
         return 1
 
     if command in {"train", "eval"}:
-        config_path = _extract_flag_value(args, "--config", "configs/llada21_hard.yaml")
+        config_path = _extract_flag_value(args, "--config", "configs/paper.yaml")
         return _config_tp_size(config_path)
 
     if command == "pipeline":
@@ -140,17 +140,17 @@ def _required_world_size(argv_list: List[str]) -> int:
 
     if command in {"tau-sweep", "reuse-sweep", "ablations", "paper-suite"}:
         default_config = {
-            "tau-sweep": "configs/poc1.yaml",
-            "reuse-sweep": "configs/poc2.yaml",
-            "ablations": "configs/paper.yaml",
+            "tau-sweep": "configs/ablation.yaml",
+            "reuse-sweep": "configs/ablation.yaml",
+            "ablations": "configs/ablation.yaml",
             "paper-suite": "configs/paper.yaml",
         }[command]
         config_path = _extract_flag_value(args, "--config", default_config)
         return _config_tp_size(config_path)
 
     if command == "routing-sweep":
-        hard_config = _extract_flag_value(args, "--hard_config", "configs/llada21_hard.yaml")
-        soft_config = _extract_flag_value(args, "--soft_config", "configs/llada21_soft.yaml")
+        hard_config = _extract_flag_value(args, "--hard_config", "configs/ablation.yaml")
+        soft_config = _extract_flag_value(args, "--soft_config", "configs/ablation.yaml")
         return max(_config_tp_size(hard_config), _config_tp_size(soft_config))
 
     return 1
@@ -316,7 +316,7 @@ PASSTHROUGH_COMMANDS = [
 
 
 def add_eval_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", type=str, default="configs/llada21_hard.yaml", help="Path to YAML config file.")
+    parser.add_argument("--config", type=str, default="configs/paper.yaml", help="Path to YAML config file.")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to trained AOAE policy checkpoint (.pt).")
     parser.add_argument("--max_samples", type=int, default=None, help="Max samples to evaluate (None = full dataset).")
     parser.add_argument("--mode", type=str, default="standard", choices=["standard", "speculative"], help="'standard' for single-model, 'speculative' for dual-model.")
@@ -419,7 +419,7 @@ def run_eval_command(args: argparse.Namespace):
     cfg = apply_eval_overrides(cfg, args)
 
     if args.dry_run:
-        out_dir = cfg.setdefault("logging", {}).get("output_dir", "outputs/llada21_hard/")
+        out_dir = cfg.setdefault("logging", {}).get("output_dir", "outputs/paper_final/")
         os.makedirs(out_dir, exist_ok=True)
         print(f"[DryRun] Config parsed OK. Output dir ready: {out_dir}")
         return None
@@ -638,7 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     train_parser = subparsers.add_parser("train", help="Run PRISM, V2 warm-start, or GRPO training.")
-    train_parser.add_argument("--config", type=str, default="configs/llada21_hard.yaml", help="Path to YAML config file.")
+    train_parser.add_argument("--config", type=str, default="configs/paper.yaml", help="Path to YAML config file.")
     train_parser.add_argument("--stage", type=str, choices=["prism", "warmstart", "grpo"], required=True, help="Training stage to run.")
     train_parser.add_argument("--resume", type=str, default=None, help="Resume GRPO training from checkpoint or use 'auto'.")
     train_parser.set_defaults(func=run_train_command)
@@ -648,7 +648,7 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.set_defaults(func=run_eval_command)
 
     preflight_parser = subparsers.add_parser("preflight", help="Run environment and runtime checks.")
-    preflight_parser.add_argument("--config", default="configs/llada21_hard.yaml", help="YAML config path.")
+    preflight_parser.add_argument("--config", default="configs/paper.yaml", help="YAML config path.")
     preflight_parser.add_argument("--strict_moe", action="store_true", help="Fail if required MoE ops are missing.")
     preflight_parser.set_defaults(
         func=lambda args: print(json.dumps(run_preflight(args.config, strict_moe=args.strict_moe), indent=2))
