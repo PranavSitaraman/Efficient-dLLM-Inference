@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:4
 #SBATCH --mem=512G
 #SBATCH --cpus-per-task=32
-#SBATCH --time=4:00:00
+#SBATCH --time=8:00:00
 #SBATCH --job-name=aoae_repro
 #SBATCH --partition=kempner_h100
 #SBATCH --account=kempner_sham_lab

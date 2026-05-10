@@ -7,7 +7,7 @@
     "humaneval": "configs/eval_humaneval.yaml"
   },
   "ablation_config": "configs/ablation.yaml",
-  "checkpoint": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/v4_grpo_quality_balanced/policy_best.pt",
+  "checkpoint": null,
   "max_samples": 10,
   "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final",
   "stages": [
@@ -23,31 +23,13 @@
       ]
     },
     {
-      "stage": "gsm8k_trained",
-      "config": "configs/eval_gsm8k.yaml",
-      "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/gsm8k/trained",
-      "max_samples": 10,
-      "checkpoint": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/v4_grpo_quality_balanced/policy_best.pt",
-      "skip_baselines": false,
-      "num_results": 9
-    },
-    {
       "stage": "gsm8k_notrain",
       "config": "configs/eval_gsm8k.yaml",
       "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/gsm8k/notrain",
       "max_samples": 10,
       "checkpoint": null,
-      "skip_baselines": true,
-      "num_results": 1
-    },
-    {
-      "stage": "math500_trained",
-      "config": "configs/eval_math500.yaml",
-      "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/math500/trained",
-      "max_samples": 10,
-      "checkpoint": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/v4_grpo_quality_balanced/policy_best.pt",
       "skip_baselines": false,
-      "num_results": 9
+      "num_results": 6
     },
     {
       "stage": "math500_notrain",
@@ -55,17 +37,8 @@
       "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/math500/notrain",
       "max_samples": 10,
       "checkpoint": null,
-      "skip_baselines": true,
-      "num_results": 1
-    },
-    {
-      "stage": "humaneval_trained",
-      "config": "configs/eval_humaneval.yaml",
-      "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/humaneval/trained",
-      "max_samples": 10,
-      "checkpoint": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/v4_grpo_quality_balanced/policy_best.pt",
       "skip_baselines": false,
-      "num_results": 9
+      "num_results": 6
     },
     {
       "stage": "humaneval_notrain",
@@ -73,17 +46,8 @@
       "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/humaneval/notrain",
       "max_samples": 10,
       "checkpoint": null,
-      "skip_baselines": true,
-      "num_results": 1
-    },
-    {
-      "stage": "ablation_trained",
-      "config": "configs/ablation.yaml",
-      "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/ablations/trained",
-      "max_samples": 10,
-      "checkpoint": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/v4_grpo_quality_balanced/policy_best.pt",
       "skip_baselines": false,
-      "num_results": 8
+      "num_results": 6
     },
     {
       "stage": "ablation_notrain",
@@ -91,8 +55,8 @@
       "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/ablations/notrain",
       "max_samples": 10,
       "checkpoint": null,
-      "skip_baselines": true,
-      "num_results": 1
+      "skip_baselines": false,
+      "num_results": 5
     },
     {
       "stage": "comparison_table",
