@@ -62,7 +62,7 @@ evaluation:
     - llada21_speed_mode
     - llada21_quality_mode
   speculative_sweep:
-    enabled: true
+    enabled: false
     points:
       - name: notrain_tau0.5_lossy
         policy_temperature: 0.5
