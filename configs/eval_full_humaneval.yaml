@@ -1,0 +1,113 @@
+# Full eval: any-order baselines + AOAE no-train (DefaultPolicy) on HumanEval (164 samples).
+# Baselines: llada21_speed_anyorder, llada21_quality_anyorder.
+# AOAE no-train: 2 tau sweep points (uses DefaultPolicy).
+# Scoring: execution-based pass@1 via sandboxed subprocess.
+#
+# Run with:
+#   sbatch --partition=seas_gpu --account=sitanc_lab --gres=gpu:nvidia_h200:1 --mem=128G \
+#     --cpus-per-task=8 --time=6:00:00 logs/humaneval_%j.out \
+#     --wrap "python3 -m aoae.cli eval --config configs/eval_full_humaneval.yaml"
+extends: paper_smoke.yaml
+phase_a_v2: true
+stable_cache_enabled: false
+feature_mode: v5_hybrid
+phase_a_v2_config:
+  feature_mode: v5_hybrid
+  hidden_dim: 2048
+  target_u_rate: 0.125
+  target_r_rate: 0.02
+policy:
+  d_model: 128
+  n_layers: 1
+  n_heads: 4
+  dropout: 0.0
+  feature_mode: v5_hybrid
+  hidden_dim: 2048
+  target_u_rate: 0.125
+  target_r_rate: 0.02
+base_model:
+  lossless_verification: false
+cache:
+  enabled: false
+  stable_kv_cache: false
+grpo:
+  enabled: false
+  train_heads: ["unmask", "remask"]
+  include_heads_in_logprob: ["unmask", "remask"]
+  unmask_scope: drafter
+  remask_scope: verifier
+inference:
+  steps: 256
+  # HumanEval solutions: p95 ≈ 124 tokens, max ≈ 247 tokens → 512 is safe headroom.
+  gen_length: 512
+  speculative_schedule: aoae
+  max_unmask_fraction_per_step: 0.125
+  disable_remask: false
+  primary_agree_threshold: 0.5
+  verifier:
+    use_prism_score: true
+    acceptance_mode: argmax_match
+  drafter:
+    run_on_verifier: never
+    aux_compute_ratio: 0.0
+    fast_path: false
+  positional_cache:
+    enabled: false
+  verifier_schedule:
+    mode: candidate_budget
+    draft_token_budget: 8
+    max_draft_microsteps: 3
+data:
+  eval_dataset: openai/openai_humaneval
+  eval_split: test
+  eval_max_samples: 164   # full HumanEval test set
+  # Prompt is the Python function signature + docstring; no math suffix needed.
+  math_prompt_style: raw
+  # Chat template wraps the code prompt in a user turn — correct for instruction-tuned LLaDA.
+  use_chat_template: auto
+  # HumanEval prompts: p95 ≈ 261 tokens; 384 gives comfortable headroom.
+  max_prompt_len: 384
+  max_answer_len: 512
+evaluation:
+  task_type: code
+  generation_mode_filter: any_order
+  # Execution sandbox settings (per-sample subprocess).
+  # HumanEval test harnesses use only stdlib; 10s wall-clock is generous.
+  code:
+    timeout_sec: 10.0
+    cpu_time_limit_sec: 5
+    memory_limit_mb: 1024
+  baseline_methods:
+    - llada21_speed_anyorder
+    - llada21_quality_anyorder
+  speculative_sweep:
+    enabled: true
+    points:
+      - name: notrain_tau0.5_lossy
+        policy_temperature: 0.5
+        overrides:
+          base_model.lossless_verification: false
+          inference.speculative_schedule: aoae
+          inference.verifier_schedule.mode: candidate_budget
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.5
+          inference.max_unmask_fraction_per_step: 0.125
+          inference.disable_remask: false
+      - name: notrain_tau1.0_lossy
+        policy_temperature: 1.0
+        overrides:
+          base_model.lossless_verification: false
+          inference.speculative_schedule: aoae
+          inference.verifier_schedule.mode: candidate_budget
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.5
+          inference.max_unmask_fraction_per_step: 0.125
+          inference.disable_remask: false
+hardware:
+  tp_size: 1
+logging:
+  run_name: eval_full_humaneval
+  output_dir: outputs/eval_full_humaneval/
+  use_wandb: false
