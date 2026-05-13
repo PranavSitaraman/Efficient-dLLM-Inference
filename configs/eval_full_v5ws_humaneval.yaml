@@ -1,0 +1,123 @@
+# Full eval: V5 warmstart checkpoint on HumanEval (164 samples).
+# Checkpoint: outputs/v5_warmstart_hybrid/policy_final.pt (warmstart only, no GRPO).
+# Any-order mode, 2 tau (0.5, 1.0) soft only = 2 points. No baselines (run separately via eval_full_humaneval.yaml).
+# Run with: sbatch sbatch_v5ws_humaneval.sh
+extends: paper_smoke.yaml
+phase_a_v2: true
+stable_cache_enabled: false
+feature_mode: v5_hybrid
+phase_a_v2_config:
+  feature_mode: v5_hybrid
+  hidden_dim: 2048
+  target_u_rate: 0.125
+  target_r_rate: 0.02
+policy:
+  d_model: 128
+  n_layers: 1
+  n_heads: 4
+  dropout: 0.0
+  feature_mode: v5_hybrid
+  hidden_dim: 2048
+  target_u_rate: 0.125
+  target_r_rate: 0.02
+base_model:
+  lossless_verification: false
+cache:
+  enabled: false
+  stable_kv_cache: false
+grpo:
+  enabled: false
+  train_heads: ["unmask", "remask"]
+  include_heads_in_logprob: ["unmask", "remask"]
+  unmask_scope: drafter
+  remask_scope: verifier
+inference:
+  steps: 256
+  gen_length: 512
+  speculative_schedule: aoae
+  max_unmask_fraction_per_step: 0.125
+  disable_remask: false
+  primary_agree_threshold: 0.92
+  verifier:
+    use_prism_score: true
+    acceptance_mode: argmax_match
+  drafter:
+    run_on_verifier: never
+    aux_compute_ratio: 0.0
+    fast_path: false
+  positional_cache:
+    enabled: false
+  verifier_schedule:
+    mode: candidate_budget
+    draft_token_budget: 8
+    max_draft_microsteps: 3
+data:
+  eval_dataset: openai/openai_humaneval
+  eval_split: test
+  eval_max_samples: 164
+  math_prompt_style: raw
+  use_chat_template: auto
+  max_prompt_len: 384
+  max_answer_len: 512
+evaluation:
+  task_type: code
+  generation_mode_filter: any_order
+  code:
+    timeout_sec: 10.0
+    cpu_time_limit_sec: 5
+    memory_limit_mb: 1024
+  baseline_methods: []
+  speculative_sweep:
+    enabled: true
+    points:
+      - name: v5ws_tau0.5_soft
+        policy_temperature: 0.5
+        overrides:
+          base_model.lossless_verification: false
+          inference.speculative_schedule: aoae
+          inference.verifier_schedule.mode: candidate_budget
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.92
+          inference.max_unmask_fraction_per_step: 0.125
+          inference.disable_remask: false
+      - name: v5ws_tau1.0_soft
+        policy_temperature: 1.0
+        overrides:
+          base_model.lossless_verification: false
+          inference.speculative_schedule: aoae
+          inference.verifier_schedule.mode: candidate_budget
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.92
+          inference.max_unmask_fraction_per_step: 0.125
+          inference.disable_remask: false
+      # Aggressive acceptance (agree_thr=0.5) — compare vs no-train 37.8% @ 74 TPS
+      - name: v5ws_tau0.5_soft_agg05
+        policy_temperature: 0.5
+        overrides:
+          base_model.lossless_verification: false
+          inference.speculative_schedule: aoae
+          inference.verifier_schedule.mode: candidate_budget
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.5
+          inference.max_unmask_fraction_per_step: 0.125
+          inference.disable_remask: false
+      - name: v5ws_tau0.5_hard_agg05
+        policy_temperature: 0.5
+        overrides:
+          base_model.lossless_verification: true
+          inference.speculative_schedule: aoae
+          inference.verifier_schedule.mode: candidate_budget
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.5
+          inference.max_unmask_fraction_per_step: 0.125
+          inference.disable_remask: false
+hardware:
+  tp_size: 1
+logging:
+  run_name: eval_full_v5ws_humaneval
+  output_dir: outputs/eval_full_v5ws_humaneval/
+  use_wandb: false

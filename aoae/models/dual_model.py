@@ -1,0 +1,466 @@
+"""
+Dual-Model MoE Wrapper for Speculative Diffusion (paper §3.7).
+
+Wraps a SINGLE LLaDA2.1-mini (16B MoE) model and toggles its routing:
+  - Hard routing (auxiliary mode): top-k experts, ~1.4B active, fast
+  - Soft routing (primary mode):  native hard top-k plus tau-controlled
+    extra experts up to K_soft, slower but more expressive
+
+The auxiliary pass produces fast draft predictions whose KV states are
+pre-cached; the primary pass verifies and refines, reusing cached KV states
+where the two routing modes agree on the same token prediction.
+
+Only ONE copy of the 16B MoE backbone is loaded; routing is toggled in-place.
+"""
+
+import torch
+import torch.nn as nn
+from typing import Tuple, Optional, List
+from dataclasses import dataclass
+
+from .base_model import LLaDABaseModel, _detect_backend
+from .soft_moe import (
+    patch_model_with_soft_routing,
+    set_hard_routing,
+    set_soft_routing,
+    set_routing_temperature,
+    set_soft_topk,
+)
+
+
+@dataclass
+class DualModelOutput:
+    """Output from a dual-model forward pass."""
+    primary_logits: torch.Tensor      # [B, L, V] from soft-routed primary
+    auxiliary_logits: torch.Tensor     # [B, L, V] from hard-routed auxiliary
+    agreement: torch.Tensor           # [B, L] bool: argmax match
+    agreement_rate: float             # scalar: mean agreement across batch
+    primary_hidden: Optional[torch.Tensor] = None    # [B, L, D] last hidden, primary
+    auxiliary_hidden: Optional[torch.Tensor] = None  # [B, L, D] last hidden, aux (V5)
+    primary_hidden_states: Optional[List[torch.Tensor]] = None  # [N][B, L, D]
+    primary_attentions: Optional[List[torch.Tensor]] = None
+    primary_layer_kv: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
+
+
+def _select_dual_base_backend(cfg: dict) -> str:
+    """Resolve the concrete backend used to load the single shared model.
+
+    Dual mode toggles MoE routing in-place, so it only works with LLaDA2-style
+    MoE backbones. Use the normal backend auto-detection rules unless the user
+    explicitly sets ``base_model.dual_backend``.
+    """
+    model_cfg = _deep_copy_cfg(cfg)["base_model"]
+    requested = model_cfg.get("dual_backend")
+    if requested is None:
+        auto_cfg = {"base_model": dict(model_cfg)}
+        auto_cfg["base_model"]["backend"] = "auto"
+        requested = _detect_backend(model_cfg["name_or_path"], auto_cfg)
+
+    if requested == "soft_moe":
+        # Dual mode starts from hard routing, then patches soft routing itself.
+        return "dinfer"
+    if requested != "dinfer":
+        raise ValueError(
+            "DualModelWrapper requires an MoE-capable backend because it toggles "
+            f"expert routing in-place, but resolved backend {requested!r}. "
+            "Use an inclusionAI/LLaDA2.X model or set base_model.dual_backend='dinfer'."
+        )
+    return "dinfer"
+
+
+class DualModelWrapper(nn.Module):
+    """Single-model wrapper that toggles between hard and soft MoE routing.
+
+    Loads ONE LLaDA2.X MoE model via the MoE-capable backend, patches its gates with
+    SoftMoERouter, then switches routing mode per forward pass:
+      - auxiliary_forward(): hard routing (~1.4B active, fast)
+      - primary_forward():  hard-top-k-preserving widened routing
+        (controlled by tau_r and soft_topk)
+
+    This halves GPU memory compared to loading two separate model copies.
+
+    Args:
+        cfg: full config dict with base_model.routing_temperature for τ_r.
+    """
+
+    def __init__(self, cfg: dict):
+        super().__init__()
+
+        self._cfg = cfg
+        self.tau_r = cfg["base_model"].get("routing_temperature", 0.01)
+        self._soft_topk = cfg["base_model"].get("soft_topk", None)
+        self._lossless = cfg["base_model"].get("lossless_verification", False)
+
+        base_cfg = _deep_copy_cfg(cfg)
+        base_cfg["base_model"]["backend"] = _select_dual_base_backend(cfg)
+        self._model = LLaDABaseModel(base_cfg)
+
+        patch_model_with_soft_routing(
+            self._model.model, tau_r=self.tau_r, soft_topk=self._soft_topk,
+        )
+        set_hard_routing(self._model.model)
+
+        # Expose shared attributes
+        self.tokenizer = self._model.tokenizer
+        self.mask_id = self._model.mask_id
+        self.vocab_size = self._model.vocab_size
+        self.hidden_dim = self._model.hidden_dim
+
+    def get_embedding_weight(self) -> torch.Tensor:
+        """Return [V, D] token embedding matrix."""
+        return self._model.get_embedding_weight()
+
+    @property
+    def device(self):
+        return self._model.device
+
+    @property
+    def dtype(self):
+        return self._model.dtype
+
+    def to(self, device):
+        self._model = self._model.to(device)
+        return self
+
+    def close(self) -> None:
+        self._model.close()
+
+    def set_tau_r(self, tau_r: float) -> None:
+        """Update routing temperature on the fly (for sweeps)."""
+        self.tau_r = tau_r
+        set_routing_temperature(self._model.model, tau_r)
+
+    def set_soft_topk(self, soft_topk: int) -> None:
+        """Update the number of active experts for soft routing."""
+        self._soft_topk = soft_topk
+        set_soft_topk(self._model.model, soft_topk)
+
+    # ------------------------------------------------------------------
+    @torch.no_grad()
+    def auxiliary_forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
+        """Fast forward: hard-routed MoE (~1.4B active) → [B, L, V] logits."""
+        set_hard_routing(self._model.model)
+        return self._model.forward(input_ids)
+
+    @torch.no_grad()
+    def auxiliary_forward_resp(
+        self, input_ids: torch.LongTensor, resp_slice: slice,
+    ) -> torch.Tensor:
+        """Fast forward returning logits only for the requested response span."""
+        return self.auxiliary_forward(input_ids)[:, resp_slice, :]
+
+    @torch.no_grad()
+    def primary_forward(self, input_ids: torch.LongTensor) -> torch.Tensor:
+        """Primary forward with softened / widened routing → [B, L, V] logits."""
+        if self._lossless:
+            return self.auxiliary_forward(input_ids)
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward(input_ids)
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def primary_forward_resp(
+        self, input_ids: torch.LongTensor, resp_slice: slice,
+    ) -> torch.Tensor:
+        """Primary forward returning logits only for the requested response span."""
+        return self.primary_forward(input_ids)[:, resp_slice, :]
+
+    @torch.no_grad()
+    def primary_forward_with_cache(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, object]:
+        """Soft-routed forward returning logits and a reusable KV cache."""
+        if self._lossless:
+            return self.auxiliary_forward_with_cache(input_ids)
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_with_cache(input_ids)
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def primary_forward_replace_with_cache(
+        self,
+        full_input_ids: torch.LongTensor,
+        replace_slice: slice,
+        past_key_values: object,
+    ) -> Tuple[torch.Tensor, object]:
+        """Soft-routed partial recompute against an existing KV cache."""
+        if self._lossless:
+            return self.auxiliary_forward_replace_with_cache(full_input_ids, replace_slice, past_key_values)
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_replace_with_cache(
+                full_input_ids,
+                replace_slice,
+                past_key_values,
+            )
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def auxiliary_forward_with_hidden(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Hard-routed forward → (logits [B,L,V], h_final [B,L,D]).
+
+        Used by V5 to supply the drafter's last hidden state to the u_t head
+        without requiring an extra primary forward pass on drafter microsteps.
+        """
+        set_hard_routing(self._model.model)
+        return self._model.forward_with_hidden(input_ids)
+
+    @torch.no_grad()
+    def auxiliary_forward_with_cache(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, object]:
+        """Hard-routed forward returning logits and a reusable KV cache."""
+        set_hard_routing(self._model.model)
+        return self._model.forward_with_cache(input_ids)
+
+    @torch.no_grad()
+    def auxiliary_forward_replace_with_cache(
+        self,
+        full_input_ids: torch.LongTensor,
+        replace_slice: slice,
+        past_key_values: object,
+    ) -> Tuple[torch.Tensor, object]:
+        """Hard-routed partial recompute against an existing KV cache."""
+        set_hard_routing(self._model.model)
+        return self._model.forward_replace_with_cache(
+            full_input_ids,
+            replace_slice,
+            past_key_values,
+        )
+
+    @torch.no_grad()
+    def primary_forward_with_hidden(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Soft-routed forward → (logits [B,L,V], hidden [B,L,D])."""
+        if self._lossless:
+            set_hard_routing(self._model.model)
+            return self._model.forward_with_hidden(input_ids)
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_with_hidden(input_ids)
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def primary_forward_with_all_hidden(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        """Soft-routed forward → (logits [B,L,V], all hidden states)."""
+        if self._lossless:
+            set_hard_routing(self._model.model)
+            return self._model.forward_with_all_hidden(input_ids)
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_with_all_hidden(input_ids)
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def primary_forward_with_kspec(
+        self,
+        full_input_ids: torch.LongTensor,
+        resp_slice: slice,
+        aux_past_kv: object,
+        k_spec_mask: torch.BoolTensor,
+    ) -> Tuple[torch.Tensor, object]:
+        """Soft-routed primary forward with the legacy accepted-reuse skip hint.
+
+        This is not the canonical verifier path. It is retained for the
+        accepted-reuse ablation, where positions already considered reusable
+        are skipped and only contiguous non-skipped clusters are forwarded.
+
+        Caller must merge agreed positions after return:
+            resp_logits = torch.where(k_spec_mask[..., None], aux_logits, returned)
+
+        Returns:
+            logits_fresh:  [B, L_gen, V] — primary logits at non-agreed positions;
+                           zeros at agreed positions (caller fills with aux_logits).
+            kv_updated:    hybrid KV state (aux at K_spec positions, primary elsewhere).
+        """
+        if self._lossless:
+            return self.auxiliary_forward_replace_with_cache(full_input_ids, resp_slice, aux_past_kv)
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_with_kspec_cache(
+                full_input_ids, resp_slice, aux_past_kv, k_spec_mask,
+            )
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def primary_forward_with_stable_cache(
+        self,
+        full_input_ids: torch.LongTensor,
+        resp_slice: slice,
+        stable_kv: object,
+        stable_skip_mask: torch.BoolTensor,
+    ) -> Tuple[torch.Tensor, object]:
+        """Soft-routed primary forward skipping already-stable (unmasked, unchanged) positions.
+
+        Reuses stable_kv at positions marked True in stable_skip_mask.
+        Only contiguous clusters of active (False) positions are forwarded through the
+        primary model — giving real wall-clock savings without any drafter overhead.
+
+        Args:
+            full_input_ids:  [B, L_total] current sequence.
+            resp_slice:      slice(P, P+L_gen) — response region.
+            stable_kv:       persistent primary KV cache from the previous step.
+            stable_skip_mask:[B, L_gen] bool — True = stable, skip recompute.
+
+        Returns:
+            logits_fresh:  [B, L_gen, V] — primary logits at active positions;
+                           zeros at stable positions (unused: already unmasked).
+            kv_updated:    stable_kv updated at active positions.
+        """
+        if self._lossless:
+            return self.auxiliary_forward_replace_with_cache(full_input_ids, resp_slice, stable_kv)
+        set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_with_kspec_cache(
+                full_input_ids, resp_slice, stable_kv, stable_skip_mask,
+            )
+        finally:
+            set_hard_routing(self._model.model)
+
+    @torch.no_grad()
+    def primary_forward_with_diagnostics(
+        self, input_ids: torch.LongTensor,
+    ) -> Tuple[
+        torch.Tensor,
+        List[torch.Tensor],
+        Optional[List[torch.Tensor]],
+        Optional[List[Tuple[torch.Tensor, torch.Tensor]]],
+    ]:
+        """Soft-routed forward with optional attention/KV diagnostics."""
+        if self._lossless:
+            set_hard_routing(self._model.model)
+        else:
+            set_soft_routing(self._model.model)
+        try:
+            return self._model.forward_with_diagnostics(
+                input_ids,
+                output_attentions=True,
+                output_kv=True,
+            )
+        finally:
+            set_hard_routing(self._model.model)
+
+    # ------------------------------------------------------------------
+    @torch.no_grad()
+    def dual_forward(
+        self,
+        input_ids: torch.LongTensor,
+        need_hidden: bool = False,
+        need_all_hidden: bool = False,
+    ) -> DualModelOutput:
+        """Run hard auxiliary then soft primary, compute agreement.
+
+        Args:
+            input_ids: [B, L] token ids.
+            need_hidden: if True, also return primary hidden states.
+
+        Returns:
+            DualModelOutput with logits from both routing modes and agreement.
+        """
+        # Phase 0: Auxiliary draft (hard routing, fast)
+        aux_logits = self.auxiliary_forward(input_ids)
+
+        # Phase 1: Primary verification (soft routing, slow)
+        if need_all_hidden:
+            pri_logits, pri_hidden_states, pri_attentions, pri_layer_kv = self.primary_forward_with_diagnostics(input_ids)
+            pri_hidden = pri_hidden_states[-1]
+        elif need_hidden:
+            pri_logits, pri_hidden = self.primary_forward_with_hidden(input_ids)
+            pri_hidden_states = None
+            pri_attentions = None
+            pri_layer_kv = None
+        else:
+            pri_logits = self.primary_forward(input_ids)
+            pri_hidden = None
+            pri_hidden_states = None
+            pri_attentions = None
+            pri_layer_kv = None
+
+        # Compute agreement: positions where argmax tokens match
+        aux_tokens = aux_logits.argmax(dim=-1)  # [B, L]
+        pri_tokens = pri_logits.argmax(dim=-1)  # [B, L]
+        agreement = (aux_tokens == pri_tokens)   # [B, L] bool
+        agreement_rate = agreement.float().mean().item()
+
+        return DualModelOutput(
+            primary_logits=pri_logits,
+            auxiliary_logits=aux_logits,
+            agreement=agreement,
+            agreement_rate=agreement_rate,
+            primary_hidden=pri_hidden,
+            primary_hidden_states=pri_hidden_states,
+            primary_attentions=pri_attentions,
+            primary_layer_kv=pri_layer_kv,
+        )
+
+    # ------------------------------------------------------------------
+    @torch.no_grad()
+    def dual_forward_resp(
+        self,
+        input_ids: torch.LongTensor,
+        resp_slice: slice,
+        need_hidden: bool = False,
+        need_all_hidden: bool = False,
+    ) -> DualModelOutput:
+        """Dual forward, returning logits only for the response region.
+
+        This is a convenience for inference loops where we only need
+        logits for positions [P:P+L_gen].
+        """
+        out = self.dual_forward(
+            input_ids,
+            need_hidden=need_hidden,
+            need_all_hidden=need_all_hidden,
+        )
+        out.primary_logits = out.primary_logits[:, resp_slice, :]
+        out.auxiliary_logits = out.auxiliary_logits[:, resp_slice, :]
+        out.agreement = out.agreement[:, resp_slice]
+        out.agreement_rate = out.agreement.float().mean().item()
+        if out.primary_hidden is not None:
+            out.primary_hidden = out.primary_hidden[:, resp_slice, :]
+        if out.primary_hidden_states is not None:
+            out.primary_hidden_states = [h[:, resp_slice, :] for h in out.primary_hidden_states]
+        if out.primary_attentions is not None:
+            sliced_attn = []
+            for attn in out.primary_attentions:
+                if attn.ndim == 4:
+                    sliced_attn.append(attn[:, :, resp_slice, :])
+                elif attn.ndim == 3:
+                    sliced_attn.append(attn[:, resp_slice, :])
+                else:
+                    sliced_attn.append(attn)
+            out.primary_attentions = sliced_attn
+        if out.primary_layer_kv is not None:
+            sliced_kv = []
+            for key, value in out.primary_layer_kv:
+                if key.ndim == 4:
+                    sliced_key = key[:, :, resp_slice, :]
+                    sliced_value = value[:, :, resp_slice, :]
+                elif key.ndim == 3:
+                    sliced_key = key[:, resp_slice, :]
+                    sliced_value = value[:, resp_slice, :]
+                else:
+                    sliced_key = key
+                    sliced_value = value
+                sliced_kv.append((sliced_key, sliced_value))
+            out.primary_layer_kv = sliced_kv
+        return out
+
+
+def _deep_copy_cfg(cfg: dict) -> dict:
+    """Deep copy a config dict."""
+    import copy
+    return copy.deepcopy(cfg)

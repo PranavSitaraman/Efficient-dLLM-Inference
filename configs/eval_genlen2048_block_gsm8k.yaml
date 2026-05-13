@@ -1,0 +1,72 @@
+# One-off eval: block-mode baselines on GSM8K with gen_length=2048 (matching LLaDA 2.1 official).
+# Purpose: compare TPF/TPS/accuracy vs our standard gen_length=512 run to check faithfulness.
+# Only runs baselines (no AOAE sweep) — we just want to understand the gen_length effect.
+# Standard LLaDA 2.1 official thresholds retained from our existing speed/quality mode settings.
+# Run with: sbatch --partition=seas_gpu --account=sitanc_lab --gres=gpu:1 --mem=128G
+#   --cpus-per-task=8 --time=12:00:00 slurm/eval.sh configs/eval_genlen2048_block_gsm8k.yaml
+extends: paper_smoke.yaml
+phase_a_v2: true
+stable_cache_enabled: false
+feature_mode: v5_hybrid
+phase_a_v2_config:
+  feature_mode: v5_hybrid
+  hidden_dim: 2048
+  target_u_rate: 0.125
+  target_r_rate: 0.02
+policy:
+  d_model: 128
+  n_layers: 1
+  n_heads: 4
+  dropout: 0.0
+  feature_mode: v5_hybrid
+  hidden_dim: 2048
+  target_u_rate: 0.125
+  target_r_rate: 0.02
+base_model:
+  lossless_verification: false
+cache:
+  enabled: false
+  stable_kv_cache: false
+grpo:
+  enabled: false
+  train_heads: ["unmask", "remask"]
+  include_heads_in_logprob: ["unmask", "remask"]
+  unmask_scope: drafter
+  remask_scope: verifier
+inference:
+  steps: 256
+  gen_length: 2048  # LLaDA 2.1 official default (vs our standard 512)
+  speculative_schedule: aoae
+  max_unmask_fraction_per_step: 0.125
+  disable_remask: false
+  primary_agree_threshold: 0.5
+  verifier:
+    use_prism_score: true
+    acceptance_mode: argmax_match
+  drafter:
+    run_on_verifier: never
+    aux_compute_ratio: 0.0
+    fast_path: false
+  positional_cache:
+    enabled: false
+  verifier_schedule:
+    mode: candidate_budget
+    draft_token_budget: 8
+    max_draft_microsteps: 3
+data:
+  eval_dataset: openai/gsm8k
+  eval_split: test
+  eval_max_samples: 1319
+evaluation:
+  generation_mode_filter: all
+  baseline_methods:
+    - llada21_speed_mode
+    - llada21_quality_mode
+  speculative_sweep:
+    enabled: false  # baselines only — just checking gen_length effect
+hardware:
+  tp_size: 1
+logging:
+  run_name: eval_genlen2048_block_gsm8k
+  output_dir: outputs/eval_genlen2048_block_gsm8k/
+  use_wandb: false

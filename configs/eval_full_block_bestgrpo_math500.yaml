@@ -1,0 +1,41 @@
+# Blockwise evaluation of best RL-GRPO model (V5 kl=0.03) on MATH-500
+# Forces AOAE to operate in blockwise mode like LLaDA
+
+defaults:
+  - base_config: v5_hybrid
+  - _self_
+
+# Model checkpoint - best performing GRPO model
+model:
+  checkpoint_path: /n/holylabs/sitanc_lab/Users/gye/ckpts/v5_hybrid_grpo_kl0.03_tau0.5_lossy
+
+# Evaluation dataset
+dataset:
+  name: HuggingFaceH4/MATH-500
+  eval_split: test
+  
+# Generation parameters
+generation:
+  max_new_tokens: 2048
+  temperature: 0.7
+  top_p: 0.9
+  do_sample: true
+  
+# Blockwise decoding mode (not any-order)
+generation_mode_filter: block
+
+# Force AOAE policy to operate in blockwise mode
+policy:
+  block_wise:
+    enabled: true
+
+# Evaluation settings
+eval:
+  batch_size: 1
+  num_samples: null  # full dataset
+  tp_size: 1
+  metrics: ["accuracy", "tps", "eff_flops"]
+  
+# Scoring
+scoring:
+  scorer: math500_layered

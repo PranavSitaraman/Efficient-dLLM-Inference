@@ -1,0 +1,50 @@
+extends: paper.yaml
+
+grpo:
+  group_size: 2
+  max_steps: 2
+  batch_size: 1
+  grad_accum_steps: 1
+  warmup_steps: 0
+  save_every: 1
+  warm_start_from: null
+  warm_start_strict: false
+  rollout_steps: 8
+  rollout_gen_length: 64
+
+warmstart:
+  max_steps: 2
+  max_samples: 4
+
+prism:
+  train_samples: 4
+  epochs: 1
+  batch_size: 1
+
+inference:
+  steps: 8
+  gen_length: 64
+  llada21_official:
+    gen_length: 64
+
+data:
+  train_max_samples: 8
+  eval_max_samples: 2
+  max_prompt_len: 256
+  max_answer_len: 64
+
+evaluation:
+  save_predictions: false
+  max_saved_predictions: 0
+  baseline_methods: []
+  speculative_sweep:
+    enabled: false
+
+hardware:
+  tp_size: 1
+  dp_size: 1
+
+logging:
+  run_name: "paper_smoke"
+  output_dir: "outputs/paper_final/smoke/"
+  use_wandb: false
