@@ -4,9 +4,9 @@
 #   - quality_balanced sweep point (no trained policy, heuristic fallback)
 #   - trained policy at quality_balanced inference settings
 #
-# Inference defaults match the training rollout environment (lossless, agree=0.5)
+# Inference defaults match the training rollout environment (hard, agree=0.5)
 # so the trained u_t / r_t heads are active.  The quality_balanced sweep point
-# overrides lossless_verification and primary_agree_threshold, so that point
+# overrides hard_verification and primary_agree_threshold, so that point
 # runs in a comparable operating regime to the paper baseline.
 #
 # grpo.train_heads = [unmask, remask] + scope flags ensure _apply_frozen_action_heads

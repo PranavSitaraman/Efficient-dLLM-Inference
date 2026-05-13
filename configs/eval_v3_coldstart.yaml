@@ -1,5 +1,5 @@
 # Eval config for V3 cold-start GRPO checkpoint (AOAEPolicy, expert-steered).
-# Uses same inference environment as v3 training (lossless, agree=0.5).
+# Uses same inference environment as v3 training (hard, agree=0.5).
 extends: paper_smoke.yaml
 
 # NOT phase_a_v2 — this is the standard AOAEPolicy with 4 heads

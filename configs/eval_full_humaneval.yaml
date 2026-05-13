@@ -83,7 +83,7 @@ evaluation:
   speculative_sweep:
     enabled: true
     points:
-      - name: notrain_tau0.5_lossy
+      - name: notrain_tau0.5_soft
         policy_temperature: 0.5
         overrides:
           base_model.lossless_verification: false
@@ -94,7 +94,7 @@ evaluation:
           inference.primary_agree_threshold: 0.5
           inference.max_unmask_fraction_per_step: 0.125
           inference.disable_remask: false
-      - name: notrain_tau1.0_lossy
+      - name: notrain_tau1.0_soft
         policy_temperature: 1.0
         overrides:
           base_model.lossless_verification: false

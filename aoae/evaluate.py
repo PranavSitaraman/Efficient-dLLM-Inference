@@ -1043,36 +1043,45 @@ def evaluate_baseline(
                 )
             elif method == "llada21_speed_anyorder":
                 s = resolve_llada21_official_settings(cfg, mode="speed")
-                # Semi-any-order LLaDA2.1 baseline.  Decodes the response in
-                # response-local blocks of ``data.any_order_block_length``
-                # tokens (default 128) — wider than the canonical block
-                # baseline (32) so the model gets multi-token bidirectional
-                # context but narrower than full bidirectional, which is OOD.
-                # ``suppress_eos=True`` blocks the response[0]→EOS collapse
-                # documented above.
-                with _override_block_length(cfg, _semi_any_order_block_length(cfg)):
+                _eos_steady = int(
+                    cfg.get("data", {}).get("eos_steady_passes", 3)
+                )
+                _ao_block_len = _semi_any_order_block_length(cfg)
+                # Scale max_steps proportionally to block size so forward-passes
+                # per output token matches the canonical block=32 baseline.
+                _ao_steps = max(s["max_post_steps"],
+                                s["max_post_steps"] * _ao_block_len // 32)
+                with _override_block_length(cfg, _ao_block_len):
                     output_ids = block_smode_decode(
                         base_model, prompt_ids, cfg,
                         tau_mask=s["threshold"], tau_edit=s["editing_threshold"],
-                        max_steps_per_block=s["max_post_steps"],
+                        max_steps_per_block=_ao_steps,
                         enable_mbe=False,
                         gen_length=s["gen_length"],
-                        eos_early_stop=s["eos_early_stop"],
+                        eos_early_stop=True,
                         stats=decode_stats,
-                        suppress_eos=True,
+                        suppress_eos=False,
+                        eos_steady_passes=_eos_steady,
                     )
             elif method == "llada21_quality_anyorder":
                 s = resolve_llada21_official_settings(cfg, mode="quality")
-                with _override_block_length(cfg, _semi_any_order_block_length(cfg)):
+                _eos_steady = int(
+                    cfg.get("data", {}).get("eos_steady_passes", 3)
+                )
+                _ao_block_len = _semi_any_order_block_length(cfg)
+                _ao_steps = max(s["max_post_steps"],
+                                s["max_post_steps"] * _ao_block_len // 32)
+                with _override_block_length(cfg, _ao_block_len):
                     output_ids = block_smode_decode(
                         base_model, prompt_ids, cfg,
                         tau_mask=s["threshold"], tau_edit=s["editing_threshold"],
-                        max_steps_per_block=s["max_post_steps"],
+                        max_steps_per_block=_ao_steps,
                         enable_mbe=False,
                         gen_length=s["gen_length"],
-                        eos_early_stop=s["eos_early_stop"],
+                        eos_early_stop=True,
                         stats=decode_stats,
-                        suppress_eos=True,
+                        suppress_eos=False,
+                        eos_steady_passes=_eos_steady,
                     )
             elif method == "block_smode":
                 output_ids = block_smode_decode(

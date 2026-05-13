@@ -1,6 +1,6 @@
 # Eval config: v5_warmstart_hybrid under quality_balanced rollout env.
 # Pre-GRPO baseline to see how the warmstart policy behaves under
-# the same environment GRPO will train in (agree=0.92, lossless=false, budget 8/3).
+# the same environment GRPO will train in (agree=0.92, hard=false, budget 8/3).
 # 50 samples, tau 0.5 and 1.0.
 extends: paper_smoke.yaml
 phase_a_v2: true

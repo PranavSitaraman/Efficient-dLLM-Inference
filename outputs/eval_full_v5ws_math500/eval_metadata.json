@@ -1,6 +1,6 @@
 {
   "schema_version": "aoae_eval_v3",
-  "created_at_utc": "2026-05-08T11:17:21.545421+00:00",
+  "created_at_utc": "2026-05-12T05:38:40.605028+00:00",
   "run_name": "eval_full_v5ws_math500",
   "output_dir": "outputs/eval_full_v5ws_math500/",
   "results_path": "outputs/eval_full_v5ws_math500/eval_results.json",
@@ -55,12 +55,10 @@
   "positional_cache_horizon": 4,
   "positional_cache_refresh_budget": 32,
   "speculative_sweep_enabled": true,
-  "speculative_sweep_point_count": 4,
+  "speculative_sweep_point_count": 2,
   "speculative_sweep_points": [
     "v5ws_tau0.5_lossy",
-    "v5ws_tau1.0_lossy",
-    "v5ws_tau0.5_lossless",
-    "v5ws_tau1.0_lossless"
+    "v5ws_tau1.0_lossy"
   ],
   "boundary_head_enabled": false,
   "boundary_num_bins": 8,
@@ -81,18 +79,15 @@
   "save_predictions": true,
   "saved_predictions": 50,
   "max_saved_predictions": 50,
-  "num_results": 4,
-  "host": "holygpu8a31305.rc.fas.harvard.edu",
-  "git_commit": "0c164475737b503e1950cbfb7828bc8b70a0014e",
+  "num_results": 2,
+  "host": "holygpu8a18202.rc.fas.harvard.edu",
+  "git_commit": "84f0fea71c35f16713e1d4c244c8b768de384019",
   "torch_version": "2.8.0+cu128",
   "vllm_version": "0.10.2",
   "transformers_version": "4.57.0",
   "cuda_available": true,
-  "cuda_device_count": 4,
+  "cuda_device_count": 1,
   "cuda_devices": [
-    "NVIDIA A100-SXM4-80GB",
-    "NVIDIA A100-SXM4-80GB",
-    "NVIDIA A100-SXM4-80GB",
-    "NVIDIA A100-SXM4-80GB"
+    "NVIDIA H200"
   ]
 }

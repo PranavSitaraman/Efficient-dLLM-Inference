@@ -1,6 +1,6 @@
 # Eval config: v5_warmstart_hybrid — post-warmstart quality check
 # Mirrors eval_v4_grpo_step100.yaml exactly (same inference settings, agree=0.5,
-# lossless, tau sweep) so results are directly comparable to the best GRPO run.
+# hard, tau sweep) so results are directly comparable to the best GRPO run.
 # Checkpoint auto-resolved from output_dir (policy_final.pt).
 extends: paper_smoke.yaml
 phase_a_v2: true

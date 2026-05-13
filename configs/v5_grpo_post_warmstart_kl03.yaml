@@ -1,6 +1,6 @@
 # V5 GRPO post-warmstart config.
 # Loads the v5_hybrid warm-started policy and fine-tunes with GRPO reward.
-# Quality-balanced rollout env (agree=0.92, lossless=false, budget 8/3).
+# Quality-balanced rollout env (agree=0.92, hard=false, budget 8/3).
 # Stronger KL regularization (kl_coef=0.03) to preserve the strong warmstart prior.
 extends: paper_smoke.yaml
 phase_a_v2: true

@@ -1,7 +1,7 @@
 # Full eval: V5 GRPO v2 kl=0.03 best checkpoint on MATH-500 (500 samples).
 # Checkpoint: outputs/v5_grpo_post_warmstart_kl03_v2/policy_best.pt (kl_coeff=0.03).
 # Blockwise mode: policy.block_wise.enabled=true + aoae_block_policy schedule.
-# 2 tau (0.5, 1.0) x 2 lossless (off/on) = 4 AOAE points. Baselines already in eval_full_block_math500.
+# 2 tau (0.5, 1.0) x 2 hard (off/on) = 4 AOAE points. Baselines already in eval_full_block_math500.
 extends: paper_smoke.yaml
 phase_a_v2: true
 stable_cache_enabled: false
@@ -65,7 +65,7 @@ evaluation:
   speculative_sweep:
     enabled: true
     points:
-      - name: v5kl03_tau0.5_block_lossy
+      - name: v5kl03_tau0.5_block_soft
         policy_temperature: 0.5
         overrides:
           base_model.lossless_verification: false

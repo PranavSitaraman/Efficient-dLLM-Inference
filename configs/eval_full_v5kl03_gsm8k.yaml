@@ -1,6 +1,6 @@
 # Full eval: V5 GRPO v2 kl=0.03 best checkpoint on GSM8K test (1319 samples).
 # Checkpoint: outputs/v5_grpo_post_warmstart_kl03_v2/policy_best.pt (312 GRPO steps, kl_coeff=0.03).
-# Any-order mode, 2 tau (0.5, 1.0) × 2 lossless (off/on) = 4 points. No baselines (run separately).
+# Any-order mode, 2 tau (0.5, 1.0) × 2 hard (off/on) = 4 points. No baselines (run separately).
 # Run with: sbatch --partition=seas_gpu --account=sitanc_lab --gres=gpu:4 --mem=256G
 #   --cpus-per-task=16 --time=12:00:00 slurm/eval.sh configs/eval_full_v5kl03_gsm8k.yaml \
 #   outputs/v5_grpo_post_warmstart_kl03_v2/policy_best.pt
@@ -63,7 +63,7 @@ evaluation:
   speculative_sweep:
     enabled: true
     points:
-      - name: v5kl03_tau0.5_lossy
+      - name: v5kl03_tau0.5_soft
         policy_temperature: 0.5
         overrides:
           base_model.lossless_verification: false
@@ -74,7 +74,7 @@ evaluation:
           inference.primary_agree_threshold: 0.92
           inference.max_unmask_fraction_per_step: 0.125
           inference.disable_remask: false
-      - name: v5kl03_tau1.0_lossy
+      - name: v5kl03_tau1.0_soft
         policy_temperature: 1.0
         overrides:
           base_model.lossless_verification: false
@@ -85,7 +85,7 @@ evaluation:
           inference.primary_agree_threshold: 0.92
           inference.max_unmask_fraction_per_step: 0.125
           inference.disable_remask: false
-      - name: v5kl03_tau0.5_lossless
+      - name: v5kl03_tau0.5_hard
         policy_temperature: 0.5
         overrides:
           base_model.lossless_verification: true
@@ -96,7 +96,7 @@ evaluation:
           inference.primary_agree_threshold: 0.92
           inference.max_unmask_fraction_per_step: 0.125
           inference.disable_remask: false
-      - name: v5kl03_tau1.0_lossless
+      - name: v5kl03_tau1.0_hard
         policy_temperature: 1.0
         overrides:
           base_model.lossless_verification: true

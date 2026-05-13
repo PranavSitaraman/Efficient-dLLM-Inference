@@ -764,6 +764,7 @@ def block_smode_decode(
     eos_early_stop: bool = False,
     stats: Optional[Dict[str, Any]] = None,
     suppress_eos: bool = False,
+    eos_steady_passes: int = 0,
 ) -> torch.Tensor:
     """
     Block-wise Semi-Autoregressive S-Mode Decoding (LLaDA 2.1 paper §2).
@@ -780,13 +781,16 @@ def block_smode_decode(
         max_steps_per_block: max diffusion steps per block.
         enable_mbe: if True, enable Multiple Block Editing (revisit prev blocks).
         suppress_eos: if True, mask EOS out of the per-step logits before the
-            M2T threshold check.  Used by the LLaDA2.1 *semi-any-order*
-            baseline: under wider-than-trained block-causal attention the
-            model places EOS at response[0] with high confidence on the
-            very first decode step, which would truncate the visible output
-            to length zero.  Suppression lets the model produce its actual
-            answer; the EOS marker is restored implicitly by the eval
-            summariser when the answer's natural end-of-content tokens win.
+            M2T threshold check.
+        eos_steady_passes: when > 0, enables steady-state EOS stopping instead
+            of the immediate ``_mask_after_first_eos`` behaviour.  After EOS
+            appears anywhere in the response the loop continues; if EOS is
+            still present (not overwritten by T2T editing) for
+            ``eos_steady_passes`` consecutive diffusion steps, the sequence is
+            marked finished.  A step that overwrites EOS resets the counter.
+            Intended for any-order baselines where the model needs a few passes
+            to reach a stable fixed point at the EOS position.  Requires
+            ``eos_early_stop=True``.
 
     Returns:
         output_ids: [B, P + L_gen] generated sequence.
@@ -803,6 +807,9 @@ def block_smode_decode(
     finished = torch.zeros(B, dtype=torch.bool, device=device)
     iterations = 0
     _suppress_eos_id = eos_token_id if suppress_eos else None
+    # Steady-state EOS stopping: counts consecutive passes where EOS is present.
+    _use_steady = eos_early_stop and eos_steady_passes > 0 and eos_token_id is not None
+    eos_stable_count = torch.zeros(B, dtype=torch.long, device=device) if _use_steady else None
 
     # Start with prompt + all masks
     y = torch.cat([
@@ -865,15 +872,23 @@ def block_smode_decode(
                     best = masked_pos[max_prob[b, masked_pos].argmax()]
                     blk_tokens[b, best] = max_tok[b, best]
 
-            if eos_early_stop and eos_token_id is not None:
-                blk_tokens = _mask_after_first_eos(
-                    blk_tokens,
-                    eos_token_id=eos_token_id,
-                    mask_id=mask_id,
-                )
-                finished = finished | (blk_tokens == eos_token_id).any(dim=-1)
-
             y[:, blk_slice] = blk_tokens
+
+            if eos_early_stop and eos_token_id is not None:
+                if _use_steady:
+                    has_eos = (y[:, P:] == eos_token_id).any(dim=-1)
+                    active = ~finished
+                    eos_stable_count[active & has_eos] += 1
+                    eos_stable_count[active & ~has_eos] = 0
+                    finished = finished | (eos_stable_count >= eos_steady_passes)
+                else:
+                    blk_tokens = _mask_after_first_eos(
+                        blk_tokens,
+                        eos_token_id=eos_token_id,
+                        mask_id=mask_id,
+                    )
+                    finished = finished | (blk_tokens == eos_token_id).any(dim=-1)
+                    y[:, blk_slice] = blk_tokens
 
         remaining_mask = y[:, blk_slice] == mask_id
         if eos_early_stop:
@@ -893,14 +908,23 @@ def block_smode_decode(
             _, final_tok = _max_prob_and_argmax(final_logits)
             completed = y[:, blk_slice].clone()
             completed[remaining_mask] = final_tok[remaining_mask]
-            if eos_early_stop and eos_token_id is not None:
-                completed = _mask_after_first_eos(
-                    completed,
-                    eos_token_id=eos_token_id,
-                    mask_id=mask_id,
-                )
-                finished = finished | (completed == eos_token_id).any(dim=-1)
             y[:, blk_slice] = completed
+
+            if eos_early_stop and eos_token_id is not None:
+                if _use_steady:
+                    has_eos = (y[:, P:] == eos_token_id).any(dim=-1)
+                    active = ~finished
+                    eos_stable_count[active & has_eos] += 1
+                    eos_stable_count[active & ~has_eos] = 0
+                    finished = finished | (eos_stable_count >= eos_steady_passes)
+                else:
+                    completed = _mask_after_first_eos(
+                        completed,
+                        eos_token_id=eos_token_id,
+                        mask_id=mask_id,
+                    )
+                    finished = finished | (completed == eos_token_id).any(dim=-1)
+                    y[:, blk_slice] = completed
 
         # Optional: Multiple Block Editing — revisit previous blocks
         if enable_mbe and blk_idx > 0:

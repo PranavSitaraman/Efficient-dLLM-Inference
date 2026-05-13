@@ -1,6 +1,6 @@
 # V4 GRPO post-warmstart config.
 # Loads the warm-started policy and fine-tunes with GRPO reward.
-# Rollout environment matches warmstart training exactly (lossless, agree=0.5).
+# Rollout environment matches warmstart training exactly (hard, agree=0.5).
 extends: paper_smoke.yaml
 phase_a_v2: true
 stable_cache_enabled: false
