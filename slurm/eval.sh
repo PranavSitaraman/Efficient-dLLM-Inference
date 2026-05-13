@@ -21,7 +21,7 @@ export HF_HUB_DISABLE_XET=1
 export FLASHINFER_DISABLE_VERSION_CHECK=1
 unset NCCL_BLOCKING_WAIT
 
-CONFIG="${1:-configs/llada21_hard.yaml}"
+CONFIG="${1:-configs/eval_gsm8k.yaml}"
 CHECKPOINT="${2:-}"
 if [[ $# -ge 2 ]]; then
   shift 2

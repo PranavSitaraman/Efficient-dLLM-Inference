@@ -1,0 +1,55 @@
+extends: eval_gsm8k.yaml
+
+data:
+  eval_max_samples: 50
+
+evaluation:
+  generation_mode_filter: "all"
+  baseline_methods:
+    - "llada21_speed_mode"
+    - "llada21_quality_mode"
+    - "llada21_speed_anyorder"
+    - "llada21_quality_anyorder"
+  speculative_sweep:
+    enabled: true
+    points:
+      - name: "ablate_block_default"
+        generation_mode: "block"
+        policy_temperature: 1.0
+        overrides:
+          inference.speculative_schedule: aoae_block
+          inference.block_speculative.rejection_action: correct_confident
+          inference.block_speculative.verifier_mode: primary
+          base_model.lossless_verification: false
+      - name: "ablate_any_order_soft"
+        generation_mode: "any_order"
+        policy_temperature: 0.5
+        overrides:
+          inference.speculative_schedule: aoae
+          base_model.lossless_verification: false
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.92
+      - name: "ablate_any_order_hard"
+        generation_mode: "any_order"
+        policy_temperature: 0.5
+        overrides:
+          inference.speculative_schedule: aoae
+          base_model.lossless_verification: true
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.92
+      - name: "ablate_any_order_lossless_tau1"
+        generation_mode: "any_order"
+        policy_temperature: 1.0
+        overrides:
+          inference.speculative_schedule: aoae
+          base_model.lossless_verification: true
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.92
+
+logging:
+  run_name: "ablation"
+  output_dir: "outputs/paper_final/ablations/"
+  use_wandb: false

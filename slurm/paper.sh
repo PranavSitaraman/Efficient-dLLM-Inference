@@ -19,63 +19,33 @@ conda activate rtx
 
 export HF_HUB_DISABLE_XET=1
 export FLASHINFER_DISABLE_VERSION_CHECK=1
+export MASTER_ADDR="${MASTER_ADDR:-127.0.0.1}"
+export MASTER_PORT="${MASTER_PORT:-29500}"
+export NCCL_SOCKET_FAMILY=AF_INET
+export GLOO_SOCKET_FAMILY=AF_INET
 
 MODE="${1:-suite}"
-if [ $# -gt 0 ]; then
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+if [[ "$MODE" != "suite" ]]; then
+  echo "Unknown paper mode: $MODE" >&2
+  echo "Expected: suite" >&2
+  exit 2
+fi
+
+CONFIG="${1:-configs/paper.yaml}"
+if [[ $# -gt 0 ]]; then
   shift
 fi
 
 mkdir -p logs outputs results
 
-echo "=== AOAE Paper / POC Workflow ==="
-echo "Mode: $MODE"
-echo "Node: $(hostname)"
+echo "=== AOAE Final Paper Suite ==="
+echo "Config: $CONFIG"
+echo "Node:   $(hostname)"
 
-case "$MODE" in
-  suite)
-    CONFIG="${1:-configs/paper.yaml}"
-    if [ $# -gt 0 ]; then
-      shift
-    fi
-    python3 -m aoae.cli paper-suite --config "$CONFIG" "$@"
-    ;;
-  poc1)
-    CONFIG="${1:-configs/poc1.yaml}"
-    if [ $# -gt 0 ]; then
-      shift
-    fi
-    python3 -m aoae.cli tau-sweep --config "$CONFIG" "$@"
-    ;;
-  poc2)
-    CONFIG="${1:-configs/poc2.yaml}"
-    if [ $# -gt 0 ]; then
-      shift
-    fi
-    python3 -m aoae.cli reuse-sweep --config "$CONFIG" "$@"
-    ;;
-  routing)
-    HARD_CONFIG="${1:-configs/llada21_hard.yaml}"
-    SOFT_CONFIG="${2:-configs/llada21_soft.yaml}"
-    if [ $# -gt 0 ]; then
-      shift
-    fi
-    if [ $# -gt 0 ]; then
-      shift
-    fi
-    python3 -m aoae.cli routing-sweep --hard_config "$HARD_CONFIG" --soft_config "$SOFT_CONFIG" "$@"
-    ;;
-  ablations)
-    CONFIG="${1:-configs/paper.yaml}"
-    if [ $# -gt 0 ]; then
-      shift
-    fi
-    python3 -m aoae.cli ablations --config "$CONFIG" "$@"
-    ;;
-  *)
-    echo "Unknown mode: $MODE" >&2
-    echo "Expected one of: suite, poc1, poc2, routing, ablations" >&2
-    exit 1
-    ;;
-esac
+python3 -m aoae.cli paper-suite --config "$CONFIG" "$@"
 
-echo "=== Paper / POC workflow complete ==="
+echo "=== Paper suite complete ==="

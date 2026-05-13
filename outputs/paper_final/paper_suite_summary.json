@@ -1,0 +1,56 @@
+[
+  {
+    "stage": "train_config",
+    "config": "configs/paper.yaml",
+    "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/train",
+    "output_dir": "outputs/paper_final/train/",
+    "grpo_enabled": true,
+    "train_heads": [
+      "unmask",
+      "remask"
+    ]
+  },
+  {
+    "stage": "gsm8k_notrain",
+    "config": "configs/eval_gsm8k.yaml",
+    "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/gsm8k/notrain",
+    "max_samples": 10,
+    "checkpoint": null,
+    "skip_baselines": false,
+    "num_results": 6
+  },
+  {
+    "stage": "math500_notrain",
+    "config": "configs/eval_math500.yaml",
+    "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/math500/notrain",
+    "max_samples": 10,
+    "checkpoint": null,
+    "skip_baselines": false,
+    "num_results": 6
+  },
+  {
+    "stage": "humaneval_notrain",
+    "config": "configs/eval_humaneval.yaml",
+    "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/humaneval/notrain",
+    "max_samples": 10,
+    "checkpoint": null,
+    "skip_baselines": false,
+    "num_results": 6
+  },
+  {
+    "stage": "ablation_notrain",
+    "config": "configs/ablation.yaml",
+    "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/ablations/notrain",
+    "max_samples": 10,
+    "checkpoint": null,
+    "skip_baselines": false,
+    "num_results": 5
+  },
+  {
+    "stage": "comparison_table",
+    "config": "configs/paper.yaml",
+    "output_root": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final",
+    "csv": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/aggregate_comparison_table.csv",
+    "md": "/n/netscratch/ydu_lab/Lab/pranavsitaraman/Efficient-dLLM-Inference/outputs/paper_final/aggregate_comparison_table.md"
+  }
+]

@@ -656,6 +656,8 @@ def run_blockwise_speculative_inference(
     _primary_partial_steps = 0
     _primary_verified_positions = 0
     _primary_full_equiv_positions = 0
+    _verifier_compute_units = 0.0
+    _aux_diagnostic_steps = 0
     _raw_agreement_sum = 0.0
     _raw_agreement_count = 0
     _safe_reuse_sum = 0.0
@@ -688,6 +690,7 @@ def run_blockwise_speculative_inference(
             active_mask = verifier_active | mask_ind
             if active_mask.any() and can_skip_primary:
                 aux_logits = dual_model.auxiliary_forward_resp(prefix_ids, prefix_blk_slice)
+                _aux_diagnostic_steps += 1
                 span = _active_span(active_mask)
                 verified_positions = 0
                 if primary_cache is None or pri_logits is None or span == (0, blk_width):
@@ -708,15 +711,20 @@ def run_blockwise_speculative_inference(
                 _primary_steps += 1
                 _primary_verified_positions += verified_positions
                 _primary_full_equiv_positions += B * blk_width
+                _verifier_compute_units += float(verified_positions) / float(
+                    max(B * blk_width, 1)
+                )
             else:
                 dual_out = dual_model.dual_forward_resp(prefix_ids, prefix_blk_slice)
                 pri_logits = dual_out.primary_logits
                 aux_logits = dual_out.auxiliary_logits
                 primary_cache = None
+                _aux_diagnostic_steps += 1
                 _primary_steps += 1
                 _primary_full_steps += 1
                 _primary_verified_positions += B * blk_width
                 _primary_full_equiv_positions += B * blk_width
+                _verifier_compute_units += 1.0
 
             aux_tokens = aux_logits.argmax(dim=-1)
             pri_tokens = pri_logits.argmax(dim=-1)
@@ -838,19 +846,23 @@ def run_blockwise_speculative_inference(
                 aux_logits = dual_model.auxiliary_forward_resp(prefix_ids, prefix_blk_slice)
                 pri_prefix_logits, primary_cache = dual_model.primary_forward_with_cache(prefix_ids)
                 pri_logits = pri_prefix_logits[:, prefix_blk_slice, :]
+                _aux_diagnostic_steps += 1
                 _primary_steps += 1
                 _primary_full_steps += 1
                 _primary_verified_positions += B * blk_width
                 _primary_full_equiv_positions += B * blk_width
+                _verifier_compute_units += 1.0
             else:
                 dual_out = dual_model.dual_forward_resp(prefix_ids, prefix_blk_slice)
                 pri_logits = dual_out.primary_logits
                 aux_logits = dual_out.auxiliary_logits
                 primary_cache = None
+                _aux_diagnostic_steps += 1
                 _primary_steps += 1
                 _primary_full_steps += 1
                 _primary_verified_positions += B * blk_width
                 _primary_full_equiv_positions += B * blk_width
+                _verifier_compute_units += 1.0
 
             raw_agreement = aux_logits.argmax(dim=-1) == pri_logits.argmax(dim=-1)
             safe_reuse, reuse_state, reuse_diag = compute_reuse_signal(
@@ -924,16 +936,27 @@ def run_blockwise_speculative_inference(
                 tracked_prefix_len = max(tracked_prefix_len, prefix_resp_len)
             cache_mgr.step(r_full, kappa_full, u_full, safe_reuse_full)
 
+    aux_compute_ratio = float(ic.get("drafter", {}).get("aux_compute_ratio", 0.35))
+    baseline_compute_units = float(
+        max(int(ic.get("steps", n_blocks * max(1, max_post_steps))), 1)
+    )
+    aux_compute_units = float(_aux_diagnostic_steps) * aux_compute_ratio
+    verifier_compute_units = float(_verifier_compute_units)
+
     stats = cache_mgr.get_stats()
+    stats["steps_used"] = _primary_steps
     stats["mean_agreement"] = _raw_agreement_sum / max(_raw_agreement_count, 1)
     stats["agreement_observations"] = _raw_agreement_count
     stats["draft_accepts"] = _draft_accepts
     stats["draft_rejects"] = _draft_rejects
     stats["draft_accept_rate"] = _draft_accepts / max(_draft_accepts + _draft_rejects, 1)
+    stats["frontier_accept_rate"] = _draft_accepts / max(_draft_accepts + _draft_rejects, 1)
+    stats["frontier_reject_rate"] = _draft_rejects / max(_draft_accepts + _draft_rejects, 1)
     stats["reuse_mean_safe_reuse"] = _safe_reuse_sum / max(_safe_reuse_count, 1)
     stats["safe_reuse_observations"] = _safe_reuse_count
     stats["primary_steps"] = _primary_steps
     stats["aux_only_steps"] = 0
+    stats["aux_diagnostic_steps"] = _aux_diagnostic_steps
     stats["primary_full_steps"] = _primary_full_steps
     stats["primary_partial_steps"] = _primary_partial_steps
     stats["primary_verified_positions"] = _primary_verified_positions
@@ -941,7 +964,20 @@ def run_blockwise_speculative_inference(
     stats["primary_skip_ratio"] = 1.0 - (
         _primary_verified_positions / max(_primary_full_equiv_positions, 1)
     )
-    stats["reuse_signal_method"] = cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")
+    stats["reuse_signal_method"] = (
+        cfg.get("inference", {}).get("reuse_signal", {}).get("method", "argmax_match")
+    )
+    stats["verifier_call_rate"] = 1.0 if _primary_steps > 0 else 0.0
+    stats["draft_microsteps"] = 0
+    stats["verifier_skips"] = 0
+    stats["self_accept_events"] = 0
+    stats["mean_frontier_size"] = 0.0
+    stats["aux_compute_units"] = aux_compute_units
+    stats["verifier_compute_units"] = verifier_compute_units
+    stats["baseline_compute_units"] = baseline_compute_units
+    stats["effective_flops"] = (
+        (aux_compute_units + verifier_compute_units) / max(baseline_compute_units, 1.0)
+    )
     for key, value in reuse_diag_sum.items():
         stats[f"reuse_{key}"] = value / max(reuse_diag_steps, 1)
     stats.update(compute_next_h_access_metrics([], [], None, 1))

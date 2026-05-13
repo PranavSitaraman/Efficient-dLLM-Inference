@@ -1,78 +1,69 @@
-# Setup Guide
+# AOAE Setup
 
 ## Environment
 
+On the Kempner cluster:
+
 ```bash
 module load python/3.12.5-fasrc01 cuda/11.8.0-fasrc01 cudnn/8.9.2.26_cuda11-fasrc01
-conda create -n rtx python=3.10 -y
 conda activate rtx
-
-bash setup.sh
-pip install -e .
 ```
 
-For dense / HF-only work:
+For a fresh local environment:
 
 ```bash
 bash setup.sh --minimal
-pip install -e .
 ```
 
-## Verify
+Then validate:
 
 ```bash
-python3 -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.device_count())"
-python3 -c "import transformers; print(transformers.__version__)"
-aoae preflight --config configs/llada21_hard.yaml
-aoae test
+python3 -m aoae.cli preflight --config configs/paper.yaml
+bash reproduce.sh --workflow smoke
 ```
 
-## Recommended configs
+## Maintained Configs
 
-| Config | Use case |
-| --- | --- |
-| `configs/llada21_hard.yaml` | Main 8B training/eval path |
-| `configs/paper.yaml` | Main paper suite |
-| `configs/poc1.yaml` | PoC 1 tau sweep |
-| `configs/poc2.yaml` | PoC 2 reuse sweep |
-| `configs/llada21_hard.yaml` | Routing sweep hard baseline |
-| `configs/llada21_soft.yaml` | Routing sweep soft config |
+The final deliverable keeps exactly six configs:
 
-## Local usage
+- `configs/paper.yaml`: canonical warmstart -> GRPO training.
+- `configs/paper_smoke.yaml`: tiny smoke path.
+- `configs/eval_gsm8k.yaml`: in-distribution GSM8K eval.
+- `configs/eval_math500.yaml`: out-of-distribution MATH-500 eval.
+- `configs/eval_humaneval.yaml`: out-of-distribution HumanEval code eval.
+- `configs/ablation.yaml`: compact final ablations.
+
+`paper.yaml` trains scalar-only Phase-A/V2 `u/r` heads and disables stable-cache,
+cache reward, and access reward terms in the canonical GRPO run.
+
+## Reproduction
 
 ```bash
-aoae pipeline --config configs/llada21_hard.yaml
-
-aoae tau-sweep --config configs/poc1.yaml --max_samples 50
-aoae reuse-sweep --config configs/poc2.yaml --max_samples 50
-aoae paper-suite --config configs/paper.yaml --max_samples 50
+bash reproduce.sh --workflow paper --max_samples 50
+bash reproduce.sh --workflow train --stage warmstart
+bash reproduce.sh --workflow train --stage grpo
+bash reproduce.sh --workflow eval --dataset gsm8k --checkpoint auto
+bash reproduce.sh --workflow eval --dataset math500 --checkpoint auto
+bash reproduce.sh --workflow eval --dataset humaneval --checkpoint auto
 ```
 
-If a config sets `hardware.tp_size > 1`, the local `aoae` CLI will relaunch itself under `torchrun` automatically.
+`--checkpoint auto` uses `outputs/v4_grpo_quality_balanced/policy_best.pt` when
+available. Use `--checkpoint none` for the no-train heuristic policy.
 
-## SLURM usage
-
-Training / eval:
-
-```bash
-sbatch slurm/train.sh prism configs/llada21_hard.yaml
-sbatch slurm/train.sh grpo configs/llada21_hard.yaml auto
-sbatch slurm/eval.sh configs/llada21_hard.yaml outputs/llada21_hard/policy_final.pt
-```
-
-Paper / POCs:
+## SLURM
 
 ```bash
-sbatch slurm/paper.sh suite configs/paper.yaml --max_samples 50
-sbatch slurm/paper.sh poc1 configs/poc1.yaml --max_samples 50
-sbatch slurm/paper.sh poc2 configs/poc2.yaml --max_samples 50
-sbatch slurm/paper.sh ablations configs/paper.yaml --max_samples 50
-sbatch slurm/paper.sh routing configs/llada21_hard.yaml configs/llada21_soft.yaml --max_samples 50
-```
-
-Workflow wrapper:
-
-```bash
-bash reproduce.sh --slurm
 bash reproduce.sh --slurm --workflow paper --max_samples 50
+bash reproduce.sh --slurm --workflow train --stage all
+bash reproduce.sh --slurm --workflow eval --dataset gsm8k --checkpoint auto
+```
+
+The wrapper delegates to `slurm/paper.sh`, `slurm/train.sh`, and `slurm/eval.sh`.
+
+## Verification
+
+```bash
+pytest tests/test_config_contracts.py tests/test_cli_integration.py tests/test_code_eval.py -q
+pytest tests/test_paper_suite_smoke.py tests/test_reporting_commands.py -q
+pytest -q
 ```

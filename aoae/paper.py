@@ -1,11 +1,9 @@
-"""Paper and POC orchestration commands.
+"""Paper and experiment orchestration commands.
 
-This module consolidates the paper-facing experiment surface:
-  - PoC 1 tau sweep
-  - Routing-only hard-vs-soft sweep
-  - PoC 2 reuse-signal sweep
-  - Ablation matrix
-  - Paper-suite orchestration
+The public paper-suite entrypoint is intentionally narrow: it evaluates the
+final AOAE checkpoints on GSM8K, MATH-500, and HumanEval, runs the final
+ablation config, then writes a manifest plus aggregate comparison table.
+Older sweep helpers remain importable for compatibility with saved artifacts.
 """
 
 from __future__ import annotations
@@ -15,6 +13,8 @@ import copy
 import glob
 import inspect
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -35,6 +35,102 @@ from .experiment_utils import (
 from .runtime_checks import ensure_vllm_moe_runtime, is_global_rank_zero
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_FINAL_POLICY_CHECKPOINT = ROOT / "outputs" / "v4_grpo_quality_balanced" / "policy_best.pt"
+FINAL_DATASET_CONFIGS = {
+    "gsm8k": "configs/eval_gsm8k.yaml",
+    "math500": "configs/eval_math500.yaml",
+    "humaneval": "configs/eval_humaneval.yaml",
+}
+
+
+def _deep_merge_config(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(base)
+    for key, value in (override or {}).items():
+        if key in out and isinstance(out[key], dict) and isinstance(value, dict):
+            out[key] = _deep_merge_config(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _load_config_file(path: str | Path) -> Dict[str, Any]:
+    cfg_path = Path(path)
+    if not cfg_path.is_absolute():
+        cfg_path = ROOT / cfg_path
+    with cfg_path.open() as f:
+        cfg = yaml.safe_load(f)
+    if not isinstance(cfg, dict):
+        raise ValueError(f"Config must be a mapping: {cfg_path}")
+    parent = cfg.get("extends")
+    if not parent:
+        return cfg
+    parent_path = Path(parent)
+    if not parent_path.is_absolute():
+        parent_path = cfg_path.parent / parent_path
+    child = dict(cfg)
+    child.pop("extends", None)
+    return _deep_merge_config(_load_config_file(parent_path), child)
+
+
+def _resolve_suite_checkpoint(value: Optional[str]) -> Optional[str]:
+    if value is None or value == "":
+        value = "auto"
+    normalized = str(value).strip()
+    if normalized.lower() in {"none", "null"}:
+        return None
+    if normalized.lower() == "auto":
+        return str(DEFAULT_FINAL_POLICY_CHECKPOINT) if DEFAULT_FINAL_POLICY_CHECKPOINT.exists() else None
+    path = Path(normalized)
+    if not path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {path}")
+    return str(path)
+
+
+def _run_eval_subprocess(
+    *,
+    config_path: str,
+    output_dir: Path,
+    checkpoint_path: Optional[str],
+    max_samples: Optional[int],
+    skip_baselines: bool,
+    save_predictions: bool,
+    max_saved_predictions: Optional[int],
+) -> List[Dict[str, Any]]:
+    """Run one eval stage in a fresh process so dInfer/vLLM releases CUDA state."""
+    cmd = [
+        sys.executable,
+        "-m",
+        "aoae.cli",
+        "eval",
+        "--config",
+        config_path,
+        "--mode",
+        "speculative",
+        "--output_dir",
+        str(output_dir),
+    ]
+    if checkpoint_path is not None:
+        cmd.extend(["--checkpoint", checkpoint_path])
+    if max_samples is not None:
+        cmd.extend(["--max_samples", str(max_samples)])
+    if skip_baselines:
+        cmd.append("--skip_baselines")
+    if save_predictions:
+        cmd.append("--save_predictions")
+    if max_saved_predictions is not None:
+        cmd.extend(["--max_saved_predictions", str(max_saved_predictions)])
+
+    if is_global_rank_zero():
+        print(f"[Paper-suite] Running stage subprocess: {' '.join(cmd)}")
+    env = dict(os.environ)
+    env.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    subprocess.run(cmd, cwd=str(ROOT), check=True, env=env)
+
+    results_path = output_dir / "eval_results.json"
+    if results_path.exists():
+        data = load_json(results_path)
+        return data if isinstance(data, list) else []
+    return []
 
 
 def _invoke_main(main_fn, prog: str, argv: List[str]) -> None:
@@ -1169,8 +1265,8 @@ def tau_sweep_main(argv: Optional[List[str]] = None) -> None:
 
 def routing_sweep_main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="Run the routing-only tau_r sweep.")
-    parser.add_argument("--hard_config", default="configs/llada21_hard.yaml", help="Hard-routing config.")
-    parser.add_argument("--soft_config", default="configs/llada21_soft.yaml", help="Soft-routing config.")
+    parser.add_argument("--hard_config", default="configs/ablation.yaml", help="Hard-routing config.")
+    parser.add_argument("--soft_config", default="configs/ablation.yaml", help="Soft-routing config.")
     parser.add_argument("--checkpoint", default=None, help="Optional checkpoint if you want AOAE rows in standard mode.")
     parser.add_argument("--tau_r_values", default="0.0001,0.001,0.005,0.01,0.02,0.05", help="Comma-separated positive tau_r values for the soft-routing sweep.")
     parser.add_argument("--max_samples", type=int, default=None, help="Optional evaluation cap.")
@@ -1424,7 +1520,7 @@ def routing_sweep_main(argv: Optional[List[str]] = None) -> None:
 
 def reuse_signal_sweep_main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="Run POC2 reuse-signal reliability sweep.")
-    parser.add_argument("--config", default="configs/poc2.yaml")
+    parser.add_argument("--config", default="configs/ablation.yaml")
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--mode", default="speculative", choices=["standard", "speculative"])
     parser.add_argument("--max_samples", type=int, default=None)
@@ -1760,32 +1856,27 @@ def ablation_matrix_main(argv: Optional[List[str]] = None) -> None:
 
 
 def paper_suite_main(argv: Optional[List[str]] = None) -> None:
-    parser = argparse.ArgumentParser(description="Run the paper-aligned AOAE experiment suite.")
-    parser.add_argument("--config", default="configs/paper.yaml", help="Base config used for all stages unless overridden.")
-    parser.add_argument("--poc1_config", default=None, help="Optional config override for the routing-temperature sweep.")
-    parser.add_argument("--poc2_config", default=None, help="Optional config override for the reuse-signal sweep.")
-    parser.add_argument("--ablation_config", default=None, help="Optional config override for the ablation matrix.")
-    parser.add_argument("--hard_config", default="configs/llada21_hard.yaml", help="Hard-routing config used for the routing sweep.")
-    parser.add_argument("--soft_config", default="configs/llada21_soft.yaml", help="Soft-routing config used for the routing sweep.")
-    parser.add_argument("--checkpoint", default=None, help="Optional policy checkpoint passed to all stages.")
-    parser.add_argument("--max_samples", type=int, default=None, help="Optional evaluation cap applied to all stages.")
-    parser.add_argument("--output_root", default=None, help="Suite output root. Defaults under outputs/paper_suite/.")
-    parser.add_argument("--tau_r_values", default="0.0001,0.001,0.005,0.01,0.02,0.05", help="Paper sweep for PoC 1.")
-    parser.add_argument("--policy_temperature", type=float, default=1.0, help="Policy temperature used for sweep summaries.")
-    parser.add_argument("--skip_poc1", action="store_true", help="Skip the soft-routing tradeoff sweep.")
-    parser.add_argument("--skip_routing", action="store_true", help="Skip the hard-vs-soft routing sweep.")
-    parser.add_argument("--skip_poc2", action="store_true", help="Skip the reuse-signal sweep.")
-    parser.add_argument("--skip_ablations", action="store_true", help="Skip the ablation matrix.")
-    parser.add_argument("--skip_table", action="store_true", help="Skip aggregated comparison-table generation.")
-    parser.add_argument("--skip_kv_summary", action="store_true", help="Skip aggregated KV-dynamics summary generation.")
-    parser.add_argument("--poc1_enable_remask", action="store_true", help="Keep remasking enabled during PoC 1. Default is disabled to isolate routing.")
-    parser.add_argument("--poc2_disable_remask", action="store_true", help="Disable remasking during PoC 2 for cleaner reuse-signal accounting.")
-    parser.add_argument("--save_predictions", action="store_true", help="Save bounded prediction artifacts for suite evaluation stages.")
+    parser = argparse.ArgumentParser(description="Run the final AOAE paper reproduction suite.")
+    parser.add_argument("--config", default="configs/paper.yaml", help="Canonical training config recorded in the manifest.")
+    parser.add_argument("--gsm8k_config", default=FINAL_DATASET_CONFIGS["gsm8k"], help="GSM8K eval config.")
+    parser.add_argument("--math500_config", default=FINAL_DATASET_CONFIGS["math500"], help="MATH-500 eval config.")
+    parser.add_argument("--humaneval_config", default=FINAL_DATASET_CONFIGS["humaneval"], help="HumanEval eval config.")
+    parser.add_argument("--ablation_config", default="configs/ablation.yaml", help="Final ablation config.")
+    parser.add_argument("--datasets", default="gsm8k,math500,humaneval", help="Comma-separated subset of gsm8k, math500, humaneval.")
+    parser.add_argument("--checkpoint", default="auto", help="'auto', 'none', or a policy checkpoint path.")
+    parser.add_argument("--max_samples", type=int, default=None, help="Optional sample cap applied to every eval stage.")
+    parser.add_argument("--output_root", default=str(ROOT / "outputs" / "paper_final"), help="Final artifact root.")
+    parser.add_argument("--skip_eval", action="store_true", help="Build manifest/tables without running model evaluation.")
+    parser.add_argument("--skip_ablation", action="store_true", help="Skip the final ablation config.")
+    parser.add_argument("--skip_table", action="store_true", help="Skip aggregate comparison-table generation.")
+    parser.add_argument("--skip_baselines", action="store_true", help="Run only AOAE points for each eval config.")
+    parser.add_argument("--save_predictions", action="store_true", help="Force bounded prediction artifact saving.")
     parser.add_argument("--max_saved_predictions", type=int, default=None, help="Maximum saved predictions per run (hard-capped at 50).")
     args = parser.parse_args(argv)
 
-    suite_name = Path(args.config).stem
-    output_root = Path(args.output_root) if args.output_root else ROOT / "outputs" / "paper_suite" / suite_name
+    output_root = Path(args.output_root)
+    if not output_root.is_absolute():
+        output_root = ROOT / output_root
     output_root.mkdir(parents=True, exist_ok=True)
 
     summary: List[Dict[str, Any]] = []
@@ -1796,97 +1887,107 @@ def paper_suite_main(argv: Optional[List[str]] = None) -> None:
             entry.update(extra)
         summary.append(entry)
 
-    if not args.skip_poc1:
-        poc1_root = output_root / "poc1"
-        poc1_root.mkdir(parents=True, exist_ok=True)
-        poc1_argv = [
-            "--config", args.poc1_config or "configs/poc1.yaml",
-            "--tau_r_values", args.tau_r_values,
-            "--policy_temperature", str(args.policy_temperature),
-            "--output_root", str(poc1_root),
-        ]
-        if args.checkpoint:
-            poc1_argv.extend(["--checkpoint", args.checkpoint])
-        if args.max_samples is not None:
-            poc1_argv.extend(["--max_samples", str(args.max_samples)])
-        if args.poc1_enable_remask:
-            poc1_argv.append("--enable_remask")
-        if args.save_predictions:
-            poc1_argv.append("--save_predictions")
-        if args.max_saved_predictions is not None:
-            poc1_argv.extend(["--max_saved_predictions", str(args.max_saved_predictions)])
-        _invoke_main(tau_sweep_main, "tau-sweep", poc1_argv)
-        record_stage("poc1", args.poc1_config or "configs/poc1.yaml", poc1_root, {"tau_r_values": args.tau_r_values})
+    train_cfg = _load_config_file(args.config)
+    record_stage(
+        "train_config",
+        args.config,
+        output_root / "train",
+        {
+            "output_dir": train_cfg.get("logging", {}).get("output_dir"),
+            "grpo_enabled": bool(train_cfg.get("grpo", {}).get("enabled", False)),
+            "train_heads": train_cfg.get("grpo", {}).get("train_heads", []),
+        },
+    )
 
-    if not args.skip_routing:
-        routing_root = output_root / "routing"
-        routing_root.mkdir(parents=True, exist_ok=True)
-        routing_argv = [
-            "--hard_config", args.hard_config,
-            "--soft_config", args.soft_config,
-            "--tau_r_values", args.tau_r_values,
-            "--output_root", str(routing_root),
-        ]
-        if args.checkpoint:
-            routing_argv.extend(["--checkpoint", args.checkpoint])
-        if args.max_samples is not None:
-            routing_argv.extend(["--max_samples", str(args.max_samples)])
-        if args.save_predictions:
-            routing_argv.append("--save_predictions")
-        if args.max_saved_predictions is not None:
-            routing_argv.extend(["--max_saved_predictions", str(args.max_saved_predictions)])
-        _invoke_main(routing_sweep_main, "routing-sweep", routing_argv)
+    checkpoint_path = _resolve_suite_checkpoint(args.checkpoint)
+    if is_global_rank_zero():
+        resolved = checkpoint_path if checkpoint_path is not None else "<default policy/no checkpoint>"
+        print(f"Paper-suite checkpoint: {resolved}")
+
+    requested_datasets = [part.strip().lower() for part in str(args.datasets).split(",") if part.strip()]
+    config_by_dataset = {
+        "gsm8k": args.gsm8k_config,
+        "math500": args.math500_config,
+        "humaneval": args.humaneval_config,
+    }
+    unknown = sorted(set(requested_datasets) - set(config_by_dataset))
+    if unknown:
+        raise ValueError(f"Unknown --datasets entries: {unknown}. Choose from {sorted(config_by_dataset)}.")
+
+    def run_eval_stage(stage: str, config_path: str, stage_root: Path, stage_checkpoint: Optional[str]) -> None:
+        stage_root.mkdir(parents=True, exist_ok=True)
+        cfg = _load_config_file(config_path)
+        max_samples = args.max_samples if args.max_samples is not None else cfg.get("data", {}).get("eval_max_samples")
+        stage_skip_baselines = bool(args.skip_baselines or (checkpoint_path is not None and stage_checkpoint is None))
+        if args.skip_eval:
+            record_stage(
+                stage,
+                config_path,
+                stage_root,
+                {
+                    "skipped": True,
+                    "max_samples": max_samples,
+                    "checkpoint": stage_checkpoint,
+                    "skip_baselines": stage_skip_baselines,
+                },
+            )
+            return
+        results = _run_eval_subprocess(
+            config_path=config_path,
+            output_dir=stage_root,
+            checkpoint_path=stage_checkpoint,
+            max_samples=max_samples,
+            skip_baselines=stage_skip_baselines,
+            save_predictions=bool(args.save_predictions),
+            max_saved_predictions=args.max_saved_predictions,
+        )
         record_stage(
-            "routing",
-            f"{args.hard_config}::{args.soft_config}",
-            routing_root,
-            {"tau_r_values": args.tau_r_values},
+            stage,
+            config_path,
+            stage_root,
+            {
+                "max_samples": max_samples,
+                "checkpoint": stage_checkpoint,
+                "skip_baselines": stage_skip_baselines,
+                "num_results": len(results or []),
+            },
         )
 
-    if not args.skip_poc2:
-        poc2_root = output_root / "poc2"
-        poc2_root.mkdir(parents=True, exist_ok=True)
-        poc2_argv = [
-            "--config", args.poc2_config or "configs/poc2.yaml",
-            "--policy_temperature", str(args.policy_temperature),
-            "--output_root", str(poc2_root),
-        ]
-        if args.checkpoint:
-            poc2_argv.extend(["--checkpoint", args.checkpoint])
-        if args.max_samples is not None:
-            poc2_argv.extend(["--max_samples", str(args.max_samples)])
-        if args.poc2_disable_remask:
-            poc2_argv.append("--disable_remask")
-        if args.save_predictions:
-            poc2_argv.append("--save_predictions")
-        if args.max_saved_predictions is not None:
-            poc2_argv.extend(["--max_saved_predictions", str(args.max_saved_predictions)])
-        _invoke_main(reuse_signal_sweep_main, "reuse-sweep", poc2_argv)
-        record_stage("poc2", args.poc2_config or "configs/poc2.yaml", poc2_root, {"disable_remask": args.poc2_disable_remask})
+    for dataset_name in requested_datasets:
+        if checkpoint_path is not None:
+            run_eval_stage(
+                f"{dataset_name}_trained",
+                config_by_dataset[dataset_name],
+                output_root / dataset_name / "trained",
+                checkpoint_path,
+            )
+        run_eval_stage(
+            f"{dataset_name}_notrain",
+            config_by_dataset[dataset_name],
+            output_root / dataset_name / "notrain",
+            None,
+        )
 
-    if not args.skip_ablations:
-        ablation_root = output_root / "ablations"
-        ablation_root.mkdir(parents=True, exist_ok=True)
-        ablation_argv = [
-            "--config", args.ablation_config or args.config,
-            "--output_root", str(ablation_root),
-        ]
-        if args.checkpoint:
-            ablation_argv.extend(["--checkpoint", args.checkpoint])
-        if args.max_samples is not None:
-            ablation_argv.extend(["--max_samples", str(args.max_samples)])
-        if args.save_predictions:
-            ablation_argv.append("--save_predictions")
-        if args.max_saved_predictions is not None:
-            ablation_argv.extend(["--max_saved_predictions", str(args.max_saved_predictions)])
-        _invoke_main(ablation_matrix_main, "ablations", ablation_argv)
-        record_stage("ablations", args.ablation_config or args.config, ablation_root)
+    if not args.skip_ablation:
+        if checkpoint_path is not None:
+            run_eval_stage(
+                "ablation_trained",
+                args.ablation_config,
+                output_root / "ablations" / "trained",
+                checkpoint_path,
+            )
+        run_eval_stage(
+            "ablation_notrain",
+            args.ablation_config,
+            output_root / "ablations" / "notrain",
+            None,
+        )
 
     if not args.skip_table:
         from .reporting import comparison_table_main
 
-        csv_path = output_root / "paper_comparison_table.csv"
-        md_path = output_root / "paper_comparison_table.md"
+        csv_path = output_root / "aggregate_comparison_table.csv"
+        md_path = output_root / "aggregate_comparison_table.md"
         table_argv = [
             "--glob", str(output_root / "**" / "eval_results.json"),
             "--csv", str(csv_path),
@@ -1895,20 +1996,20 @@ def paper_suite_main(argv: Optional[List[str]] = None) -> None:
         _invoke_main(comparison_table_main, "comparison-table", table_argv)
         record_stage("comparison_table", args.config, output_root, {"csv": str(csv_path), "md": str(md_path)})
 
-    if not args.skip_kv_summary:
-        from .reporting import kv_summary_main
-
-        csv_path = output_root / "paper_kv_summary.csv"
-        md_path = output_root / "paper_kv_summary.md"
-        kv_argv = [
-            "--glob", str(output_root / "**" / "kv_dynamics_summary.json"),
-            "--csv", str(csv_path),
-            "--md", str(md_path),
-        ]
-        _invoke_main(kv_summary_main, "kv-summary", kv_argv)
-        record_stage("kv_summary", args.config, output_root, {"csv": str(csv_path), "md": str(md_path)})
-
     summary_path = output_root / "paper_suite_summary.json"
+    manifest_path = output_root / "run_manifest.json"
+    manifest = {
+        "schema_version": "aoae_paper_suite_v1",
+        "train_config": args.config,
+        "dataset_configs": {name: config_by_dataset[name] for name in requested_datasets},
+        "ablation_config": None if args.skip_ablation else args.ablation_config,
+        "checkpoint": checkpoint_path,
+        "max_samples": args.max_samples,
+        "output_root": str(output_root),
+        "stages": summary,
+    }
     summary_path.write_text(json.dumps(summary, indent=2))
+    manifest_path.write_text(json.dumps(manifest, indent=2))
     if is_global_rank_zero():
         print(f"Paper suite summary written to {summary_path}")
+        print(f"Paper suite manifest written to {manifest_path}")

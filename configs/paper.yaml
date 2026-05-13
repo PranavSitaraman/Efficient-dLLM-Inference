@@ -1,11 +1,27 @@
-# Canonical speculative AOAE config.
+# Submission-ready AOAE paper config.
 #
-# This default reproduction protects the stable block-diffusion comparison:
-# `aoae_block` means the policy-free block-frontier verifier baseline, while
-# trained block-head experiments must opt into `aoae_block_policy` and are
-# disabled from the default sweep until their checkpoints pass the accuracy
-# gate.  Use `--generation_mode_filter any_order` for the experimental
-# semi-any-order track.
+# Canonical story:
+#   1. Warm-start a scalar Phase-A/V2 u/r policy.
+#   2. Continue with GRPO on GSM8K-style math rollouts.
+#   3. Evaluate the same scalar policy on GSM8K, MATH-500, and HumanEval with
+#      cache/access reward terms disabled. Stable-cache execution remains a
+#      future-work path, not part of the final paper frontier.
+
+phase_a_v2: true
+stable_cache_enabled: false
+feature_mode: scalar_only
+train_heads: ["u", "r"]
+warmstart_checkpoint: null
+reward_cache_terms_enabled: false
+
+phase_a_v2_config:
+  feature_mode: scalar_only
+  target_u_rate: 0.10
+  target_r_rate: 0.02
+  train_heads: ["u", "r"]
+  warmstart_checkpoint: null
+  stable_cache_enabled: false
+  reward_cache_terms_enabled: false
 
 base_model:
   name_or_path: "inclusionAI/LLaDA2.1-mini"
@@ -15,6 +31,7 @@ base_model:
   routing_temperature: 0.1
   allow_python_fallback_ops: true
   soft_topk: 16
+  lossless_verification: false
 
 soft_mask:
   top_k: 5
@@ -27,30 +44,23 @@ policy:
   n_layers: 1
   n_heads: 4
   dropout: 0.0
+  feature_mode: scalar_only
+  target_u_rate: 0.10
+  target_r_rate: 0.02
   init_unmask_bias: -1.5
-  # Conservative heads avoid the cold-start failure where a random policy
-  # caches and remasks roughly half the sequence, making the thrash penalty
-  # dominate before correctness can provide signal.
   init_remask_bias: -4.0
   init_cache_bias: -2.0
   init_access_bias: -2.0
-  # V3 / Path C feature set (Jazbec et al. 2026 §3.2/§4.4 + PRISM as input):
-  # Enabled: c_t (max confidence), m_t, t/T, agreement, q_feat (PRISM)
-  # Disabled: H_t (hidden state), age, last_action, positional features
-  # H_t code path preserved — flip use_hidden_state back to true if reverting.
   use_positional_features: false
-  use_age_feature: false             # V3: dropped (V2 had true)
-  use_last_action_feature: false     # V3: dropped (V2 had true)
-  use_hidden_state: false            # V3: dropped — paper finds H_t hurts
-  use_max_confidence_feature: true   # V3: NEW — paper's primary input
-  use_quality_score_feature: true    # V3: keep (PRISM as input feature)
+  use_age_feature: false
+  use_last_action_feature: false
+  use_hidden_state: false
+  use_max_confidence_feature: true
+  use_quality_score_feature: true
   boundary_head:
     enabled: false
     num_bins: 8
   block_wise:
-    # Experimental Option A block-head training is opt-in. Keeping this false
-    # prevents stale/undertrained block-head checkpoints from hijacking the
-    # stable aoae/aoae_block paper paths.
     enabled: false
     context_left: 0
 
@@ -59,134 +69,84 @@ prism:
   threshold: 0.5
   train_samples: 1000
   epochs: 3
-  lr: 1.0e-3
+  lr: 0.001
   batch_size: 4
 
 cache:
-  enabled: true
-  # K_stable is learned but separate from the drafter/verifier frontier.
-  # Execution-level skipping is gated behind a runtime guard; see
-  # speculative_inference._stable_verifier_miss_fraction.
+  enabled: false
   stable_kv_cache: false
-  # Reuse the prompt and drafter cache between verifier events; reset on high
-  # verifier rejection.
   prefix_kv_cache: true
+
+warmstart:
+  enabled: true
+  feature_mode: scalar_only
+  lr: 0.0001
+  weight_decay: 0.01
+  epochs: 1
+  max_steps: 500
+  max_samples: 1000
+  max_grad_norm: 1.0
+  low_confidence_threshold: 0.15
+  lambda_rank: 0.1
+  lambda_rate: 0.1
+  lambda_hidden_gate: 0.0
+  rollout_overrides:
+    inference.steps: 256
+    inference.gen_length: 512
+    inference.speculative_schedule: aoae
+    inference.verifier_schedule.mode: candidate_budget
+    inference.verifier_schedule.draft_token_budget: 8
+    inference.verifier_schedule.max_draft_microsteps: 3
+    inference.primary_agree_threshold: 0.92
+    inference.max_unmask_fraction_per_step: 0.125
+    inference.disable_remask: false
+    base_model.lossless_verification: false
 
 grpo:
   enabled: true
-  group_size: 8
+  kl_coef: 0.01
+  group_size: 4
   clip_eps: 0.2
-  alpha: 1.0                       # speed reward exponent
-  beta: 0.1                        # thrash penalty weight (inert under κ=0; kept for compat)
+  alpha: 1.0
+  beta: 0.1
   thrash_normalization: "response_length"
   cache_speed_source: "none"
-  cache_speed_credit_cap: 0.0      # κ=0 ⇒ no transient/stable cache speed credit
-  thrash_age_decay: 0.1
-  access_reward_weight: 0.0        # q_t not trained
-  cache_quality_weight: 0.0        # κ_t not trained — disable dense F1 signal
-  block_wise_reward:
-    enabled: false
-    advance_weight: 0.05
-    max_steps_per_block: 8
-  warm_start_from: null            # v7 contract: head_unmask/head_remask never trained before
-  warm_start_strict: false
-  stability_lambda: 10.0
-  unresolved_penalty_weight: 0.25  # terminal penalty on lingering [M] tokens —
-                                   # EOS-aware in compute_reward (counts only
-                                   # masks before first EOS so trailing post-EOS
-                                   # masks don't get penalized — they're
-                                   # semantically irrelevant for answer extraction).
+  cache_speed_credit_cap: 0.0
+  access_reward_weight: 0.0
+  cache_quality_weight: 0.0
+  reward_cache_terms_enabled: false
+  unresolved_penalty_weight: 0.25
   min_checkpoint_reward: -1.0
-  # V3: lr 1e-4 → 3e-5. Paper-aligned (Jazbec et al. 2026 Appendix H, Table 1)
-  # — they trained a similar-sized policy (300K params) at 3e-5 with effective
-  # batch size 16 prompts. Our effective batch is 1 prompt, so by sqrt-scaling
-  # we should use even less, but 3e-5 is the well-validated reference; combined
-  # with V3's tighter grad clip (0.5) the effective update is conservative.
-  # 1e-4 is on the high end of the standard small-policy RL range, and V2's
-  # plateau is at least partly attributable to noise dominating signal.
-  lr: 3.0e-5
-  weight_decay: 0.01               # paper uses 0.1; for our 200K-param policy
-                                   # the difference is small — leaving alone.
-  epochs: 3
-  # V3: 500 → 1000 steps. Paper trained ~938 optimizer steps (1 epoch on
-  # ~15K samples / effective batch 16). Matches that scale. Wall-clock at
-  # ~33s/step ≈ 9h, within 12h SLURM budget.
-  max_steps: 1000
-  batch_size: 1
-  grad_accum_steps: 1
-  warmup_steps: 100                # matches paper exactly
-  # V3: 2.0 → 0.5. Paper uses 0.2; our smaller effective batch (1 prompt vs
-  # paper's 16) means individual gradients are noisier, so we keep some
-  # tolerance. 0.5 is the midpoint and lets meaningful directional signal
-  # through while damping the wildest noisy components.
-  max_grad_norm: 0.5
-  policy_temperature: 1.0
-  # V3: drop std-normalization per Jazbec et al. 2026 §3.3 (citing Zhao et
-  # al. 2025a as best practice). Group-mean centering only.
-  normalize_advantage_std: false
-
-  # V3: Expert Steering (Jazbec App F). Augment each GRPO group with E
-  # deterministic heuristic rollouts so a clean-slate policy receives
-  # guided exploration toward the canonical sampler. The expert rollout
-  # is produced by re-running speculative_inference with grpo.train_heads=[]
-  # which forces all action heads to their deterministic fallbacks
-  # (threshold-rule u_t, zero r_t/κ_t/q_t) — equivalent to our
-  # `quality_balanced_hardver` heuristic baseline. The mixture
-  # π^ES = G/(G+E)·π_φ + E/(G+E)·δ_expert is applied at training time only.
+  warm_start_from: "outputs/paper_final/train/policy_final.pt"
+  warm_start_strict: true
   expert_steering:
-    enabled: true
-    expert_count: 1                # E=1 per group; group becomes G+E=9
-
-
-  # v7: drafter learns u_t (aux microsteps), verifier learns r_t (primary
-  # microsteps); κ/q deferred until stability cache is enabled.  Scope flags
-  # gate which microstep type each trained head fires on (see
-  # _apply_frozen_action_heads in aoae/speculative_inference.py).
+    enabled: false
   train_heads: ["unmask", "remask"]
   include_heads_in_logprob: ["unmask", "remask"]
   unmask_scope: "drafter"
   remask_scope: "verifier"
   train_soft_mask: false
-
-  rollout_steps: 256               # match eval inference.steps=256 for RL-env faithfulness;
-                                   # speculative_inference early-stops when all rollouts complete
-                                   # (aoae/speculative_inference.py:855-858) so most rollouts
-                                   # finish in ≪ T microsteps — actual cost ≈ slowest in group.
-  rollout_gen_length: 512          # match eval (quality_balanced uses inference.gen_length=512)
-  # Mirror the quality_balanced_hardver eval point as the training target.
-  # Hardver Pareto-dominated soft verifier on the 50-sample qbal ablation
-  # (see paper/5_3_soft_gating_hurts_verifier-performance.md).
-  # aux_compute_ratio=1.0 is the critical fix: under lossless_verification=true,
-  # primary_forward → auxiliary_forward in DualModelWrapper, so aux and primary
-  # microsteps cost the same.  The default 0.35 is calibrated for the soft
-  # verifier case and would over-credit aux microsteps in the speed reward.
+  lr: 2.0e-5
+  weight_decay: 0.01
+  epochs: 1
+  max_steps: 2700
+  batch_size: 2
+  grad_accum_steps: 2
+  warmup_steps: 50
+  max_grad_norm: 0.5
+  policy_temperature: 1.0
+  normalize_advantage_std: false
+  save_every: 50
+  rollout_steps: 256
+  rollout_gen_length: 512
   rollout_overrides:
-    "base_model.lossless_verification": true
-    # V2: 0.92 → 0.5. At 0.92 the EMA-agreement-based force_next fires every
-    # step (EMA settles ~0.7), starving the drafter and triggering the death
-    # spiral observed in V1 (run 0zgxqmqe). 0.5 lets the drafter actually run
-    # so head_unmask gets a sustained gradient signal; eval still uses 0.92.
-    "inference.primary_agree_threshold": 0.5
-    # V3: PRISM as policy input feature (q_feat). Activates PRISM-score
-    # computation on verifier microsteps; acceptance_mode stays argmax_match
-    # (we are NOT gating verifier acceptance on PRISM, only feeding scores
-    # to the policy as additional context for r_t decisions).
-    "inference.verifier.use_prism_score": true
-    # Under hardver, primary_forward == auxiliary_forward, so running aux on
-    # a verifier microstep is a wasted second forward.  Disabling it removes
-    # one source of redundant compute.  Acceptance still uses argmax_match
-    # against the drafter's *frontier* tokens (committed earlier), not a
-    # fresh aux pass, so this is safe.
-    "inference.drafter.run_on_verifier": "never"
-    # Speed reward shape under hardver (TPS-equivalent framing):
-    # Under hardver every forward has equal wall-clock cost, so the only
-    # speed lever the speculative pipeline has is "fewer rejections" (each
-    # rejection triggers recompute_after_reject = an extra primary forward).
-    # Setting aux_compute_ratio=0 makes aux microsteps "free" in the reward
-    # so eff_flops = verifier_units / T ≈ M_verifier × (1 + p_reject) / T,
-    # which is exactly the TPS-relevant cost: minimize verifier calls AND
-    # keep rejection rate low (= maximize committed tokens per forward).
-    "inference.drafter.aux_compute_ratio": 0.0
+    base_model.lossless_verification: true
+    inference.primary_agree_threshold: 0.5
+    inference.verifier.use_prism_score: true
+    inference.drafter.run_on_verifier: never
+    inference.drafter.aux_compute_ratio: 0.0
+    inference.positional_cache.enabled: false
+    inference.drafter.fast_path: false
 
 inference:
   speculative_schedule: "aoae"
@@ -201,7 +161,7 @@ inference:
     use_block_diffusion: true
     max_post_steps: 16
     gen_length: 512
-    eos_early_stop: false   # masked diffusion fills all positions; EOS is just another token
+    eos_early_stop: false
     enable_mbe: false
     speed:
       threshold: 0.5
@@ -211,24 +171,25 @@ inference:
       editing_threshold: 0.5
   verifier_schedule:
     mode: "candidate_budget"
-    draft_token_budget: 12
+    draft_token_budget: 8
     min_draft_microsteps: 1
-    max_draft_microsteps: 4
+    max_draft_microsteps: 3
     force_first_last: true
   verifier:
     acceptance_mode: "argmax_match"
     rejection_action: "remask"
-    use_prism_score: false
+    use_prism_score: true
     prism_accept_threshold: 0.5
     recompute_after_reject: true
   drafter:
     confidence_threshold: 0.7
     aux_compute_ratio: 0.35
     run_on_verifier: "auto"
-  primary_agree_threshold: 0.85
+    fast_path: false
+  primary_agree_threshold: 0.92
   aux_cache_reset_threshold: 0.35
   positional_cache:
-    enabled: true
+    enabled: false
     horizon: 4
     refresh_budget: 32
     candidate_policy: "learned_topb"
@@ -242,17 +203,7 @@ inference:
     top_k: 4
     min_overlap: 1
     min_streak: 2
-    grid:
-      argmax_match: [0.0]
-      topk_overlap: [0.0]
-      min_confidence: [0.3, 0.5, 0.7, 0.9]
-      min_margin: [0.0, 0.1, 0.2, 0.4]
-      js_divergence: [0.01, 0.03, 0.05, 0.1]
-      temporal_confidence: [0.3, 0.5, 0.7]
-  block_length: 32
   block_speculative:
-    # Block-local speculative decoding: cheap speed-mode draft microsteps,
-    # then one quality verifier pass over the current block frontier.
     draft_threshold: 0.5
     draft_editing_threshold: 0.0
     enable_draft_editing: false
@@ -263,13 +214,13 @@ inference:
     verifier_mode: "primary"
     self_accept_min_confidence: 0.95
     force_verify_every_n_self_accepts: 0
-  compose_gamma: 0 #0.5
+  compose_gamma: 0
 
 analysis:
   track_kv_dynamics: false
-  track_attention_deviation: true  # per-layer attention deviation tracking
-  keep_step_traces: true           # per-step action/mask ratios (for analysis)
-  log_speculative_config: false    # print one rollout-level speculative mode summary
+  track_attention_deviation: true
+  keep_step_traces: true
+  log_speculative_config: false
   locality_windows: [8, 16, 32]
   confidence_threshold: 0.9
   attention_proxy_top_frac: 0.1
@@ -280,409 +231,87 @@ data:
   train_max_samples: 1000
   eval_dataset: "openai/gsm8k"
   eval_split: "test"
+  eval_max_samples: 1319
   use_chat_template: "auto"
   math_prompt_style: "auto"
   gsm8k_num_fewshot: 0
-  eval_max_samples: 50
   max_prompt_len: 512
   max_answer_len: 256
 
 evaluation:
   task_type: "math"
-  debug_logging: false      # set true to print first 3 decoded samples per method
-  save_predictions: true    # save eval_predictions.json for post-hoc analysis
+  debug_logging: false
+  save_predictions: true
   max_saved_predictions: 50
-  # Default reproduction protects the block-diffusion track that yielded the
-  # stable 0.7+ AOAE block Pareto points.  Run with
-  # `--generation_mode_filter any_order` to evaluate the newer tractable
-  # any-order/block-head experiments and the semi-any-order LLaDA baselines.
-  generation_mode_filter: "block"
+  generation_mode_filter: "all"
   baseline_methods:
-    # block-diffusion track
     - "llada21_speed_mode"
     - "llada21_quality_mode"
-    # any-order track
     - "llada21_speed_anyorder"
     - "llada21_quality_anyorder"
     - "fast_dllm"
-  # Production AOAE Pareto frontier: operating points that span the
-  # speed/quality plane.
-  #
-  #   quality_max:       soft-routed primary, low draft budget    -> top accuracy
-  #   quality_balanced:  soft-routed primary, medium draft budget -> sweet spot
-  #   speed_hybrid:      block-local fast drafter + soft verifier for risky frontiers
-  #   speed_lossless:    hard verifier self-accepts frontiers that would be redundant
-  #
-  # Points with generation_mode: any_order are intentionally excluded from the
-  # default block track.  They are for the newer tractable any-order/block-head
-  # experiment and must not hijack the stable aoae_block heuristic variants.
-  #
-  # The block-local points are the true speculative-decoding analogue: they
-  # draft several current-block updates using speed-mode thresholds, then spend
-  # one verifier pass to validate/correct the whole frontier.  This avoids
-  # scoring future response blocks and is the path expected to beat LLaDA TPS.
   speculative_sweep:
     enabled: true
     points:
-      - name: "quality_max"
-        policy_temperature: 0.7
-        overrides:
-          "base_model.lossless_verification": false
-          "cache.prefix_kv_cache": true
-          "inference.speculative_schedule": "aoae"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 4
-          "inference.verifier_schedule.max_draft_microsteps": 1
-          "inference.primary_agree_threshold": 0.98
-          "inference.max_unmask_fraction_per_step": 0.0625
-          "inference.disable_remask": false
-      # quality_max ablations: same 2x2 design as quality_balanced — does the
-      # soft-vs-hard verifier or q-vs-s drafter result hold at the more
-      # conservative quality_max operating point?
-      - name: "quality_max_hardver"
-        policy_temperature: 0.7
-        overrides:
-          "base_model.lossless_verification": true
-          "cache.prefix_kv_cache": true
-          "inference.speculative_schedule": "aoae"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 4
-          "inference.verifier_schedule.max_draft_microsteps": 1
-          "inference.primary_agree_threshold": 0.98
-          "inference.max_unmask_fraction_per_step": 0.0625
-          "inference.disable_remask": false
-      - name: "quality_max_sq"
-        policy_temperature: 0.7
-        overrides:
-          "base_model.lossless_verification": false
-          "cache.prefix_kv_cache": true
-          "inference.speculative_schedule": "aoae"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 8
-          "inference.verifier_schedule.max_draft_microsteps": 2
-          "inference.primary_agree_threshold": 0.98
-          "inference.max_unmask_fraction_per_step": 0.125
-          "inference.disable_remask": false
-          "inference.drafter.confidence_threshold": 0.5
-      - name: "quality_max_sq_hardver"
-        policy_temperature: 0.7
-        overrides:
-          "base_model.lossless_verification": true
-          "cache.prefix_kv_cache": true
-          "inference.speculative_schedule": "aoae"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 8
-          "inference.verifier_schedule.max_draft_microsteps": 2
-          "inference.primary_agree_threshold": 0.98
-          "inference.max_unmask_fraction_per_step": 0.125
-          "inference.disable_remask": false
-          "inference.drafter.confidence_threshold": 0.5
-      - name: "quality_balanced"
-        policy_temperature: 1.0
-        overrides:
-          "base_model.lossless_verification": false
-          "inference.speculative_schedule": "aoae"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 8
-          "inference.verifier_schedule.max_draft_microsteps": 3
-          "inference.primary_agree_threshold": 0.92
-          "inference.max_unmask_fraction_per_step": 0.125
-          "inference.disable_remask": false
-      # Ablation A: same as quality_balanced but verifier uses hard routing
-      # (top-8 native experts) instead of soft routing (top-16). Implemented
-      # via base_model.lossless_verification=true, which short-circuits
-      # primary_forward to auxiliary_forward inside DualModelWrapper. Tests
-      # whether the soft-gated verifier is actually contributing accuracy at
-      # the quality_balanced operating point, or whether the trained AOAE
-      # head is doing the work and the wider experts are just slower.
-      - name: "quality_balanced_hardver"
-        policy_temperature: 1.0
-        overrides:
-          "base_model.lossless_verification": true
-          "inference.speculative_schedule": "aoae"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 8
-          "inference.verifier_schedule.max_draft_microsteps": 3
-          "inference.primary_agree_threshold": 0.92
-          "inference.max_unmask_fraction_per_step": 0.125
-          "inference.disable_remask": false
-      # PRISM-validation point: same as quality_balanced_hardver but verifier
-      # gates acceptance on PRISM quality score (≥0.5) in addition to
-      # argmax_match. Used to test whether outputs/paper/prism_adapter.pt
-      # produces reliable per-position quality scores. If accuracy ≈ 0.86 or
-      # higher, PRISM is reliable and can be re-enabled in the AOAE policy
-      # input (q_feat) and/or used to warm-start head_unmask. If accuracy
-      # drops substantially, the checkpoint is stale and we should retrain
-      # PRISM before using it.
-      - name: "quality_balanced_hardver_prism"
-        policy_temperature: 1.0
-        overrides:
-          "base_model.lossless_verification": true
-          "inference.speculative_schedule": "aoae"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 8
-          "inference.verifier_schedule.max_draft_microsteps": 3
-          "inference.primary_agree_threshold": 0.92
-          "inference.max_unmask_fraction_per_step": 0.125
-          "inference.disable_remask": false
-          "inference.verifier.use_prism_score": true
-          "inference.verifier.acceptance_mode": "prism_gate"
-          "inference.verifier.prism_accept_threshold": 0.5
-      # Ablation B: quality_balanced + s/q drafter dynamics. The "s" side is
-      # encoded by lowering drafter.confidence_threshold (0.7 -> 0.5) and
-      # raising the per-step unmask cap and verifier-cycle budget so the
-      # drafter can propose more tokens in parallel between verifier calls.
-      # Verifier still uses soft routing (q-side). u_t is not a trained head
-      # (train_heads=[cache,access]), so this shifts the candidate pool size
-      # without invalidating policy calibration; only kappa_t/q_t see a
-      # different agreement-signal distribution.
-      - name: "quality_balanced_sq"
-        policy_temperature: 1.0
-        overrides:
-          "base_model.lossless_verification": false
-          "inference.speculative_schedule": "aoae"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 16
-          "inference.verifier_schedule.max_draft_microsteps": 4
-          "inference.primary_agree_threshold": 0.92
-          "inference.max_unmask_fraction_per_step": 0.25
-          "inference.disable_remask": false
-          "inference.drafter.confidence_threshold": 0.5
-      # Ablation C: combine A and B — aggressive drafter + hard verifier.
-      # Disambiguates whether any TPS win from sq dynamics requires the
-      # soft-gated verifier or holds under the cheaper hard verifier.
-      - name: "quality_balanced_sq_hardver"
-        policy_temperature: 1.0
-        overrides:
-          "base_model.lossless_verification": true
-          "inference.speculative_schedule": "aoae"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 16
-          "inference.verifier_schedule.max_draft_microsteps": 4
-          "inference.primary_agree_threshold": 0.92
-          "inference.max_unmask_fraction_per_step": 0.25
-          "inference.disable_remask": false
-          "inference.drafter.confidence_threshold": 0.5
-      # Block-mode counterparts of the quality_* points: same conservative
-      # knobs (low temp, small draft budget, slow unmask, remask enabled),
-      # but routed through the block frontier scheduler so the policy and
-      # verifier are restricted to the current 32-token block.  Lets us
-      # decouple "conservative settings" from "any-order policy scope" and
-      # see whether the quality wins of quality_* come from the conservative
-      # bundle or specifically from operating any-order.  Block-spec knobs
-      # set explicitly (not inherited) to keep the verifier conservative.
-      # Disabled by default: these exercise the new trained block-head path
-      # (`aoae_block_policy`), which is useful for the tractable any-order
-      # research track but must not enter the paper block Pareto table until a
-      # matching block-head checkpoint clears the accuracy gate.
-      - name: "quality_max_block"
-        enabled: false
+      - name: "qbal_tau0.5_lossy"
         generation_mode: "any_order"
-        policy_temperature: 0.7
+        policy_temperature: 0.5
         overrides:
-          "base_model.lossless_verification": false
-          "cache.prefix_kv_cache": true
-          "inference.speculative_schedule": "aoae_block_policy"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 4
-          "inference.verifier_schedule.max_draft_microsteps": 1
-          "inference.max_unmask_fraction_per_step": 0.0625
-          "inference.disable_remask": false
-          "inference.block_speculative.draft_threshold": 0.5
-          "inference.block_speculative.verifier_threshold": 0.7
-          "inference.block_speculative.verifier_editing_threshold": 0.5
-          "inference.block_speculative.max_verifier_steps_per_block": 12
-          "inference.block_speculative.rejection_action": "correct_confident"
-          "inference.block_speculative.verifier_mode": "primary"
-      - name: "quality_balanced_block"
-        enabled: false
+          base_model.lossless_verification: false
+          inference.speculative_schedule: aoae
+          inference.verifier_schedule.mode: candidate_budget
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.92
+          inference.max_unmask_fraction_per_step: 0.125
+          inference.disable_remask: false
+      - name: "qbal_tau1.0_lossy"
         generation_mode: "any_order"
         policy_temperature: 1.0
         overrides:
-          "base_model.lossless_verification": false
-          "inference.speculative_schedule": "aoae_block_policy"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 8
-          "inference.verifier_schedule.max_draft_microsteps": 3
-          "inference.max_unmask_fraction_per_step": 0.125
-          "inference.disable_remask": false
-          "inference.block_speculative.draft_threshold": 0.5
-          "inference.block_speculative.verifier_threshold": 0.7
-          "inference.block_speculative.verifier_editing_threshold": 0.5
-          "inference.block_speculative.max_verifier_steps_per_block": 10
-          "inference.block_speculative.rejection_action": "correct_confident"
-          "inference.block_speculative.verifier_mode": "primary"
-      # Block-local speed points keep verifier work on the current 32-token
-      # block, so the speculative frontier saves both verifier calls and
-      # sequence length.  This is the fair TPS comparison against LLaDA's
-      # official block-diffusion baselines.
-      - name: "speed_balanced"
+          base_model.lossless_verification: false
+          inference.speculative_schedule: aoae
+          inference.verifier_schedule.mode: candidate_budget
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.92
+          inference.max_unmask_fraction_per_step: 0.125
+          inference.disable_remask: false
+      - name: "qbal_tau0.5_lossless"
+        generation_mode: "any_order"
+        policy_temperature: 0.5
+        overrides:
+          base_model.lossless_verification: true
+          inference.speculative_schedule: aoae
+          inference.verifier_schedule.mode: candidate_budget
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.92
+          inference.max_unmask_fraction_per_step: 0.125
+          inference.disable_remask: false
+      - name: "qbal_tau1.0_lossless"
+        generation_mode: "any_order"
         policy_temperature: 1.0
         overrides:
-          "base_model.lossless_verification": false
-          "inference.speculative_schedule": "aoae_block"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 24
-          "inference.verifier_schedule.max_draft_microsteps": 3
-          "inference.block_speculative.draft_threshold": 0.45
-          "inference.block_speculative.verifier_threshold": 0.7
-          "inference.block_speculative.verifier_editing_threshold": 0.5
-          "inference.block_speculative.max_verifier_steps_per_block": 8
-          "inference.block_speculative.rejection_action": "replace"
-          "inference.block_speculative.verifier_mode": "confidence_gate"
-          "inference.block_speculative.self_accept_min_confidence": 0.90
-          "inference.block_speculative.force_verify_every_n_self_accepts": 2
-          "inference.max_unmask_fraction_per_step": 0.1875
-          "inference.disable_remask": false
-          "inference.drafter.fast_path": true
-      - name: "speed_max"
-        policy_temperature: 1.25
-        overrides:
-          "base_model.lossless_verification": true
-          "inference.speculative_schedule": "aoae_block"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 28
-          "inference.verifier_schedule.max_draft_microsteps": 4
-          "inference.block_speculative.draft_threshold": 0.5
-          "inference.block_speculative.draft_editing_threshold": 0.0
-          "inference.block_speculative.enable_draft_editing": true
-          "inference.block_speculative.verifier_threshold": 0.7
-          "inference.block_speculative.verifier_editing_threshold": 0.5
-          "inference.block_speculative.max_verifier_steps_per_block": 7
-          "inference.block_speculative.verifier_compute_ratio": 1.0
-          "inference.block_speculative.rejection_action": "replace"
-          "inference.block_speculative.verifier_mode": "self_accept_lossless"
-          "inference.max_unmask_fraction_per_step": 0.25
-          "inference.disable_remask": true
-          "inference.drafter.fast_path": true
-      - name: "speed_extreme"
-        policy_temperature: 1.5
-        overrides:
-          "base_model.lossless_verification": true
-          "inference.speculative_schedule": "aoae_block"
-          "inference.block_length": 64
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 64
-          "inference.verifier_schedule.max_draft_microsteps": 4
-          "inference.block_speculative.draft_threshold": 0.35
-          "inference.block_speculative.draft_editing_threshold": 0.0
-          "inference.block_speculative.enable_draft_editing": true
-          "inference.block_speculative.verifier_threshold": 0.55
-          "inference.block_speculative.verifier_editing_threshold": 0.0
-          "inference.block_speculative.max_verifier_steps_per_block": 6
-          "inference.block_speculative.verifier_compute_ratio": 1.0
-          "inference.block_speculative.rejection_action": "replace"
-          "inference.block_speculative.verifier_mode": "self_accept_lossless"
-          "inference.max_unmask_fraction_per_step": 0.3125
-          "inference.disable_remask": true
-          "inference.drafter.fast_path": true
-          "inference.positional_cache.enabled": false
-      # AOAE-LLaDA-SQ: same LLaDA 2.1 model, hard routing for both passes.
-      # Drafter applies the s-mode rule (tau=0.5, no T2T edits); verifier
-      # applies the q-mode rule (tau=0.7, edit=0.5).  Because both forwards
-      # use auxiliary_forward, set_hard_routing short-circuits between calls
-      # and there is no MoE-routing toggle cost.  Thresholds match the
-      # llada21_speed_mode / llada21_quality_mode baselines exactly.
-      - name: "aoae_llada_sq"
-        policy_temperature: 1.0
-        overrides:
-          "inference.speculative_schedule": "aoae_block"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 24
-          "inference.verifier_schedule.max_draft_microsteps": 3
-          "inference.block_speculative.verifier_routing": "auxiliary"
-          "inference.block_speculative.draft_threshold": 0.5
-          "inference.block_speculative.draft_editing_threshold": 0.0
-          "inference.block_speculative.enable_draft_editing": false
-          "inference.block_speculative.verifier_threshold": 0.7
-          "inference.block_speculative.verifier_editing_threshold": 0.5
-          "inference.block_speculative.max_verifier_steps_per_block": 16
-          "inference.block_speculative.verifier_mode": "primary"
-          "inference.block_speculative.rejection_action": "correct_confident"
-          "inference.disable_remask": false
-      # AOAE-LLaDA-SQ with soft-routed q-mode verifier: drafter still uses
-      # hard routing (s-mode, threshold=0.5, no T2T edits) via auxiliary_forward,
-      # but the verifier routes through primary_forward with the widened
-      # soft_topk routing — i.e., "experts on" for verification.  Tests whether
-      # paying the soft-routing cost only on verifier passes recovers quality
-      # without the full cost of soft routing on every drafter microstep.
-      # All other knobs match aoae_llada_sq exactly so the only delta is
-      # verifier_routing.
-      - name: "aoae_llada_sq_softver"
-        policy_temperature: 1.0
-        overrides:
-          "inference.speculative_schedule": "aoae_block"
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 24
-          "inference.verifier_schedule.max_draft_microsteps": 3
-          "inference.block_speculative.verifier_routing": "primary"
-          "inference.block_speculative.draft_threshold": 0.5
-          "inference.block_speculative.draft_editing_threshold": 0.0
-          "inference.block_speculative.enable_draft_editing": false
-          "inference.block_speculative.verifier_threshold": 0.7
-          "inference.block_speculative.verifier_editing_threshold": 0.5
-          "inference.block_speculative.max_verifier_steps_per_block": 16
-          "inference.block_speculative.verifier_mode": "primary"
-          "inference.block_speculative.rejection_action": "correct_confident"
-          "inference.disable_remask": false
-      # AOAE-LLaDA-SQ any-order: same self-speculative idea as aoae_llada_sq
-      # but on the any-order (full-sequence) schedule.  lossless_verification
-      # routes every primary_forward through auxiliary_forward, so both
-      # drafter and verifier use hard routing on the same MoE — zero routing
-      # toggle cost between calls.  Drafter applies the s-mode threshold
-      # (confidence_threshold=0.5).  The any-order verifier validates by
-      # argmax_match (q-mode-style conservative acceptance); it does not
-      # expose the q-mode T2T edit rule, which is a known mapping gap vs the
-      # block-local aoae_llada_sq variant.
-      - name: "aoae_llada_sq_anyorder"
-        policy_temperature: 1.0
-        overrides:
-          "base_model.lossless_verification": true
-          "inference.speculative_schedule": "aoae"
-          "inference.drafter.confidence_threshold": 0.5
-          "inference.verifier_schedule.mode": "candidate_budget"
-          "inference.verifier_schedule.draft_token_budget": 8
-          "inference.verifier_schedule.max_draft_microsteps": 3
-          "inference.verifier.acceptance_mode": "argmax_match"
-          "inference.primary_agree_threshold": 0.92
-          "inference.max_unmask_fraction_per_step": 0.125
-          "inference.disable_remask": false
-      # - name: "speed_ceiling"
-      #   policy_temperature: 1.5
-      #   overrides:
-      #     "base_model.lossless_verification": true
-      #     "inference.speculative_schedule": "aoae_block"
-      #     "inference.block_length": 64
-      #     "inference.verifier_schedule.mode": "candidate_budget"
-      #     "inference.verifier_schedule.draft_token_budget": 64
-      #     "inference.verifier_schedule.max_draft_microsteps": 2
-      #     "inference.block_speculative.draft_threshold": 0.0
-      #     "inference.block_speculative.draft_editing_threshold": 0.0
-      #     "inference.block_speculative.enable_draft_editing": true
-      #     "inference.block_speculative.max_verifier_steps_per_block": 2
-      #     "inference.block_speculative.verifier_compute_ratio": 1.0
-      #     "inference.block_speculative.rejection_action": "replace"
-      #     "inference.block_speculative.verifier_mode": "self_accept_lossless"
-      #     "inference.max_unmask_fraction_per_step": 1.0
-      #     "inference.disable_remask": true
-      #     "inference.drafter.fast_path": true
-      #     "inference.positional_cache.enabled": false
-  code:
-    timeout_sec: 3.0
-    cpu_time_limit_sec: 2
-    memory_limit_mb: 1024
-
-logging:
-  project: "spec-dlm-grpo"
-  run_name: "grpo_v3_pathC_es_prism"
-  log_every: 10
-  eval_every: 200
-  save_every: 50
-  output_dir: "outputs/grpo_v3/"
-  use_wandb: true
+          base_model.lossless_verification: true
+          inference.speculative_schedule: aoae
+          inference.verifier_schedule.mode: candidate_budget
+          inference.verifier_schedule.draft_token_budget: 8
+          inference.verifier_schedule.max_draft_microsteps: 3
+          inference.primary_agree_threshold: 0.92
+          inference.max_unmask_fraction_per_step: 0.125
+          inference.disable_remask: false
 
 hardware:
+  tp_size: 1
+  dp_size: 4
   seed: 42
-  bf16: true
-  tp_size: 2          # 2-GPU EP/TP-shared GRPO (validated by smoke v3/v4)
   deterministic: false
+  bf16: true
+
+logging:
+  run_name: "paper_train"
+  output_dir: "outputs/paper_final/train/"
+  log_every: 1
+  save_every: 50
+  use_wandb: true

@@ -503,7 +503,7 @@ class TestFingerprintStability:
         cfg_a = self._base_cfg()
         cfg_b = self._base_cfg()
         cfg_a["hardware"] = {"tp_size": 1}
-        cfg_b["hardware"] = {"tp_size": 2}
+        cfg_b["hardware"] = {"tp_size": 4}
 
         assert build_grpo_config_fingerprint(cfg_a) != build_grpo_config_fingerprint(cfg_b)
 

@@ -1,196 +1,122 @@
 from pathlib import Path
-import copy
 
-import yaml
+from aoae.cli import _load_config
+from aoae.evaluate import _build_speculative_eval_points, _get_baseline_methods
 
 
 ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_CONFIGS = {
+    "paper.yaml",
+    "paper_smoke.yaml",
+    "eval_gsm8k.yaml",
+    "eval_math500.yaml",
+    "eval_humaneval.yaml",
+    "ablation.yaml",
+}
 
 
-def _load_yaml(path: str):
-    with (ROOT / path).open() as f:
-        return yaml.safe_load(f)
+def _cfg(name: str) -> dict:
+    return _load_config(str(ROOT / "configs" / name))
 
 
-def test_llada21_soft_config_uses_explicit_widened_router_budget():
-    cfg = _load_yaml("configs/llada21_soft.yaml")
-
-    assert cfg["base_model"]["backend"] == "soft_moe"
-    assert cfg["base_model"]["soft_topk"] == 16
-    assert cfg["evaluation"]["baseline_methods"] == [
-        "llada21_speed_mode",
-        "llada21_quality_mode",
-    ]
+def test_configs_directory_is_submission_surface_only():
+    observed = {path.name for path in (ROOT / "configs").glob("*.yaml")}
+    assert observed == EXPECTED_CONFIGS
 
 
-def test_poc1_config_matches_routing_only_paper_setup():
-    cfg = _load_yaml("configs/poc1.yaml")
+def test_all_canonical_configs_load_through_public_loader():
+    for name in sorted(EXPECTED_CONFIGS):
+        cfg = _cfg(name)
+        assert cfg["base_model"]["backend"] == "dual"
+        assert cfg["data"]["eval_dataset"]
+        assert cfg["logging"]["output_dir"].startswith("outputs/")
 
-    assert cfg["base_model"]["backend"] == "dual"
-    assert cfg["base_model"]["soft_topk"] == 16
-    assert cfg["inference"]["speculative_schedule"] == "llada21_block"
-    assert cfg["inference"]["disable_remask"] is True
 
+def test_paper_config_is_v4_quality_balanced_scalar_grpo_contract():
+    cfg = _cfg("paper.yaml")
 
-def test_paper_config_enables_full_aoae_stack():
-    cfg = _load_yaml("configs/paper.yaml")
-
-    assert cfg["base_model"]["backend"] == "dual"
-    assert cfg["grpo"]["enabled"] is True
-    assert cfg["data"]["use_chat_template"] == "auto"
-    assert cfg["data"]["math_prompt_style"] == "auto"
-    assert cfg["data"]["max_answer_len"] == 256
-    # The canonical paper config now enumerates both block-mode and any-order
-    # LLaDA2.1 baselines so the eval table includes a fair comparison against
-    # the official block decoder *and* the any-order single-block variant the
-    # paper analyses for AOAE.  Fast-dLLM remains the parallel-decode anchor.
-    assert cfg["evaluation"]["baseline_methods"] == [
-        "llada21_speed_mode",
-        "llada21_quality_mode",
-        "llada21_speed_anyorder",
-        "llada21_quality_anyorder",
-        "fast_dllm",
-    ]
-    assert cfg["evaluation"]["generation_mode_filter"] == "block"
-    assert cfg["evaluation"]["save_predictions"] is True
-    assert cfg["grpo"]["thrash_normalization"] == "response_length"
-    assert cfg["grpo"]["cache_speed_source"] == "none"
-    assert cfg["grpo"]["cache_quality_weight"] == 0.02
-    assert cfg["grpo"]["access_reward_weight"] == 0.0
-    assert cfg["grpo"]["min_checkpoint_reward"] < 0.0
-    assert cfg["grpo"]["train_heads"] == ["cache", "access"]
-    assert cfg["grpo"]["include_heads_in_logprob"] == ["cache", "access"]
-    assert cfg["grpo"]["train_soft_mask"] is False
-    assert cfg["policy"]["init_unmask_bias"] < 0
-    assert cfg["policy"]["init_remask_bias"] < 0
-    assert cfg["policy"]["init_cache_bias"] < 0
-    assert cfg["inference"]["max_unmask_fraction_per_step"] <= 0.125
-    assert cfg["inference"]["llada21_official"]["eos_early_stop"] is False
-    assert cfg["inference"]["llada21_official"]["gen_length"] == 512
-    assert cfg["base_model"]["soft_topk"] == 16
+    assert cfg["phase_a_v2"] is True
+    assert cfg["feature_mode"] == "scalar_only"
+    assert cfg["phase_a_v2_config"]["target_u_rate"] == 0.10
+    assert cfg["phase_a_v2_config"]["target_r_rate"] == 0.02
+    assert cfg["cache"]["enabled"] is False
     assert cfg["cache"]["stable_kv_cache"] is False
-    assert cfg["inference"]["positional_cache"]["enabled"] is True
-    # The canonical paper config disables composition; gamma=0 returns the
-    # verifier distribution exactly and matches the lossless-verification
-    # sanity-check operating point.
-    assert cfg["inference"]["compose_gamma"] == 0
-    assert cfg["inference"]["verifier_schedule"]["mode"] == "candidate_budget"
-    assert cfg["inference"]["verifier_schedule"]["draft_token_budget"] == 12
-    assert cfg["inference"]["verifier_schedule"]["max_draft_microsteps"] == 4
-    assert cfg["inference"]["verifier"]["acceptance_mode"] == "argmax_match"
-    assert cfg["inference"]["verifier"]["rejection_action"] == "remask"
-    assert cfg["inference"]["verifier"]["recompute_after_reject"] is True
-    assert cfg["inference"]["drafter"]["confidence_threshold"] == 0.7
-    assert cfg["inference"]["drafter"]["aux_compute_ratio"] == 0.35
-    assert cfg["inference"]["drafter"]["run_on_verifier"] == "auto"
-    sweep_points = cfg["evaluation"]["speculative_sweep"]["points"]
-    assert any(
-        point["overrides"].get("inference.speculative_schedule") == "aoae_block"
-        for point in sweep_points
-    )
-    assert any(
-        point["overrides"].get("inference.speculative_schedule") == "aoae_block_policy"
-        and point.get("generation_mode") == "any_order"
-        for point in sweep_points
-    )
-    assert any(
-        point["overrides"].get("inference.block_speculative.verifier_mode") == "self_accept_lossless"
-        for point in sweep_points
-    )
-    for point in sweep_points:
-        overrides = point.get("overrides", {})
-        if overrides.get("inference.speculative_schedule") == "aoae_block":
-            # The block schedule supports two rejection actions.  ``replace``
-            # substitutes the verifier's argmax for rejected drafts while
-            # ``correct_confident`` only replaces drafts the verifier is
-            # confident about and remasks the rest; both are valid operating
-            # points that the canonical sweep exercises across the Pareto.
-            assert overrides.get("inference.block_speculative.rejection_action") in (
-                "replace",
-                "correct_confident",
-            )
-    assert cfg["hardware"]["tp_size"] == 1
+    assert cfg["reward_cache_terms_enabled"] is False
 
+    grpo = cfg["grpo"]
+    assert grpo["enabled"] is True
+    assert grpo["train_heads"] == ["unmask", "remask"]
+    assert grpo["include_heads_in_logprob"] == ["unmask", "remask"]
+    assert grpo["reward_cache_terms_enabled"] is False
+    assert grpo["cache_speed_source"] == "none"
+    assert grpo["cache_quality_weight"] == 0.0
+    assert grpo["access_reward_weight"] == 0.0
+    assert grpo["expert_steering"]["enabled"] is False
+    assert grpo["warm_start_from"] == "outputs/paper_final/train/policy_final.pt"
 
-def test_paper_config_keeps_block_and_any_order_eval_tracks_separate():
-    from aoae.evaluate import _build_speculative_eval_points, _get_baseline_methods
-
-    cfg = _load_yaml("configs/paper.yaml")
+    assert cfg["policy"]["feature_mode"] == "scalar_only"
+    assert cfg["policy"]["use_hidden_state"] is False
+    assert cfg["policy"]["use_max_confidence_feature"] is True
+    assert cfg["policy"]["use_quality_score_feature"] is True
+    assert cfg["inference"]["verifier_schedule"]["draft_token_budget"] == 8
+    assert cfg["inference"]["verifier_schedule"]["max_draft_microsteps"] == 3
+    assert cfg["inference"]["primary_agree_threshold"] == 0.92
 
     assert _get_baseline_methods(cfg) == [
         "llada21_speed_mode",
         "llada21_quality_mode",
-    ]
-    block_points = _build_speculative_eval_points(cfg, explicit_policy_temperatures=None)
-    block_names = [point["name"] for point in block_points]
-    assert block_names == [
-        "speed_balanced",
-        "speed_max",
-        "speed_extreme",
-        "aoae_llada_sq",
-        "aoae_llada_sq_softver",
-    ]
-    assert all(
-        point["overrides"].get("inference.speculative_schedule") != "aoae_block_policy"
-        for point in block_points
-    )
-
-    any_order_cfg = copy.deepcopy(cfg)
-    any_order_cfg["evaluation"]["generation_mode_filter"] = "any_order"
-    assert _get_baseline_methods(any_order_cfg) == [
         "llada21_speed_anyorder",
         "llada21_quality_anyorder",
         "fast_dllm",
     ]
-    any_order_points = _build_speculative_eval_points(
-        any_order_cfg,
-        explicit_policy_temperatures=None,
-    )
-    any_order_names = [point["name"] for point in any_order_points]
-    assert any_order_names == [
-        "quality_max",
-        "quality_max_hardver",
-        "quality_max_sq",
-        "quality_max_sq_hardver",
-        "quality_balanced",
-        "quality_balanced_hardver",
-        "quality_balanced_hardver_prism",
-        "quality_balanced_sq",
-        "quality_balanced_sq_hardver",
-        "aoae_llada_sq_anyorder",
+    points = _build_speculative_eval_points(cfg, explicit_policy_temperatures=None)
+    assert [point["name"] for point in points] == [
+        "qbal_tau0.5_lossy",
+        "qbal_tau1.0_lossy",
+        "qbal_tau0.5_lossless",
+        "qbal_tau1.0_lossless",
     ]
+    assert all(point["generation_mode"] == "any_order" for point in points)
 
 
-def test_phase_a_v2_configs_disable_cache_terms_and_train_only_u_r():
-    from aoae.cli import _load_config
+def test_eval_configs_share_final_sweep_and_dataset_specific_contracts():
+    point_names = None
+    expected = {
+        "eval_gsm8k.yaml": ("openai/gsm8k", "math", 1319),
+        "eval_math500.yaml": ("HuggingFaceH4/MATH-500", "math", 500),
+        "eval_humaneval.yaml": ("openai/openai_humaneval", "code", 164),
+    }
 
-    config_names = [
-        "v2_warmstart_scalar_only.yaml",
-        "v2_warmstart_hidden_residual.yaml",
-        "v2_grpo_scalar_only.yaml",
-        "v2_grpo_hidden_residual.yaml",
-        "v2_grpo_hidden_residual_expert_steering.yaml",
+    for name, (dataset, task_type, samples) in expected.items():
+        cfg = _cfg(name)
+        assert cfg["grpo"]["enabled"] is False
+        assert cfg["warmstart"]["enabled"] is False
+        assert cfg["data"]["eval_dataset"] == dataset
+        assert cfg["data"]["eval_max_samples"] == samples
+        assert cfg["evaluation"]["task_type"] == task_type
+        assert cfg["hardware"]["tp_size"] == 1
+        names = [point["name"] for point in _build_speculative_eval_points(cfg, None)]
+        point_names = point_names or names
+        assert names == point_names
+
+    human = _cfg("eval_humaneval.yaml")
+    assert human["evaluation"]["code"]["timeout_sec"] == 3.0
+    assert human["data"]["math_prompt_style"] == "none"
+
+
+def test_smoke_and_ablation_configs_are_tiny_final_variants():
+    smoke = _cfg("paper_smoke.yaml")
+    assert smoke["grpo"]["max_steps"] == 2
+    assert smoke["evaluation"]["speculative_sweep"]["enabled"] is False
+    assert smoke["logging"]["use_wandb"] is False
+
+    ablation = _cfg("ablation.yaml")
+    points = _build_speculative_eval_points(ablation, None)
+    names = [point["name"] for point in points]
+    assert names == [
+        "ablate_block_default",
+        "ablate_any_order_soft",
+        "ablate_any_order_hard",
+        "ablate_any_order_lossless_tau1",
     ]
-
-    for name in config_names:
-        cfg = _load_yaml(f"configs/{name}")
-        assert cfg["phase_a_v2"] is True
-        assert cfg["stable_cache_enabled"] is False
-        assert cfg["train_heads"] == ["u", "r"]
-        assert cfg["warmstart_checkpoint"] is None
-        assert cfg["reward_cache_terms_enabled"] is False
-        assert cfg["cache"]["stable_kv_cache"] is False
-        assert cfg["grpo"]["reward_cache_terms_enabled"] is False
-        assert cfg["grpo"]["train_heads"] == ["unmask", "remask"]
-        assert cfg["grpo"]["include_heads_in_logprob"] == ["unmask", "remask"]
-        assert cfg["phase_a_v2_config"]["target_u_rate"] == 0.10
-        assert cfg["phase_a_v2_config"]["target_r_rate"] == 0.02
-
-    es_cfg = _load_yaml("configs/v2_grpo_hidden_residual_expert_steering.yaml")
-    assert es_cfg["grpo"]["expert_steering"]["enabled"] is True
-    assert es_cfg["grpo"]["expert_steering"]["experts"] == ["canonical"]
-
-    merged = _load_config(str(ROOT / "configs/v2_warmstart_scalar_only.yaml"))
-    assert merged["base_model"]["backend"] == "dual"
-    assert merged["data"]["train_dataset"]
-    assert merged["logging"]["output_dir"] == "outputs/v4_warmstart_scalar_only/"
+    assert {point["generation_mode"] for point in points} == {"block", "any_order"}

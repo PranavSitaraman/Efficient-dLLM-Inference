@@ -3554,6 +3554,11 @@ class TestRunBlockwiseSpeculativeInference:
         assert stats["primary_verified_positions"] == 3
         assert stats["primary_full_equiv_positions"] == 4
         assert stats["primary_skip_ratio"] == pytest.approx(0.25)
+        assert stats["aux_diagnostic_steps"] == 2
+        assert stats["aux_compute_units"] == pytest.approx(0.7)
+        assert stats["verifier_compute_units"] == pytest.approx(1.5)
+        assert stats["baseline_compute_units"] == pytest.approx(2.0)
+        assert stats["effective_flops"] == pytest.approx(1.1)
 
     def test_blockwise_runner_force_completes_remaining_masks(self, monkeypatch):
         from aoae.dinfer_integration import run_blockwise_speculative_inference

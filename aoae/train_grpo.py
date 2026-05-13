@@ -50,6 +50,7 @@ from .tasks import (
 )
 from .evaluators import build_evaluator
 from .experiment_utils import parse_head_set
+from .models.policy import call_policy
 from .runtime_checks import collect_runtime_info
 
 # Both trajectory types share the same reward-relevant attributes; Union lets
@@ -640,7 +641,8 @@ def compute_grpo_loss(
     expert_steering_G: int = 0,
     expert_steering_E: int = 0,
     kl_coef: float = 0.0,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    return_kl: bool = False,
+) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
     """
     Compute clipped GRPO surrogate loss with optional KL penalty.
 
@@ -659,10 +661,12 @@ def compute_grpo_loss(
         advantages:      [G] per-trajectory advantage.
         clip_eps:        clipping threshold epsilon.
         kl_coef:         KL penalty coefficient (0 = disabled).
+        return_kl:       when True, return ``(loss, kl_penalty)`` for trainer
+                         logging; otherwise return only the scalar loss.
 
     Returns:
-        loss: scalar (to be minimized).
-        kl_penalty: scalar KL penalty (for logging).
+        loss scalar by default, or ``(loss, kl_penalty)`` when
+        ``return_kl=True``.
     """
     G_total = len(trajectories)  # G + E under Expert Steering, else G
     total_loss = torch.tensor(0.0, device=advantages.device)
@@ -724,7 +728,8 @@ def compute_grpo_loss(
             # V5 hybrid: pass aux_h_final and pri_h_final
             aux_h_final = traj.get("aux_h_final_list", [None] * n_steps)[t_idx]
             pri_h_final = traj.get("pri_h_final_list", [None] * n_steps)[t_idx]
-            policy_out = policy(
+            policy_out = call_policy(
+                policy,
                 H_t, mask_ind, step_frac,
                 confidence=confidence,
                 quality_scores=q_scores,
@@ -793,7 +798,9 @@ def compute_grpo_loss(
     # Average over the augmented group (G + E under Expert Steering, else G).
     total_kl_penalty = total_kl_penalty / max(G_total, 1)
     total_loss = -total_loss / max(G_total, 1) + kl_coef * total_kl_penalty
-    return total_loss, total_kl_penalty
+    if return_kl:
+        return total_loss, total_kl_penalty
+    return total_loss
 
 
 def normalize_group_advantages(
@@ -1614,6 +1621,7 @@ def train(cfg: dict, resume_from: Optional[str] = None):
                         expert_steering_G=G if _es_enabled else 0,
                         expert_steering_E=_es_E,
                         kl_coef=gc.get("kl_coef", 0.0),
+                        return_kl=True,
                     )
                     _last_grpo_loss = float(grpo_loss.item())
                     _last_kl_penalty = float(kl_penalty.item())

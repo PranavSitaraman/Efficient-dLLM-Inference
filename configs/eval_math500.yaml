@@ -1,0 +1,16 @@
+extends: eval_gsm8k.yaml
+
+data:
+  eval_dataset: "HuggingFaceH4/MATH-500"
+  eval_dataset_config: null
+  eval_split: "test"
+  eval_max_samples: 500
+  max_prompt_len: 768
+  max_answer_len: 512
+
+evaluation:
+  task_type: "math"
+
+logging:
+  run_name: "eval_math500"
+  output_dir: "outputs/paper_final/math500/"
